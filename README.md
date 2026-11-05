@@ -131,7 +131,7 @@ Default di `~/.rann`, bisa dipindah lewat `RANN_HOME`:
   logs/daemon.log
 ```
 
-Database SQLite memakai WAL, foreign key, dan FTS5. Semua sesi terikat ke folder kerja, jadi `rann sessions` hanya menampilkan sesi dari folder saat ini kecuali `--all`.
+Database SQLite memakai WAL, foreign key, dan FTS5. Semua sesi terikat ke folder kerja, jadi `rann \"...\"` hanya memakai sesi aktif dari folder saat ini. `rann sessions` menampilkan semua sesi di profil aktif.
 
 ## Arsitektur
 
