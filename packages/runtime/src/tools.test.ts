@@ -92,6 +92,6 @@ describe("tools", () => {
 
   it("mengekspos spesifikasi tool untuk provider", () => {
     const names = toolSpecs().map((spec) => spec.name);
-    expect(names).toEqual(["fs_read", "fs_list", "fs_write", "fs_edit", "shell_run"]);
+    expect(names).toEqual(["fs_read", "fs_list", "fs_write", "fs_edit", "shell_run", "memory", "skill", "task"]);
   });
 });

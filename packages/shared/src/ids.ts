@@ -32,7 +32,8 @@ export type IdPrefix =
   | "prof"
   | "prj"
   | "job"
-  | "dev";
+  | "dev"
+  | "mem";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

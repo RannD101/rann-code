@@ -40,6 +40,58 @@ export const configSchema = z.object({
       system_extra: z.string().default("")
     })
     .default({}),
+  memory: z
+    .object({
+      enabled: z.boolean().default(true),
+      prompt_chars: z.number().int().positive().max(32_000).default(6_000),
+      retrieve: z.number().int().positive().max(50).default(8)
+    })
+    .default({}),
+  skills: z
+    .object({
+      enabled: z.boolean().default(true),
+      catalog_limit: z.number().int().positive().max(200).default(40)
+    })
+    .default({}),
+  subagents: z
+    .object({
+      enabled: z.boolean().default(true),
+      max_steps: z.number().int().positive().max(50).default(10),
+      max_per_turn: z.number().int().positive().max(10).default(3),
+      permission_mode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).default("read-only"),
+      model: z.string().min(1).optional()
+    })
+    .default({}),
+  context: z
+    .object({
+      max_tokens: z.number().int().positive().max(1_000_000).default(24_000),
+      keep_recent: z.number().int().positive().max(200).default(20),
+      summary_chars: z.number().int().positive().max(32_000).default(6_000)
+    })
+    .default({}),
+  budget: z
+    .object({
+      max_tokens_per_turn: z.number().int().nonnegative().default(0),
+      max_tokens_per_day: z.number().int().nonnegative().default(0)
+    })
+    .default({}),
+  mcp: z
+    .object({
+      enabled: z.boolean().default(true),
+      servers: z
+        .record(
+          z.object({
+            command: z.string().min(1),
+            args: z.array(z.string()).default([]),
+            env: z.record(z.string()).default({}),
+            cwd: z.string().min(1).optional(),
+            enabled: z.boolean().default(true),
+            timeout_ms: z.number().int().positive().max(120_000).default(20_000)
+          })
+        )
+        .default({})
+    })
+    .default({}),
   ui: z
     .object({
       color: z.boolean().default(true),

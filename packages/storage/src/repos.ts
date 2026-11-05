@@ -89,6 +89,7 @@ export function upsertProject(db: Db, path: string): ProjectRow {
 
 export interface CreateSessionInput {
   projectPath?: string;
+  parentId?: string;
   title?: string;
   model: string;
   permissionMode: PermissionMode;
@@ -100,9 +101,9 @@ export function createSession(db: Db, input: CreateSessionInput): SessionRow {
   const id = newId("ses");
   const at = now();
   db.prepare(
-    `INSERT INTO sessions (id, profile_id, project_id, title, status, model, permission_mode, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, '{}', ?, ?)`
-  ).run(id, profileId, project?.id ?? null, input.title ?? "Sesi baru", input.model, input.permissionMode, at, at);
+    `INSERT INTO sessions (id, profile_id, project_id, parent_id, title, status, model, permission_mode, metadata_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'active', ?, ?, '{}', ?, ?)`
+  ).run(id, profileId, project?.id ?? null, input.parentId ?? null, input.title ?? "Sesi baru", input.model, input.permissionMode, at, at);
   return getSession(db, id)!;
 }
 
@@ -320,6 +321,164 @@ export function summarizeUsage(db: Db, sessionId?: string): UsageSummaryRow[] {
      ORDER BY output_tokens DESC`
   );
   return (sessionId ? statement.all(sessionId) : statement.all()) as UsageSummaryRow[];
+}
+
+export function sumTokensSince(db: Db, since: number): number {
+  const row = db
+    .prepare("SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM usage_events WHERE created_at >= ?")
+    .get(since) as { total: number };
+  return row.total;
+}
+
+export type MemoryScope = "global" | "project";
+
+export interface MemoryEntry {
+  id: string;
+  scope: MemoryScope;
+  project_path: string | null;
+  kind: string;
+  text: string;
+  tags: string[];
+  source: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface MemoryDbRow {
+  id: string;
+  scope: MemoryScope;
+  project_path: string | null;
+  kind: string;
+  text: string;
+  tags: string;
+  source: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+function parseTags(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function toMemoryEntry(row: MemoryDbRow): MemoryEntry {
+  return { ...row, tags: parseTags(row.tags) };
+}
+
+function memoryFilter(scope: MemoryScope | "all", projectPath?: string): { where: string; values: unknown[] } {
+  if (scope === "global") return { where: "scope = 'global'", values: [] };
+  if (scope === "all") {
+    if (!projectPath) return { where: "1 = 1", values: [] };
+    return { where: "(scope = 'global' OR (scope = 'project' AND project_path = ?))", values: [projectPath] };
+  }
+  return { where: "scope = 'project' AND project_path = ?", values: [projectPath ?? ""] };
+}
+
+export interface AddMemoryInput {
+  text: string;
+  scope?: MemoryScope;
+  projectPath?: string;
+  kind?: string;
+  tags?: string[];
+  source?: string;
+}
+
+export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
+  const scope = input.scope ?? (input.projectPath ? "project" : "global");
+  const projectPath = scope === "project" ? (input.projectPath ?? "") : null;
+  const at = Date.now();
+  const existing = db
+    .prepare("SELECT * FROM memories WHERE scope = ? AND COALESCE(project_path, '') = ? AND text = ? LIMIT 1")
+    .get(scope, projectPath ?? "", input.text) as MemoryDbRow | undefined;
+  if (existing) {
+    const tags = [...new Set([...parseTags(existing.tags), ...(input.tags ?? [])])];
+    db.prepare("UPDATE memories SET tags = ?, source = COALESCE(?, source), updated_at = ? WHERE id = ?").run(
+      JSON.stringify(tags),
+      input.source ?? null,
+      at,
+      existing.id
+    );
+    return toMemoryEntry({ ...existing, tags: JSON.stringify(tags), updated_at: at });
+  }
+  const id = newId("mem");
+  db.prepare(
+    `INSERT INTO memories (id, scope, project_path, kind, text, tags, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, scope, projectPath, input.kind ?? "fact", input.text, JSON.stringify(input.tags ?? []), input.source ?? null, at, at);
+  return toMemoryEntry(db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow);
+}
+
+export interface ListMemoryOptions {
+  scope?: MemoryScope | "all";
+  projectPath?: string;
+  limit?: number;
+}
+
+export function listMemories(db: Db, options: ListMemoryOptions = {}): MemoryEntry[] {
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  return (
+    db
+      .prepare(`SELECT * FROM memories WHERE ${filter.where} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...filter.values, options.limit ?? 50) as MemoryDbRow[]
+  ).map(toMemoryEntry);
+}
+
+function ftsQuery(query: string): string {
+  const terms = query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}_-]+/u)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2)
+    .slice(0, 12);
+  return terms.map((term) => `"${term.replace(/"/g, "")}"`).join(" OR ");
+}
+
+export function searchMemories(db: Db, query: string, options: ListMemoryOptions = {}): MemoryEntry[] {
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  const match = ftsQuery(query);
+  if (match.length === 0) return listMemories(db, options);
+  try {
+    const rows = db
+      .prepare(
+        `SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
+         WHERE memories_fts MATCH ? AND ${filter.where}
+         ORDER BY rank LIMIT ?`
+      )
+      .all(match, ...filter.values, options.limit ?? 20) as MemoryDbRow[];
+    return rows.map(toMemoryEntry);
+  } catch {
+    const rows = db
+      .prepare(`SELECT * FROM memories WHERE ${filter.where} AND text LIKE ? ORDER BY updated_at DESC LIMIT ?`)
+      .all(...filter.values, `%${query}%`, options.limit ?? 20) as MemoryDbRow[];
+    return rows.map(toMemoryEntry);
+  }
+}
+
+export function updateMemory(db: Db, id: string, patch: { text?: string; tags?: string[]; kind?: string }): MemoryEntry | undefined {
+  const existing = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow | undefined;
+  if (!existing) return undefined;
+  db.prepare("UPDATE memories SET text = ?, tags = ?, kind = ?, updated_at = ? WHERE id = ?").run(
+    patch.text ?? existing.text,
+    JSON.stringify(patch.tags ?? parseTags(existing.tags)),
+    patch.kind ?? existing.kind,
+    Date.now(),
+    id
+  );
+  return toMemoryEntry(db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow);
+}
+
+export function removeMemory(db: Db, idOrText: string): number {
+  const result = db.prepare("DELETE FROM memories WHERE id = ? OR text = ?").run(idOrText, idOrText);
+  return result.changes;
+}
+
+export function countMemories(db: Db, options: ListMemoryOptions = {}): number {
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  return (db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE ${filter.where}`).get(...filter.values) as { c: number }).c;
 }
 
 export interface AppendEventInput {

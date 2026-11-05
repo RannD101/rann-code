@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addMemory,
   addMessage,
   addToolCall,
   appendEvent,
   completeToolCall,
+  countMemories,
   createSession,
   createTurn,
   eventsForSession,
@@ -15,13 +17,18 @@ import {
   getTurn,
   inspectDatabase,
   LATEST_VERSION,
+  listMemories,
   listMessages,
   listSessions,
   markTurnRunning,
   openDatabase,
   recordUsage,
+  removeMemory,
   schemaVersion,
+  searchMemories,
   summarizeUsage,
+  sumTokensSince,
+  updateMemory,
   type Db
 } from "./index.js";
 
@@ -89,5 +96,66 @@ describe("database", () => {
     expect(summary[0]).toMatchObject({ provider: "mock", model: "mock-1", turns: 1, input_tokens: 3, output_tokens: 2 });
     expect(summarizeUsage(db, session.id)).toHaveLength(1);
     expect(summarizeUsage(db, "sesi-lain")).toHaveLength(0);
+  });
+
+  it("menyimpan memori global dan proyek dengan pencarian FTS", () => {
+    const { db, dir } = freshDb();
+    const projectA = join(dir, "proyek-a");
+    const projectB = join(dir, "proyek-b");
+
+    const globalEntry = addMemory(db, {
+      text: "User memakai bahasa Indonesia dalam semua jawaban",
+      scope: "global",
+      kind: "preference",
+      tags: ["bahasa", "gaya"]
+    });
+    const projectEntry = addMemory(db, {
+      text: "Proyek A memakai pnpm dan TypeScript strict",
+      projectPath: projectA,
+      kind: "convention",
+      tags: ["tooling"]
+    });
+    addMemory(db, { text: "Proyek B memakai PHP 8", projectPath: projectB });
+
+    expect(globalEntry.scope).toBe("global");
+    expect(globalEntry.tags).toEqual(["bahasa", "gaya"]);
+    expect(projectEntry.project_path).toBe(projectA);
+    expect(countMemories(db, { scope: "all", projectPath: projectA })).toBe(2);
+    expect(countMemories(db, { scope: "all", projectPath: projectB })).toBe(2);
+    expect(listMemories(db, { scope: "project", projectPath: projectB })).toHaveLength(1);
+
+    const found = searchMemories(db, "pnpm TypeScript", { scope: "all", projectPath: projectA });
+    expect(found.map((entry) => entry.id)).toContain(projectEntry.id);
+    const globalFound = searchMemories(db, "bahasa Indonesia", { scope: "all", projectPath: projectB });
+    expect(globalFound.map((entry) => entry.id)).toContain(globalEntry.id);
+
+    const duplicate = addMemory(db, {
+      text: "Proyek A memakai pnpm dan TypeScript strict",
+      projectPath: projectA,
+      tags: ["baru"]
+    });
+    expect(duplicate.id).toBe(projectEntry.id);
+    expect(duplicate.tags).toEqual(["tooling", "baru"]);
+
+    const updated = updateMemory(db, projectEntry.id, { text: "Proyek A memakai pnpm", kind: "fact" });
+    expect(updated?.text).toBe("Proyek A memakai pnpm");
+    expect(updated?.kind).toBe("fact");
+
+    expect(removeMemory(db, projectEntry.id)).toBe(1);
+    expect(removeMemory(db, projectEntry.id)).toBe(0);
+    expect(listMemories(db, { scope: "all", projectPath: projectA })).toHaveLength(1);
+  });
+
+  it("menghitung token sejak waktu tertentu", () => {
+    const { db, dir } = freshDb();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "trusted" });
+    const turn = createTurn(db, { sessionId: session.id });
+    const old = Date.now() - 48 * 60 * 60 * 1000;
+    db.prepare(
+      "INSERT INTO usage_events (id, provider, model, session_id, turn_id, input_tokens, output_tokens, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run("use_lama", "mock", "mock-1", session.id, turn.id, 100, 50, 0, old);
+    recordUsage(db, { provider: "mock", model: "mock-1", sessionId: session.id, turnId: turn.id, inputTokens: 7, outputTokens: 3 });
+    expect(sumTokensSince(db, old + 60_000)).toBe(10);
+    expect(sumTokensSince(db, 0)).toBe(160);
   });
 });

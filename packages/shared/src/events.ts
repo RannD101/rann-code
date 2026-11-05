@@ -6,6 +6,9 @@ export type EventType =
   | "tool.started"
   | "tool.finished"
   | "approval.requested"
+  | "context.compacted"
+  | "subagent.started"
+  | "subagent.finished"
   | "turn.completed"
   | "turn.failed"
   | "log";

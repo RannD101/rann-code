@@ -90,6 +90,58 @@ export const usageSummaryParams = z.object({
   sessionId: z.string().min(1).optional()
 });
 
+const localPath = z.string().min(1).optional();
+
+export const memoryListParams = z.object({
+  projectPath: localPath,
+  scope: z.enum(["global", "project", "all"]).default("all"),
+  limit: z.number().int().positive().max(100).default(30)
+});
+export const memorySearchParams = z.object({
+  projectPath: localPath,
+  query: z.string().min(1).max(500),
+  limit: z.number().int().positive().max(100).default(10)
+});
+export const memoryAddParams = z.object({
+  projectPath: localPath,
+  text: z.string().min(1).max(4_000),
+  scope: z.enum(["global", "project"]).default("project"),
+  kind: z.string().min(1).max(40).default("fact"),
+  tags: z.array(z.string().min(1).max(40)).max(12).default([])
+});
+export const memoryUpdateParams = z.object({
+  projectPath: localPath,
+  id: z.string().min(1),
+  text: z.string().min(1).max(4_000).optional(),
+  kind: z.string().min(1).max(40).optional(),
+  tags: z.array(z.string().min(1).max(40)).max(12).optional()
+});
+export const memoryRemoveParams = z.object({
+  projectPath: localPath,
+  id: z.string().min(1)
+});
+export const skillListParams = z.object({
+  projectPath: localPath,
+  limit: z.number().int().positive().max(200).default(40)
+});
+export const skillViewParams = z.object({
+  projectPath: localPath,
+  name: z.string().min(1).max(64)
+});
+export const skillCreateParams = z.object({
+  projectPath: localPath,
+  name: z.string().min(1).max(64),
+  description: z.string().min(12).max(500),
+  body: z.string().min(1).max(60_000),
+  scope: z.enum(["global", "project"]).default("project"),
+  overwrite: z.boolean().default(false)
+});
+export const skillRemoveParams = z.object({
+  projectPath: localPath,
+  name: z.string().min(1).max(64),
+  scope: z.enum(["global", "project"]).default("project")
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -103,9 +155,19 @@ export const methodParams = {
   "model.list": empty,
   "provider.list": empty,
   "config.explain": configExplainParams,
+  "config.get": empty,
   "provider.test": providerTestParams,
   "usage.summary": usageSummaryParams,
-  "permission.respond": permissionRespondParams
+  "permission.respond": permissionRespondParams,
+  "memory.list": memoryListParams,
+  "memory.search": memorySearchParams,
+  "memory.add": memoryAddParams,
+  "memory.update": memoryUpdateParams,
+  "memory.remove": memoryRemoveParams,
+  "skill.list": skillListParams,
+  "skill.view": skillViewParams,
+  "skill.create": skillCreateParams,
+  "skill.remove": skillRemoveParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

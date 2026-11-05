@@ -1,0 +1,1479 @@
+TUTORIAL RANN CODE
+===================
+
+Versi dokumen: 1.0
+Cocok untuk: rann-code 0.1.0
+Sistem: Linux dan macOS, Node >= 22.11, pnpm 9.15.9
+Sifat: semua data disimpan lokal di mesin sendiri
+
+Dokumen ini menjelaskan pemasangan dari nol, pemakaian harian, fungsi setiap
+command, sampai cara memperbarui rann-code tanpa kehilangan sesi, memori, dan
+skill.
+
+Kalau kamu hanya butuh ringkasan cepat, lompat ke bagian 20.
+
+
+1. RINGKASAN
+============
+
+Rann Code adalah CLI agent coding yang berjalan di terminal. Arsitekturnya:
+
+- CLI mengirim perintah lewat JSON-RPC ke daemon lokal.
+- Daemon memegang sesi, database SQLite, provider model, dan tool.
+- Semua sesi, pesan, event, usage, memori, dan skill tersimpan di disk sendiri.
+- Tidak ada telemetry atau upload otomatis.
+- Provider model boleh mock, OpenAI-compatible, endpoint lokal, atau router
+  milik sendiri. Key disimpan sebagai nama environment variable, bukan isi key.
+- Prompt hanya dikirim ke provider model yang kamu pilih. Dengan provider mock,
+  tidak ada koneksi jaringan sama sekali.
+
+Kemampuan utama:
+
+- Sesi percakapan yang tersimpan dan bisa dilanjutkan.
+- Tool filesystem: baca, tulis, edit, daftar folder.
+- Tool shell dengan izin eksplisit dan blokir perintah berbahaya.
+- Memori jangka panjang dengan pencarian FTS5.
+- Skill lokal berupa berkas markdown yang bisa dibuat dan dipakai agent.
+- Ringkasan konteks otomatis dan budget token.
+- Subagent dengan sesi anak dan konteks terpisah.
+- MCP lokal lewat stdio.
+- Output teks, JSON, atau NDJSON untuk otomasi.
+- Turn latar belakang yang tetap jalan setelah CLI keluar.
+
+
+2. KEBUTUHAN
+============
+
+Wajib:
+
+- Node.js 22.11 atau lebih baru.
+- pnpm 9.15.9.
+- Linux atau macOS.
+- Git, kalau source diambil dari repository.
+
+Cek versi:
+
+    node -v
+    pnpm -v
+
+Kalau Node belum ada, pasang Node 22 lewat nvm:
+
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+    source ~/.bashrc
+    nvm install 22
+    nvm use 22
+
+Aktifkan pnpm:
+
+    corepack enable
+    corepack prepare pnpm@9.15.9 --activate
+
+Alternatif kalau corepack bermasalah:
+
+    npm install -g pnpm@9.15.9
+
+Di VPS ini Node yang sudah terbukti dipakai:
+
+    export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
+
+
+3. INSTALASI DARI NOL
+=====================
+
+3.1 Letakkan source
+
+Source rann-code ada di:
+
+    /root/rann-code
+
+Kalau kamu memindahkan folder, sesuaikan semua path di bawah. Kalau source
+diambil dari arsip, ekstrak ke folder baru, jangan menimpa folder lama sebelum
+backup.
+
+3.2 Install dependency
+
+    export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
+    cd /root/rann-code
+    pnpm install
+
+3.3 Build
+
+    pnpm build
+
+3.4 Pasang perintah global
+
+    ln -sf /root/rann-code/packages/cli/dist/main.js /usr/local/bin/rann
+    ln -sf /root/rann-code/packages/cli/dist/daemon-main.js /usr/local/bin/rannd
+    chmod +x /root/rann-code/packages/cli/dist/main.js
+    chmod +x /root/rann-code/packages/cli/dist/daemon-main.js
+
+Kalau tidak mau symlink global, jalankan langsung:
+
+    node /root/rann-code/packages/cli/dist/main.js --help
+
+3.5 Cek instalasi
+
+    rann --version
+    rann doctor
+
+`rann doctor` memeriksa Node, permission folder home, daemon, database, dan
+config. Kalau ada yang warning, baca detailnya sebelum lanjut.
+
+3.6 Siapkan folder proyek
+
+Masuk ke folder proyek yang mau dipakai:
+
+    cd ~/proyek
+
+Opsional, buat config proyek:
+
+    rann init
+
+Perintah itu membuat:
+
+    ~/proyek/.rann/config.toml
+    ~/proyek/RANN.md
+
+File `.rann/config.toml` untuk config khusus proyek. `RANN.md` untuk instruksi
+proyek yang dibaca agent. Config global tetap di:
+
+    ~/.rann/config/config.toml
+
+
+4. MEMAHAMI PENYIMPANAN LOKAL
+=============================
+
+Default home:
+
+    ~/.rann
+
+Isi penting:
+
+    ~/.rann/config/config.toml              config global
+    ~/.rann/profiles/default/rann.db         database SQLite
+    ~/.rann/profiles/default/skills/         skill global
+    ~/.rann/run/daemon.sock                  socket daemon
+    ~/.rann/profiles/default/logs/           folder log
+
+Data proyek:
+
+    <proyek>/.rann/config.toml               config proyek
+    <proyek>/.rann/skills/<nama>/SKILL.md    skill proyek
+
+Pindah home kalau perlu:
+
+    export RANN_HOME=/path/ke/data-rann
+
+Pilih profil lain:
+
+    export RANN_PROFILE=kerja
+
+Profil punya database dan skill terpisah. Jangan memindah-mindah profile saat
+daemon masih berjalan. Hentikan daemon dulu:
+
+    rann daemon stop
+
+Backup sederhana:
+
+    rann daemon stop
+    tar -czf ~/rann-backup-$(date +%Y%m%d-%H%M%S).tgz ~/.rann
+
+Backup skill proyek terpisah:
+
+    tar -czf ~/proyek-rann-backup-$(date +%Y%m%d-%H%M%S).tgz ~/proyek/.rann
+
+Jangan pernah memasukkan API key ke dalam repository, skrip, atau tutorial.
+Config rann hanya menyimpan nama environment variable untuk key.
+
+
+5. MULAI PERTAMA KALI
+=====================
+
+5.1 Mode mock
+
+Provider default adalah mock. Mock tidak memanggil jaringan. Mock berguna untuk
+menguji alur, izin, tool call, dan tampilan tanpa menghabiskan token.
+
+    cd ~/proyek
+    rann "halo, jelaskan folder ini"
+
+Karena izin default `ask` dan perintah di atas berjalan di terminal, agent bisa
+meminta izin saat mau membaca atau menulis. Setujui hanya tool yang memang
+kamu perlukan.
+
+5.2 Buat sesi bernama
+
+    rann new --title "Coba pertama"
+
+Output berisi id sesi, judul, model, dan mode izin.
+
+5.3 Chat interaktif
+
+    rann chat
+
+Atau langsung:
+
+    rann
+
+`rann` tanpa argumen membuka chat hanya kalau stdin dan stdout adalah terminal.
+Kalau dijalankan dari pipe atau cron, ia mencetak bantuan supaya tidak
+menggantung.
+
+5.4 Lanjutkan sesi tertentu
+
+    rann chat --session ses_xxxxxxxx
+    rann resume ses_xxxxxxxx "lanjutkan pekerjaan tadi"
+
+5.5 Cek sesi di folder ini
+
+    rann sessions
+
+Hanya sesi yang terikat ke folder saat ini yang tampil. Untuk semua sesi di
+profil aktif:
+
+    rann sessions --all
+
+
+6. PROVIDER MODEL
+=================
+
+6.1 Provider mock
+
+Tanpa konfigurasi tambahan, rann memakai:
+
+    provider = mock
+    model    = mock-1
+
+Cocok untuk latihan dan tes. Balasan mock tidak memahami kode sungguhan.
+
+6.2 Provider OpenAI-compatible
+
+Simpan key di environment variable. Jangan tulis key di config.
+
+    export OPENAI_API_KEY="isi-key-kamu"
+    rann provider add openai \
+      --type openai-compatible \
+      --base-url https://api.openai.com/v1 \
+      --key-env OPENAI_API_KEY \
+      --model gpt-4o-mini
+
+Pilih provider sebagai default:
+
+    rann config set provider openai
+    rann config set model.default gpt-4o-mini
+
+Uji koneksi:
+
+    rann provider test openai
+
+6.3 Endpoint lokal atau router sendiri
+
+Kalau kamu punya endpoint yang kompatibel OpenAI di mesin lain:
+
+    export LOKAL_API_KEY="isi-key-kamu"
+    rann provider add lokal \
+      --type openai-compatible \
+      --base-url http://127.0.0.1:11434/v1 \
+      --key-env LOKAL_API_KEY \
+      --model llama3.1
+
+    rann config set provider lokal
+    rann config set model.default llama3.1
+    rann provider test lokal
+
+Jangan memasang model AI lokal di VPS ini kalau memang tidak diizinkan. Untuk
+rann-code, endpoint model boleh berada di mesin lain atau router yang sudah ada.
+
+6.4 Melihat provider dan key
+
+    rann providers
+    rann models
+
+`providers` menampilkan nama, tipe, base URL, status key, dan daftar model.
+Key asli tidak pernah ditampilkan.
+
+6.5 Kalau key berubah
+
+Daemon membaca environment saat start. Setelah mengganti nilai key:
+
+    rann daemon stop
+    export OPENAI_API_KEY="key-baru"
+    rann "halo"
+
+6.6 Peringatan `provider add`
+
+`provider add` menambahkan blok `[providers.<nama>]` ke config global. Jangan
+jalankan nama provider yang sama berulang kali tanpa menghapus blok lama,
+karena TOML bisa memiliki tabel duplikat. Kalau perlu mengubah, edit
+`~/.rann/config/config.toml` setelah backup.
+
+
+7. ALUR KERJA SESI
+==================
+
+7.1 Satu perintah lalu keluar
+
+    rann "baca README dan buat ringkasan"
+
+Ini memakai sesi aktif terbaru di folder saat ini. Kalau belum ada, sesi baru
+dibuat otomatis.
+
+7.2 Prompt non-interaktif
+
+    rann -p "review file src/auth.ts"
+
+`-p` berguna untuk skrip dan cron. Kalau ada data dari pipe:
+
+    git diff | rann -p "review diff ini"
+
+Stdin non-TTY dibaca sebagai konteks tambahan.
+
+7.3 Kirim ke sesi tertentu
+
+    rann send ses_xxxxxxxx "perbaiki bug yang tadi"
+
+`rann resume` adalah alias yang sama:
+
+    rann resume ses_xxxxxxxx "lanjutkan"
+
+7.4 Melihat hasil turn
+
+    rann turn turn_xxxxxxxx
+    rann turn turn_xxxxxxxx --wait
+    rann turn turn_xxxxxxxx --wait --json
+
+`--wait` memeriksa status setiap 500 ms sampai selesai. `--follow` juga
+diterima sebagai alias.
+
+7.5 Turn latar belakang
+
+    rann "bangun ulang indeks dokumen" --detach
+    rann turn turn_xxxxxxxx --wait
+
+`--detach` langsung mencetak id turn. Daemon tetap menjalankan turn setelah
+CLI keluar.
+
+7.6 Melihat pemakaian token
+
+    rann usage
+    rann usage ses_xxxxxxxx
+    rann usage ses_xxxxxxxx --json
+
+Ringkasan dikelompokkan per provider dan model. Angka berasal dari tabel
+`usage_events` di SQLite.
+
+
+8. IZIN TOOL
+============
+
+Lima mode:
+
+    read-only
+      Hanya tool baca. Tulis dan shell ditolak.
+
+    ask
+      Default. Tool yang mengubah state meminta izin.
+
+    accept-edits
+      Tulis dan edit file otomatis. Shell tetap bertanya.
+
+    trusted
+      Semua tool diizinkan selama masih di dalam workspace.
+
+    custom
+      Mengikuti aturan allow dan deny di config.
+
+Ganti mode untuk satu perintah:
+
+    rann "perbaiki file ini" --permission accept-edits
+
+Setujui semua permintaan pada satu perintah:
+
+    rann "jalankan tes" --yes
+
+Ganti default:
+
+    rann config set permissions.mode ask
+
+Saat meminta izin, CLI menampilkan tiga pilihan:
+
+    1. setujui sekali
+    2. selalu untuk tool itu di sesi tersebut
+    3. tolak
+
+Tanpa TTY, permintaan izin otomatis ditolak supaya proses tidak menggantung.
+Untuk otomasi yang memang boleh menulis, gunakan `--yes` atau mode `trusted`.
+Jangan memakai `trusted` untuk kode yang tidak kamu percaya.
+
+Perintah shell berbahaya tetap ditolak walaupun mode `trusted`, misalnya
+`rm -rf /`, `mkfs`, `shutdown`, dan pola berbahaya lain. Pembatasan workspace
+juga mencegah path keluar dari folder proyek kalau `workspace_only = true`.
+
+
+9. MEMORI LOKAL
+===============
+
+Memori adalah fakta tahan lama yang disimpan di SQLite. Memori bukan progres
+tugas dan bukan output sementara.
+
+Dua scope:
+
+    global
+      Berlaku di semua proyek pada profil aktif.
+
+    project
+      Hanya berlaku di folder proyek yang sama.
+
+9.1 Tambah memori
+
+    rann memory add "User lebih suka jawaban singkat dan bukti nyata" \
+      --scope global \
+      --kind preference \
+      --tags gaya,bukti
+
+Tanpa `--scope`, default-nya `project`. Tanpa `--kind`, default-nya `fact`.
+
+9.2 Lihat memori
+
+    rann memory list
+    rann memory list --scope all
+    rann memory list --scope global
+    rann memory list --scope project --limit 50
+
+JSON:
+
+    rann memory list --scope all --json
+
+9.3 Cari memori
+
+    rann memory search "pnpm"
+    rann memory search "preferensi bahasa" --limit 5
+
+Pencarian memakai FTS5, bukan embedding vektor. Semua tetap offline.
+
+9.4 Ubah memori
+
+    rann memory update mem_xxxxxxxx --text "Teks baru"
+    rann memory update mem_xxxxxxxx --kind convention
+    rann memory update mem_xxxxxxxx --tags tooling,bahasa
+
+Hanya field yang disebut yang diubah.
+
+9.5 Hapus memori
+
+    rann memory remove mem_xxxxxxxx
+
+9.6 Batas
+
+- Teks minimal 3 karakter, maksimal 4.000 karakter.
+- Maksimal 12 tag.
+- Memori relevan dan memori terbaru dimasukkan ke system prompt pada setiap
+  turn, dibatasi `memory.prompt_chars`.
+- Jumlah memori yang diambil per pencarian dibatasi `memory.retrieve`.
+
+9.7 Memori dari agent
+
+Agent punya tool `memory` dengan aksi `add`, `list`, `search`, `update`, dan
+`remove`. Pada mode `ask`, penulisan memori meminta izin. Pada mode `trusted`,
+agent bisa menyimpan sendiri. Contoh perintah:
+
+    rann --permission trusted \
+      "pelajari struktur proyek ini, simpan konvensi penting ke memori, lalu buat ringkasan"
+
+Jangan menyimpan API key, password, token, atau data pribadi sensitif ke memori.
+
+
+10. SKILL LOKAL
+===============
+
+Skill adalah prosedur yang bisa dipakai ulang. Skill disimpan sebagai berkas
+markdown, bukan di database dan bukan di cloud.
+
+Tiga sumber:
+
+    builtin
+      Bawaan rann-code: debug-sistematis, review-kode, catat-pelajaran.
+
+    global
+      ~/.rann/profiles/default/skills/<nama>/SKILL.md
+
+    project
+      <proyek>/.rann/skills/<nama>/SKILL.md
+
+Skill proyek menimpa skill global dengan nama yang sama. Skill global menimpa
+builtin dengan nama yang sama.
+
+10.1 Lihat katalog
+
+    rann skill list
+    rann skill list --limit 100
+    rann skill list --json
+
+10.2 Lihat isi skill
+
+    rann skill view debug-sistematis
+    rann skill view uji-lokal --json
+
+10.3 Buat skill proyek
+
+Buat file body dulu:
+
+    cat > skill-body.txt <<'EOF'
+    1. Jalankan build.
+    2. Jalankan tes.
+    3. Laporkan output asli.
+    4. Jangan mengklaim hasil tanpa bukti.
+    EOF
+
+Lalu:
+
+    rann skill create uji-lokal \
+      --description "Gunakan saat menguji alur build dan tes lokal" \
+      --body-file skill-body.txt \
+      --scope project
+
+Atau langsung:
+
+    rann skill create uji-lokal \
+      --description "Gunakan saat menguji alur build dan tes lokal" \
+      --body "1. Jalankan build.
+    2. Jalankan tes.
+    3. Laporkan output asli." \
+      --scope project
+
+10.4 Buat skill global
+
+    rann skill create uji-global \
+      --description "Gunakan saat menguji skill yang berlaku di semua proyek" \
+      --body-file skill-body.txt \
+      --scope global
+
+10.5 Ganti skill yang sudah ada
+
+    rann skill create uji-lokal \
+      --description "Gunakan saat menguji alur build dan tes lokal" \
+      --body-file skill-body.txt \
+      --scope project \
+      --overwrite
+
+10.6 Hapus skill
+
+    rann skill remove uji-lokal --scope project
+    rann skill remove uji-global --scope global
+
+Skill bawaan tidak bisa dihapus.
+
+10.7 Aturan nama dan isi
+
+- Nama: 2 sampai 64 karakter, huruf kecil, angka, tanda hubung, atau garis
+  bawah.
+- Deskripsi minimal 12 karakter dan sebaiknya menyebut kapan skill dipakai.
+- Body minimal 20 karakter, maksimal 60.000 karakter.
+- Format file:
+
+    ---
+    name: uji-lokal
+    description: Gunakan saat menguji alur build dan tes lokal
+    version: 1
+    ---
+
+    1. Jalankan build.
+    2. Jalankan tes.
+    3. Laporkan output asli.
+
+10.8 Skill dari agent
+
+Agent punya tool `skill` dengan aksi `list`, `view`, `create`, dan `remove`.
+System prompt memuat katalog skill, lalu agent membuka isi yang relevan sebelum
+memakainya. Ini yang membuat kemampuan agent bertambah dari pemakaian.
+
+Contoh perintah agar agent belajar:
+
+    rann --permission trusted \
+      "selesaikan bug ini. Setelah tes hijau, simpan langkah yang terbukti sebagai skill proyek dan simpan konvensi penting sebagai memori."
+
+Pada mode `ask`, pembuatan skill meminta izin. Jangan menyimpan rahasia ke
+dalam skill.
+
+
+11. KONTEKS DAN BUDGET
+======================
+
+11.1 Ringkasan konteks
+
+Kalau percakapan melebihi `context.max_tokens`, rann membuat digest teks dari
+pesan lama dan mengirim ringkasan itu bersama pesan terbaru. Pesan asli tetap
+tersimpan di database. Tidak ada panggilan model tambahan untuk meringkas.
+
+Konfigurasi:
+
+    rann config set context.max_tokens 24000
+    rann config set context.keep_recent 20
+    rann config set context.summary_chars 6000
+
+Arti:
+
+    context.max_tokens
+      Perkiraan batas token untuk system prompt dan percakapan.
+
+    context.keep_recent
+      Jumlah pesan terbaru yang selalu dipertahankan.
+
+    context.summary_chars
+      Batas panjang digest pesan lama.
+
+Event `context.compacted` muncul di output `stream-json` saat ringkasan dipakai.
+
+11.2 Budget token
+
+    rann config set budget.max_tokens_per_turn 50000
+    rann config set budget.max_tokens_per_day 200000
+
+Nilai 0 berarti tanpa batas. Budget dihitung dari `usage_events`.
+
+Kalau budget harian habis, turn ditolak sebelum provider dipanggil:
+
+    E_BUDGET_EXHAUSTED: Budget harian habis: ... dari ... token terpakai
+
+Reset budget dengan nilai 0 atau naikkan batasnya:
+
+    rann config set budget.max_tokens_per_day 0
+
+11.3 Melihat pemakaian
+
+    rann usage
+    rann usage ses_xxxxxxxx
+    rann usage --json
+
+
+12. SUBAGENT
+============
+
+Subagent adalah sesi anak dengan konteks terpisah. Cocok untuk memecah
+pekerjaan, riset kecil, atau memeriksa bagian yang tidak perlu mengotori
+percakapan utama.
+
+Agent memakai tool `task`:
+
+    rann --permission trusted \
+      "pakai tool task untuk memeriksa struktur folder tests dan ringkas temuannya"
+
+Konfigurasi:
+
+    rann config set subagents.enabled true
+    rann config set subagents.max_steps 10
+    rann config set subagents.max_per_turn 3
+    rann config set subagents.permission_mode read-only
+
+Default subagent:
+
+- Maksimal 10 langkah.
+- Maksimal 3 subagent per turn.
+- Izin `read-only`.
+- Memakai model yang sama kecuali `subagents.model` diisi.
+
+Sesi anak tercatat di SQLite yang sama dengan `parent_id`. Lihat dengan:
+
+    rann sessions --all
+
+Judul sesi anak biasanya berawalan `Subagent:`.
+
+Kalau subagent butuh menulis, ubah `subagents.permission_mode` dengan sadar.
+Jangan memberi `trusted` kalau tidak perlu.
+
+
+13. MCP LOKAL
+=============
+
+MCP adalah cara menambah tool dari proses lokal. Rann Code memakai stdio, bukan
+HTTP cloud. Server dijalankan saat turn pertama membutuhkan tool, lalu ditutup
+saat daemon berhenti.
+
+13.1 Config
+
+Tambahkan ke `~/.rann/config/config.toml`:
+
+    [mcp.servers.echo]
+    command = "node"
+    args = ["/path/ke/server-mcp.cjs"]
+    enabled = true
+    timeout_ms = 20000
+
+Field yang tersedia:
+
+    command       perintah yang dijalankan
+    args          array argumen
+    env           environment tambahan, opsional
+    cwd           folder kerja server, opsional
+    enabled       true atau false
+    timeout_ms    timeout request, maksimal 120000
+
+13.2 Nama tool
+
+Tool dari server `echo` dengan nama `echo` muncul sebagai:
+
+    mcp__echo__echo
+
+Format umum:
+
+    mcp__<nama-server>__<nama-tool>
+
+13.3 Contoh server MCP minimal
+
+Simpan sebagai `/tmp/server-mcp.cjs`:
+
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    const tools = [{
+      name: "echo",
+      description: "Mengembalikan teks yang dikirim",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"]
+      }
+    }];
+
+    rl.on("line", (line) => {
+      let message;
+      try { message = JSON.parse(line); } catch { return; }
+      if (message.id === undefined) return;
+
+      let result;
+      if (message.method === "initialize") {
+        result = {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "echo", version: "1" }
+        };
+      } else if (message.method === "tools/list") {
+        result = { tools };
+      } else if (message.method === "tools/call") {
+        result = {
+          content: [{
+            type: "text",
+            text: "echo:" + String(message.params.arguments.text)
+          }]
+        };
+      } else {
+        result = {};
+      }
+
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: message.id,
+        result
+      }) + "\n");
+    });
+
+Lalu config:
+
+    [mcp.servers.echo]
+    command = "node"
+    args = ["/tmp/server-mcp.cjs"]
+    enabled = true
+    timeout_ms = 20000
+
+Tes:
+
+    rann daemon stop
+    rann --permission trusted 'tool:mcp__echo__echo {"text":"halo mcp"}'
+
+Kalau server gagal start, pesan error menyertakan stderr server. Periksa path
+`command`, isi `args`, permission file, dan apakah `node` ada di PATH daemon.
+
+13.4 Matikan MCP
+
+    rann config set mcp.enabled false
+
+Atau set `enabled = false` pada server tertentu.
+
+
+14. OTOMASI, JSON, DAN PIPE
+===========================
+
+14.1 Output teks
+
+    rann "ringkas repo ini"
+
+14.2 Output JSON
+
+    rann -p "ringkas repo ini" --output-format json
+
+Bentuk hasil:
+
+    {
+      "ok": true,
+      "result": "jawaban akhir",
+      "session_id": "ses_...",
+      "turn_id": "turn_...",
+      "steps": 1,
+      "usage": { "input_tokens": 10, "output_tokens": 20 },
+      "error": null
+    }
+
+Kalau gagal, `ok` false dan `error` berisi kode serta pesan.
+
+14.3 Stream NDJSON
+
+    rann "refactor src/auth.ts" --output-format stream-json
+
+Event yang mungkin muncul:
+
+    message.delta
+    tool.start
+    tool.end
+    approval.request
+    context.compacted
+    subagent.started
+    subagent.finished
+    turn.completed
+    turn.failed
+    error
+
+Log, izin, dan diagnostik tetap di stderr supaya stdout bisa diparse.
+
+14.4 Pipe stdin
+
+    git diff | rann -p "review diff ini" --output-format json
+
+Stdin non-TTY dibaca sebagai konteks tambahan.
+
+14.5 Cron
+
+Gunakan `--permission read-only` kalau hanya perlu membaca, atau `--yes` kalau
+memang perlu menulis dan sudah yakin. Tanpa TTY, permintaan izin otomatis
+ditolak.
+
+Contoh cron harian:
+
+    rann -p "buat ringkasan perubahan repo hari ini" \
+      --permission read-only \
+      --output-format json
+
+14.6 Exit code
+
+- 0: berhasil.
+- 1: gagal, termasuk turn gagal, sesi tidak ditemukan, atau operasi hapus
+  tidak menemukan data.
+- Kode error lain mengikuti pesan `E_*` di stderr.
+
+
+15. CONFIG
+==========
+
+15.1 Lihat config efektif
+
+    rann config get
+
+Output JSON berisi config, file yang dibaca, home, dan project path.
+
+Lihat satu kunci:
+
+    rann config get model.default
+    rann config get permissions.mode
+    rann config get context.max_tokens
+
+Lihat asal nilai:
+
+    rann config explain model.default
+
+Sumber nilai berurutan dari prioritas terendah ke tertinggi:
+
+    default -> global -> project -> env -> flag
+
+15.2 Ubah config global
+
+    rann config set provider openai
+    rann config set model.default gpt-4o-mini
+    rann config set permissions.mode ask
+    rann config set agent.max_steps 24
+    rann config set memory.enabled true
+    rann config set skills.enabled true
+    rann config set subagents.enabled true
+    rann config set mcp.enabled true
+    rann config set ui.color true
+
+`config set` menulis ke config global lalu menghentikan daemon supaya nilai
+baru dipakai pada perintah berikutnya.
+
+15.3 Config proyek
+
+Buat file manual:
+
+    <proyek>/.rann/config.toml
+
+Contoh:
+
+    [permissions]
+    mode = "accept-edits"
+
+    [agent]
+    max_steps = 12
+
+Tidak ada subcommand khusus untuk menulis config proyek. Gunakan editor teks
+dan backup dulu.
+
+15.4 Environment variable
+
+    RANN_HOME              lokasi data
+    RANN_PROFILE           nama profil
+    RANN_MODEL             override model
+    RANN_PROVIDER          override provider
+    RANN_PERMISSION_MODE   override mode izin
+    RANN_LOG_LEVEL         level log
+    RANN_NO_COLOR          matikan warna kalau diisi 1
+
+Key provider memakai nama env yang kamu tentukan sendiri lewat `--key-env`.
+
+
+16. DAFTAR COMMAND DAN FUNGSINYA
+================================
+
+16.1 Command utama
+
+    rann
+      Tanpa argumen di terminal: membuka chat interaktif.
+      Tanpa argumen di pipe: mencetak bantuan.
+
+    rann "instruksi"
+      Menjalankan satu turn pada sesi aktif di folder saat ini. Sesi baru
+      dibuat kalau belum ada.
+
+    rann -p "instruksi"
+      Sama seperti di atas, tetapi eksplisit untuk mode non-interaktif.
+
+    rann run "instruksi"
+      Bentuk eksplisit untuk menjalankan prompt. Biasanya tidak perlu diketik
+      karena bentuk `rann "instruksi"` sudah menanganinya.
+
+    rann help
+    rann --help
+      Menampilkan daftar command dan flag.
+
+    rann version
+    rann --version
+      Menampilkan versi CLI.
+
+16.2 Sesi
+
+    rann new [--title teks]
+      Membuat sesi baru di folder saat ini.
+
+    rann sessions [--limit N] [--status active|closed|error] [--project PATH] [--all]
+      Menampilkan sesi. Default hanya folder saat ini. `--all` menampilkan
+      semua sesi di profil aktif. `--project` memilih folder lain.
+
+    rann chat [--session ID] [--model NAMA] [--permission MODE]
+      Membuka REPL. Tanpa `--session`, memakai sesi aktif terbaru di folder
+      saat ini. Kalau stdin bukan TTY, seluruh stdin dibaca sebagai satu prompt.
+
+    rann send ID "instruksi"
+      Mengirim prompt ke sesi tertentu.
+
+    rann resume ID "instruksi"
+      Alias `send`.
+
+    rann turn ID [--wait|--follow] [--json]
+      Melihat status turn. `--wait` menunggu sampai selesai.
+
+16.3 Provider dan model
+
+    rann providers
+      Daftar provider, tipe, base URL, status key, dan model.
+
+    rann provider add NAMA --type openai-compatible --base-url URL --key-env ENV [--model NAMA]
+      Menambahkan provider ke config global. `--type` default
+      openai-compatible. Key dibaca dari environment variable yang disebut
+      `--key-env`.
+
+    rann provider test [NAMA] [--model NAMA] [--json]
+      Menguji koneksi provider dan model default. Tanpa nama, memakai provider
+      aktif.
+
+    rann models [--json]
+      Menampilkan provider aktif, model default, dan daftar model.
+
+    rann usage [ID] [--json]
+      Ringkasan token dan biaya. Tanpa ID, semua sesi di profil aktif.
+
+16.4 Konfigurasi
+
+    rann config
+      Sama dengan `rann config get`.
+
+    rann config get [KUNCI]
+      Menampilkan seluruh config efektif atau satu kunci.
+
+    rann config explain KUNCI
+      Menampilkan nilai dan asal nilai: default, global, project, env, atau
+      flag.
+
+    rann config set KUNCI NILAI
+      Menulis config global. Daemon dihentikan otomatis.
+
+16.5 Memori
+
+    rann memory list [--scope all|global|project] [--limit N] [--json]
+      Daftar memori. Default scope `all`.
+
+    rann memory search QUERY [--limit N] [--json]
+      Pencarian FTS5.
+
+    rann memory add TEKS [--scope global|project] [--kind NAMA] [--tags a,b] [--json]
+      Menambah memori. Default scope `project`, default kind `fact`.
+
+    rann memory update ID [--text TEKS] [--kind NAMA] [--tags a,b] [--json]
+      Mengubah memori. Minimal satu field harus diisi.
+
+    rann memory remove ID [--json]
+      Menghapus memori.
+
+16.6 Skill
+
+    rann skill list [--limit N] [--json]
+      Daftar skill builtin, global, dan proyek.
+
+    rann skill view NAMA [--json]
+      Melihat isi skill.
+
+    rann skill create NAMA --description TEKS [--body TEKS | --body-file FILE] [--scope global|project] [--overwrite] [--json]
+      Membuat skill baru. Default scope `project`.
+
+    rann skill remove NAMA [--scope global|project]
+      Menghapus skill. Default scope `project`. Builtin tidak bisa dihapus.
+
+16.7 Daemon dan diagnosa
+
+    rann daemon start
+      Memastikan daemon berjalan dan menampilkan pid serta socket.
+
+    rann daemon stop
+      Menghentikan daemon.
+
+    rann daemon status [--json]
+      Status, pid, uptime, socket, database, dan versi skema. Tanpa subcommand
+      `rann daemon` juga menampilkan status.
+
+    rann doctor [--json]
+      Memeriksa Node, permission home, daemon, database, dan config.
+
+    rann init
+      Membuat folder `.rann` dan config proyek di folder saat ini.
+
+16.8 Flag umum
+
+    --model NAMA
+      Override model untuk perintah itu.
+
+    --permission MODE
+      Override mode izin: read-only, ask, accept-edits, trusted, custom.
+
+    --yes
+      Menyetujui otomatis semua permintaan tool pada perintah itu.
+
+    --detach
+      Menjalankan turn di latar belakang dan langsung mencetak id turn.
+
+    --output-format text|json|stream-json
+      Format output. `json` untuk satu objek, `stream-json` untuk NDJSON.
+
+    --json
+      Alias praktis untuk output JSON pada command yang mendukung.
+
+    --limit N
+      Batas jumlah hasil pada sessions, memory, dan skill.
+
+    --session ID
+      Memilih sesi untuk chat.
+
+    --title TEKS
+      Judul sesi baru.
+
+    --status active|closed|error
+      Filter status pada sessions.
+
+    --all
+      Semua sesi, bukan hanya folder saat ini.
+
+    --project PATH
+      Memilih folder proyek untuk sessions, memory, atau skill.
+
+    --scope all|global|project
+      Scope memori atau skill.
+
+    --kind NAMA
+      Jenis memori.
+
+    --tags a,b
+      Tag memori, dipisahkan koma.
+
+    --text TEKS
+      Teks memori saat update.
+
+    --description TEKS
+      Deskripsi skill.
+
+    --body TEKS
+      Isi skill langsung.
+
+    --body-file FILE
+      Isi skill dari berkas.
+
+    --overwrite
+      Mengganti skill yang sudah ada.
+
+    --base-url URL
+      Base URL provider OpenAI-compatible.
+
+    --key-env ENV
+      Nama environment variable yang menyimpan key.
+
+    --type TIPE
+      Tipe provider, default openai-compatible.
+
+    --wait
+    --follow
+      Menunggu turn selesai pada `rann turn`.
+
+16.9 Command yang tidak ada
+
+Tidak ada `rann daemon logs` dan tidak ada command database terpisah. Untuk
+melihat data, gunakan command `sessions`, `usage`, `memory`, dan `skill`, atau
+buka SQLite langsung dengan alat SQLite di mesin sendiri.
+
+Tidak ada sinkronisasi cloud, tidak ada web UI, dan tidak ada plugin pihak
+ketiga pada versi ini.
+
+
+17. COMMAND DI DALAM CHAT
+=========================
+
+Setelah `rann` atau `rann chat`:
+
+    /help
+      Daftar command chat.
+
+    /status
+      Sesi, model, mode izin, folder, dan status.
+
+    /sessions
+      Sepuluh sesi terakhir di folder ini.
+
+    /new [judul]
+      Membuat sesi baru dan langsung pindah ke sesi itu.
+
+    /model [nama]
+      Tanpa nama: tampilkan model. Dengan nama: ganti model untuk sesi chat
+      berjalan.
+
+    /permission [mode]
+      Tanpa mode: tampilkan mode. Dengan mode: ganti mode izin.
+
+    /tools
+      Daftar tool yang tersedia.
+
+    /usage
+      Pemakaian token sesi ini.
+
+    /exit
+    /quit
+    /q
+      Keluar dari chat.
+
+Ctrl+C saat tidak ada turn akan menampilkan prompt lagi. Ctrl+C saat turn
+berjalan akan mengirim permintaan cancel.
+
+
+18. UPDATE RANN CODE
+====================
+
+18.1 Sebelum update
+
+Selalu backup dan hentikan daemon:
+
+    export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
+    cd /root/rann-code
+    rann daemon stop
+    git status
+    git log --oneline -3
+
+Backup data:
+
+    tar -czf ~/rann-backup-$(date +%Y%m%d-%H%M%S).tgz ~/.rann
+    tar -czf ~/proyek-rann-backup-$(date +%Y%m%d-%H%M%S).tgz ~/proyek/.rann
+
+Catat commit lama:
+
+    git rev-parse --short HEAD
+
+18.2 Kalau ada remote Git
+
+    git pull --ff-only
+    pnpm install
+    pnpm check
+    ln -sf /root/rann-code/packages/cli/dist/main.js /usr/local/bin/rann
+    ln -sf /root/rann-code/packages/cli/dist/daemon-main.js /usr/local/bin/rannd
+    rann daemon stop
+    rann doctor
+    rann --version
+
+18.3 Kalau tidak ada remote
+
+Source rann-code saat ini tidak memiliki remote. Kalau kamu menerima source
+baru, jangan timpa folder lama sebelum backup. Cara aman:
+
+    cd /root
+    cp -a rann-code rann-code-lama-$(date +%Y%m%d-%H%M%S)
+    # ekstrak atau salin source baru ke /root/rann-code-baru
+    cd /root/rann-code-baru
+    pnpm install
+    pnpm check
+    ln -sf /root/rann-code-baru/packages/cli/dist/main.js /usr/local/bin/rann
+    ln -sf /root/rann-code-baru/packages/cli/dist/daemon-main.js /usr/local/bin/rannd
+    rann daemon stop
+    rann doctor
+
+Kalau sudah yakin, ganti nama folder lama dan folder baru. Data `~/.rann`
+tetap dipakai karena letaknya terpisah dari source.
+
+18.4 Migrasi database
+
+Saat daemon start dengan versi baru, migrasi skema database berjalan otomatis.
+Config default:
+
+    [storage]
+    backup_before_migrate = true
+
+Biarkan nilai itu true. Tetap lakukan backup manual sebelum update besar.
+
+18.5 Verifikasi setelah update
+
+    rann --version
+    rann doctor
+    rann "halo, sebutkan versi dan folder kerja"
+    rann sessions --all --limit 5
+    rann memory list --scope all
+    rann skill list
+    rann usage
+
+Kalau ada yang gagal, cek bagian 19.
+
+18.6 Rollback
+
+Kalau update bermasalah dan database belum dimigrasi:
+
+    cd /root/rann-code
+    git checkout <commit-lama>
+    pnpm install
+    pnpm build
+    rann daemon stop
+    rann doctor
+
+Kalau database sudah dimigrasi, jangan hanya mengganti binary lama. Restore
+database dari backup:
+
+    rann daemon stop
+    tar -xzf ~/rann-backup-YYYYMMDD-HHMMSS.tgz -C ~
+    rann daemon start
+
+Rollback source tanpa backup database bisa membuat versi lama tidak membaca
+skema baru.
+
+
+19. TROUBLESHOOTING
+===================
+
+19.1 `E_DAEMON_DOWN`
+
+Daemon gagal start atau socket tidak bisa dihubungi.
+
+    rann daemon status
+    rann daemon start
+    ls -l ~/.rann/run
+
+Pastikan folder home bisa ditulis dan tidak ada proses daemon lain yang
+memakai socket yang sama. Cek juga:
+
+    ~/.rann/profiles/default/logs/
+
+19.2 `E_METHOD_NOT_FOUND`
+
+Biasanya daemon lama masih hidup setelah source atau CLI diperbarui.
+
+    rann daemon stop
+    rann --version
+    rann daemon start
+
+19.3 `E_CONFIG_INVALID`
+
+Config TOML rusak atau tabel duplikat.
+
+    rann config get
+    sed -n '1,200p' ~/.rann/config/config.toml
+
+Backup config dulu sebelum mengedit. Hapus blok provider duplikat kalau ada.
+Untuk mengembalikan config default, pindahkan file lama, jangan langsung hapus:
+
+    mv ~/.rann/config/config.toml ~/.rann/config/config.toml.bak
+    rann daemon stop
+    rann doctor
+
+19.4 `E_APPROVAL_REQUIRED` di pipe atau cron
+
+Tanpa TTY, izin otomatis ditolak. Gunakan:
+
+    rann -p "..." --yes
+    rann -p "..." --permission trusted
+
+atau mode `read-only` kalau tidak perlu menulis.
+
+19.5 `E_PERMISSION`
+
+Tool diblokir oleh mode izin, aturan deny, atau path keluar workspace.
+
+    rann config get permissions
+    rann config get permissions.allow
+    rann config get permissions.deny
+
+Jangan mematikan pembatasan workspace tanpa alasan yang jelas.
+
+19.6 `E_BUDGET_EXHAUSTED`
+
+Budget harian habis.
+
+    rann config set budget.max_tokens_per_day 0
+
+Atau naikkan batasnya. Cek pemakaian:
+
+    rann usage
+
+19.7 Provider 401, 403, atau key tidak ditemukan
+
+Key dibaca dari environment saat daemon start. Pastikan env sudah ada di shell
+yang sama, lalu restart daemon:
+
+    export OPENAI_API_KEY="key-kamu"
+    rann daemon stop
+    rann provider test openai
+
+Jangan menaruh nilai key di config atau di command line yang terlihat orang
+lain.
+
+19.8 `E_TOOL_NOT_FOUND` untuk tool MCP
+
+Server MCP belum aktif, nama server salah, atau tool tidak ada di `tools/list`.
+
+    rann config get mcp
+    rann daemon stop
+    rann doctor
+
+Periksa path `command`, isi `args`, dan jalankan server manual untuk melihat
+error. Nama tool harus `mcp__<server>__<tool>`.
+
+19.9 `E_SESSION_NOT_FOUND`
+
+ID sesi salah atau berada di profil lain. Lihat daftar:
+
+    rann sessions --all --limit 20
+
+19.10 `rann sessions` kosong
+
+Default hanya folder saat ini. Coba:
+
+    rann sessions --all
+
+Atau pilih folder:
+
+    rann sessions --project /path/ke/proyek
+
+19.11 `rann skill create` ditolak
+
+Penyebab umum:
+
+- Nama kurang dari 2 karakter atau memakai karakter terlarang.
+- Deskripsi kurang dari 12 karakter.
+- Body kurang dari 20 karakter.
+- Nama bentrok dengan skill bawaan.
+- Skill sudah ada dan `--overwrite` tidak dipakai.
+
+19.12 `rann memory add` ditolak
+
+Teks kurang dari 3 karakter atau lebih dari 4.000 karakter. Tag maksimal 12.
+Periksa juga mode izin kalau perintah dijalankan lewat agent, bukan langsung
+lewat `rann memory add`.
+
+19.13 Chat tidak mau jalan di pipe
+
+Itu memang perilaku yang benar. `rann` tanpa argumen di pipe mencetak bantuan.
+Gunakan `rann -p "..."` atau pipe ke `rann chat` kalau memang ingin membaca
+stdin sebagai satu prompt.
+
+
+20. RINGKASAN CEPAT
+==================
+
+Instalasi:
+
+    export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
+    cd /root/rann-code
+    pnpm install
+    pnpm build
+    ln -sf /root/rann-code/packages/cli/dist/main.js /usr/local/bin/rann
+    chmod +x /root/rann-code/packages/cli/dist/main.js
+    rann doctor
+
+Mulai:
+
+    cd ~/proyek
+    rann new --title "Coba"
+    rann "jelaskan folder ini"
+    rann chat
+
+Provider:
+
+    export OPENAI_API_KEY="key-kamu"
+    rann provider add openai --base-url https://api.openai.com/v1 --key-env OPENAI_API_KEY --model gpt-4o-mini
+    rann config set provider openai
+    rann config set model.default gpt-4o-mini
+    rann provider test openai
+
+Memori:
+
+    rann memory add "User suka jawaban singkat" --scope global --kind preference --tags gaya
+    rann memory list --scope all
+    rann memory search "singkat"
+
+Skill:
+
+    rann skill create uji-lokal --description "Gunakan saat menguji alur lokal" --body-file skill-body.txt --scope project
+    rann skill list
+    rann skill view uji-lokal
+
+Izin:
+
+    rann "perbaiki file ini" --permission accept-edits
+    rann "jalankan tes" --yes
+    rann config set permissions.mode ask
+
+Otomasi:
+
+    rann -p "ringkas repo ini" --output-format json
+    git diff | rann -p "review diff ini"
+    rann "kerja panjang" --detach
+    rann turn turn_xxxxxxxx --wait
+
+Update:
+
+    rann daemon stop
+    tar -czf ~/rann-backup-$(date +%Y%m%d-%H%M%S).tgz ~/.rann
+    cd /root/rann-code
+    git pull --ff-only
+    pnpm install
+    pnpm check
+    rann daemon stop
+    rann doctor
+    rann --version
+
+Selesai. Kalau command gagal, baca pesan `E_*` dan bagian 19 sebelum mengubah
+config atau database.

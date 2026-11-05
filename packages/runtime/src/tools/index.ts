@@ -6,6 +6,8 @@ import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import { assertAllowed, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
 import type { ToolSpec } from "../providers/types.js";
+import type { MemoryService } from "../memory.js";
+import type { SkillStore } from "../skills.js";
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -16,6 +18,12 @@ export interface ToolContext {
   deny?: string[];
   signal?: AbortSignal;
   shellTimeoutMs?: number;
+  memory?: MemoryService;
+  skills?: SkillStore;
+  delegate?: (input: { goal: string; context?: string; label?: string }) => Promise<unknown>;
+  mcp?: {
+    callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
+  };
 }
 
 export interface ToolResult {
@@ -71,6 +79,33 @@ const shellSchema = z.object({
   command: z.string().min(1),
   cwd: z.string().optional(),
   timeout_ms: z.number().int().min(1_000).max(600_000).optional()
+});
+
+const memorySchema = z.object({
+  action: z.enum(["add", "list", "search", "update", "remove"]),
+  text: z.string().min(1).max(4_000).optional(),
+  id: z.string().min(1).optional(),
+  query: z.string().min(1).optional(),
+  scope: z.enum(["global", "project", "all"]).optional(),
+  kind: z.string().min(1).max(40).optional(),
+  tags: z.array(z.string().min(1).max(40)).max(12).optional(),
+  limit: z.number().int().min(1).max(100).optional()
+});
+
+const skillSchema = z.object({
+  action: z.enum(["list", "view", "create", "remove"]),
+  name: z.string().min(1).max(64).optional(),
+  description: z.string().min(1).max(500).optional(),
+  body: z.string().min(1).max(60_000).optional(),
+  scope: z.enum(["global", "project"]).optional(),
+  overwrite: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+});
+
+const taskSchema = z.object({
+  goal: z.string().min(5).max(8_000),
+  context: z.string().max(20_000).optional(),
+  label: z.string().min(1).max(80).optional()
 });
 
 function parse<T extends z.ZodTypeAny>(schema: T, args: unknown, tool: string): z.infer<T> {
@@ -300,6 +335,121 @@ export const tools: ToolDefinition[] = [
         });
       });
     }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "memory",
+      description:
+        "Kelola memori lokal user. Simpan fakta tahan lama (preferensi, konvensi proyek, koreksi) dengan action=add. Cari dengan action=search, lihat dengan action=list, ubah dengan action=update, hapus dengan action=remove.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "list", "search", "update", "remove"] },
+          text: { type: "string", description: "Isi memori, maksimal 4.000 karakter" },
+          id: { type: "string", description: "ID memori untuk update atau remove" },
+          query: { type: "string", description: "Kata kunci pencarian" },
+          scope: { type: "string", enum: ["global", "project", "all"], description: "Default project untuk add" },
+          kind: { type: "string", description: "Jenis: fact, preference, convention, correction" },
+          tags: { type: "array", items: { type: "string" }, maxItems: 12 },
+          limit: { type: "integer", minimum: 1, maximum: 100 }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(memorySchema, args, "memory");
+      if (!ctx.memory) throw new RannError("E_TOOL_NOT_FOUND", "Memori lokal tidak aktif");
+      if (input.action === "add") {
+        assertAllowed({ mode: ctx.permissionMode, tool: "memory", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+        if (!input.text) throw new RannError("E_TOOL_INVALID_ARGS", "memory add butuh text");
+        if (input.scope === "all") throw new RannError("E_TOOL_INVALID_ARGS", "scope add hanya global atau project");
+        const entry = ctx.memory.add({ text: input.text, scope: input.scope, kind: input.kind, tags: input.tags });
+        return textResult({ saved: entry });
+      }
+      if (input.action === "search") {
+        if (!input.query) throw new RannError("E_TOOL_INVALID_ARGS", "memory search butuh query");
+        return textResult({ query: input.query, entries: ctx.memory.search(input.query, input.limit ?? 10) });
+      }
+      if (input.action === "list") {
+        return textResult({ entries: ctx.memory.list(input.scope ?? "all", input.limit ?? 30), count: ctx.memory.count() });
+      }
+      if (input.action === "update") {
+        assertAllowed({ mode: ctx.permissionMode, tool: "memory", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+        if (!input.id) throw new RannError("E_TOOL_INVALID_ARGS", "memory update butuh id");
+        const entry = ctx.memory.update(input.id, { text: input.text, tags: input.tags, kind: input.kind });
+        if (!entry) throw new RannError("E_TOOL_FAILED", `Memori tidak ditemukan: ${input.id}`);
+        return textResult({ updated: entry });
+      }
+      assertAllowed({ mode: ctx.permissionMode, tool: "memory", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const target = input.id ?? input.text;
+      if (!target) throw new RannError("E_TOOL_INVALID_ARGS", "memory remove butuh id atau text");
+      return textResult({ removed: ctx.memory.remove(target) });
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "skill",
+      description:
+        "Kelola skill lokal. action=list untuk katalog, action=view untuk membaca isi skill sebelum dipakai, action=create untuk menyimpan alur kerja berulang, action=remove untuk menghapus skill project/global.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "view", "create", "remove"] },
+          name: { type: "string" },
+          description: { type: "string", description: "Kapan skill dipakai, minimal 12 karakter" },
+          body: { type: "string", description: "Langkah kerja, maksimal 60.000 karakter" },
+          scope: { type: "string", enum: ["global", "project"] },
+          overwrite: { type: "boolean" },
+          limit: { type: "integer", minimum: 1, maximum: 200 }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(skillSchema, args, "skill");
+      if (!ctx.skills) throw new RannError("E_TOOL_NOT_FOUND", "Skill lokal tidak aktif");
+      if (input.action === "list") return textResult({ skills: ctx.skills.list(input.limit ?? 40) });
+      if (input.action === "view") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill view butuh name");
+        const skill = ctx.skills.view(input.name);
+        if (!skill) throw new RannError("E_TOOL_FAILED", `Skill tidak ditemukan: ${input.name}`);
+        return textResult(skill);
+      }
+      assertAllowed({ mode: ctx.permissionMode, tool: "skill", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      if (input.action === "create") {
+        if (!input.name || !input.description || !input.body) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "skill create butuh name, description, dan body");
+        }
+        return textResult({ created: ctx.skills.create({ name: input.name, description: input.description, body: input.body, scope: input.scope, overwrite: input.overwrite }) });
+      }
+      if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill remove butuh name");
+      return textResult({ removed: ctx.skills.remove(input.name, input.scope ?? "project") });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "task",
+      description:
+        "Jalankan subagent lokal dengan konteks terisolasi untuk satu tujuan. Subagent memakai provider yang sama, izin default read-only, dan hasilnya kembali sebagai ringkasan. Cocok untuk riset, pembacaan banyak berkas, atau verifikasi terpisah.",
+      parameters: {
+        type: "object",
+        properties: {
+          goal: { type: "string", description: "Tujuan spesifik subagent" },
+          context: { type: "string", description: "Konteks yang perlu diketahui subagent" },
+          label: { type: "string", description: "Label singkat untuk nama sesi" }
+        },
+        required: ["goal"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(taskSchema, args, "task");
+      if (!ctx.delegate) throw new RannError("E_TOOL_FAILED", "Subagent tidak aktif di sesi ini");
+      const result = await ctx.delegate({ goal: input.goal, context: input.context, label: input.label });
+      return textResult(result);
+    }
   }
 ];
 
@@ -312,6 +462,20 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export async function executeTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {
+  if (name.startsWith("mcp__")) {
+    if (!ctx.mcp) throw new RannError("E_TOOL_NOT_FOUND", `MCP tidak aktif untuk tool ${name}`);
+    assertAllowed({
+      mode: ctx.permissionMode,
+      tool: name,
+      risk: "exec",
+      approved: ctx.approved,
+      allow: ctx.allow,
+      deny: ctx.deny
+    });
+    const started = Date.now();
+    const output = await ctx.mcp.callTool(name, args, ctx.signal);
+    return { ok: true, output, durationMs: Date.now() - started };
+  }
   const tool = findTool(name);
   if (!tool) throw new RannError("E_TOOL_NOT_FOUND", `Tool tidak dikenal: ${name}`, { data: { tool: name } });
   return tool.run(args, ctx);

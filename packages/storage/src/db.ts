@@ -178,6 +178,43 @@ CREATE TABLE config_kv (
   UNIQUE (key, scope, scope_id)
 );
 `
+  },
+  {
+    version: 2,
+    name: "memory",
+    sql: `
+CREATE TABLE memories (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('global','project')),
+  project_path TEXT,
+  kind TEXT NOT NULL DEFAULT 'fact',
+  text TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '[]',
+  source TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memories_scope ON memories(scope, project_path, updated_at DESC);
+CREATE INDEX idx_memories_updated ON memories(updated_at DESC);
+
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+  text,
+  tags,
+  content='memories',
+  content_rowid='rowid',
+  tokenize='unicode61'
+);
+CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memories_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+END;
+CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, text, tags) VALUES ('delete', old.rowid, old.text, old.tags);
+END;
+CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, text, tags) VALUES ('delete', old.rowid, old.text, old.tags);
+  INSERT INTO memories_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
+END;
+`
   }
 ];
 

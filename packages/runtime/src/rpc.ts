@@ -13,12 +13,17 @@ import {
   openDatabase,
   schemaVersion,
   summarizeUsage,
-  type Db
+  touchSession,
+  type Db,
+  type SessionRow
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
-import { runTurn, type AgentConfig, type ApprovalDecision } from "./agent.js";
+import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput } from "./agent.js";
 import { createProvider, resolveModel } from "./providers/index.js";
+import { MemoryService } from "./memory.js";
+import { SkillStore } from "./skills.js";
+import { McpManager } from "./mcp.js";
 
 export interface RpcServerOptions {
   layout: Layout;
@@ -44,6 +49,7 @@ export class RpcServer {
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sessionApprovals = new Map<string, Set<string>>();
   private readonly db: Db;
+  private readonly mcp: McpManager;
   private readonly startedAt = Date.now();
   private closing = false;
 
@@ -54,6 +60,7 @@ export class RpcServer {
       backupDir: options.layout.backupsDir
     });
     this.db = opened.db;
+    this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
     this.server = createServer((socket) => this.attach(socket));
   }
 
@@ -191,8 +198,67 @@ export class RpcServer {
         const { explainKey } = await import("@rann/shared");
         return explainKey(this.options.config, input.key as string);
       }
+      case "config.get":
+        return {
+          config: this.options.config.config,
+          files: this.options.config.files,
+          home: this.options.config.home,
+          project_path: this.options.config.projectPath
+        };
       case "permission.respond":
         return this.respondPermission(input.requestId as string, input.approved as boolean, input.remember as boolean);
+      case "memory.list":
+        return this.memoryService(input.projectPath as string | undefined).list(
+          input.scope as "global" | "project" | "all",
+          input.limit as number
+        );
+      case "memory.search":
+        return this.memoryService(input.projectPath as string | undefined).search(
+          input.query as string,
+          input.limit as number
+        );
+      case "memory.add":
+        return this.memoryService(input.projectPath as string | undefined).add({
+          text: input.text as string,
+          scope: input.scope as "global" | "project",
+          kind: input.kind as string,
+          tags: input.tags as string[]
+        });
+      case "memory.update": {
+        const updated = this.memoryService(input.projectPath as string | undefined).update(input.id as string, {
+          text: input.text as string | undefined,
+          kind: input.kind as string | undefined,
+          tags: input.tags as string[] | undefined
+        });
+        if (!updated) throw new RannError("E_NOT_FOUND", `Memori tidak ditemukan: ${input.id}`);
+        return updated;
+      }
+      case "memory.remove":
+        return {
+          removed: this.memoryService(input.projectPath as string | undefined).remove(input.id as string)
+        };
+      case "skill.list":
+        return this.skillStore(input.projectPath as string | undefined).list(input.limit as number);
+      case "skill.view": {
+        const skill = this.skillStore(input.projectPath as string | undefined).view(input.name as string);
+        if (!skill) throw new RannError("E_NOT_FOUND", `Skill tidak ditemukan: ${input.name}`);
+        return skill;
+      }
+      case "skill.create":
+        return this.skillStore(input.projectPath as string | undefined).create({
+          name: input.name as string,
+          description: input.description as string,
+          body: input.body as string,
+          scope: input.scope as "global" | "project",
+          overwrite: input.overwrite as boolean
+        });
+      case "skill.remove":
+        return {
+          removed: this.skillStore(input.projectPath as string | undefined).remove(
+            input.name as string,
+            input.scope as "global" | "project"
+          )
+        };
       default:
         throw new RannError("E_METHOD_NOT_FOUND", `Method belum diimplementasikan: ${request.method}`);
     }
@@ -296,6 +362,12 @@ export class RpcServer {
     this.activeTurns.set(sessionId, controller);
     const approvals = this.sessionApprovals.get(sessionId) ?? new Set<string>();
     this.sessionApprovals.set(sessionId, approvals);
+
+    const projectPath = session.project_id
+      ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)?.path
+      : process.cwd();
+    const workspaceRoot = projectPath ?? process.cwd();
+
     const agentConfig: AgentConfig = {
       permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? session.permission_mode,
       workspaceOnly: config.permissions.workspace_only,
@@ -307,9 +379,36 @@ export class RpcServer {
       requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal)
     };
 
-    const projectPath = session.project_id
-      ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)?.path
-      : process.cwd();
+    const memory = config.memory.enabled
+      ? new MemoryService(this.db, workspaceRoot, {
+          enabled: config.memory.enabled,
+          promptChars: config.memory.prompt_chars,
+          retrieve: config.memory.retrieve
+        })
+      : undefined;
+    const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, workspaceRoot) : undefined;
+    const mcp = config.mcp.enabled && Object.keys(config.mcp.servers).length > 0 ? this.mcp : undefined;
+
+    let spawned = 0;
+    const delegate = config.subagents.enabled
+      ? async (delegateInput: DelegateInput): Promise<unknown> => {
+          if (spawned >= config.subagents.max_per_turn) {
+            throw new RannError(
+              "E_BUDGET_EXHAUSTED",
+              `Batas subagent per turn tercapai: ${config.subagents.max_per_turn}`
+            );
+          }
+          spawned += 1;
+          return this.runSubagent({
+            parent: session,
+            parentTurnId: turn.id,
+            projectPath: workspaceRoot,
+            model,
+            input: delegateInput,
+            signal: controller.signal
+          });
+        }
+      : undefined;
 
     void runTurn({
       db: this.db,
@@ -318,8 +417,21 @@ export class RpcServer {
       userText: input.text as string,
       provider,
       model,
-      workspaceRoot: projectPath ?? process.cwd(),
+      workspaceRoot,
       config: agentConfig,
+      context: {
+        maxTokens: config.context.max_tokens,
+        keepRecent: config.context.keep_recent,
+        summaryChars: config.context.summary_chars
+      },
+      budget: {
+        maxTokensPerTurn: config.budget.max_tokens_per_turn,
+        maxTokensPerDay: config.budget.max_tokens_per_day
+      },
+      memory,
+      skills,
+      mcp,
+      delegate,
       signal: controller.signal,
       emit: (event) => this.broadcast(event)
     })
@@ -329,6 +441,118 @@ export class RpcServer {
       .finally(() => this.activeTurns.delete(sessionId));
 
     return { turnId: turn.id, status: "running", sessionId };
+  }
+
+  private async runSubagent(options: {
+    parent: SessionRow;
+    parentTurnId: string;
+    projectPath: string;
+    model: string;
+    input: DelegateInput;
+    signal: AbortSignal;
+  }): Promise<unknown> {
+    const config = this.options.config.config;
+    if (!config.subagents.enabled) throw new RannError("E_PERMISSION", "Subagent tidak aktif di config");
+    if (options.signal.aborted) throw new RannError("E_CANCELLED", "Subagent dibatalkan");
+
+    const child = createSession(this.db, {
+      projectPath: options.projectPath,
+      parentId: options.parent.id,
+      title: `Subagent: ${(options.input.label ?? options.input.goal).trim().slice(0, 60)}`,
+      model: config.subagents.model ?? options.model,
+      permissionMode: config.subagents.permission_mode
+    });
+    const created = appendEvent(this.db, {
+      type: "session.created",
+      sessionId: child.id,
+      data: { title: child.title, model: child.model, parent_id: options.parent.id }
+    });
+    this.broadcast(created);
+
+    const turn = createTurn(this.db, { sessionId: child.id });
+    const provider = createProvider(config.provider, providerFor(config));
+    const memory = config.memory.enabled
+      ? new MemoryService(this.db, options.projectPath, {
+          enabled: config.memory.enabled,
+          promptChars: config.memory.prompt_chars,
+          retrieve: config.memory.retrieve
+        })
+      : undefined;
+    const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, options.projectPath) : undefined;
+    const mcp = config.mcp.enabled && Object.keys(config.mcp.servers).length > 0 ? this.mcp : undefined;
+
+    const childConfig: AgentConfig = {
+      permissionMode: config.subagents.permission_mode,
+      workspaceOnly: config.permissions.workspace_only,
+      allow: config.permissions.allow,
+      deny: config.permissions.deny,
+      maxSteps: config.subagents.max_steps,
+      systemExtra: [
+        "Kamu subagent dengan konteks terpisah.",
+        `Tujuan: ${options.input.goal}`,
+        options.input.context ? `Konteks dari agent induk: ${options.input.context}` : "",
+        "Fokus pada tujuan. Jangan bertanya balik. Akhiri dengan ringkasan hasil yang bisa dipakai agent induk."
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      requestApproval: (request) =>
+        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, options.signal)
+    };
+
+    try {
+      const result = await runTurn({
+        db: this.db,
+        session: child,
+        turnId: turn.id,
+        userText: options.input.goal,
+        provider,
+        model: child.model,
+        workspaceRoot: options.projectPath,
+        config: childConfig,
+        context: {
+          maxTokens: config.context.max_tokens,
+          keepRecent: config.context.keep_recent,
+          summaryChars: config.context.summary_chars
+        },
+        budget: {
+          maxTokensPerTurn: config.budget.max_tokens_per_turn,
+          maxTokensPerDay: config.budget.max_tokens_per_day
+        },
+        memory,
+        skills,
+        mcp,
+        signal: options.signal,
+        emit: (event) => this.broadcast(event)
+      });
+      touchSession(this.db, child.id, { status: "closed" });
+      return {
+        session_id: child.id,
+        turn_id: turn.id,
+        text: result.text,
+        steps: result.steps,
+        usage: result.usage,
+        compacted: result.compacted
+      };
+    } catch (error) {
+      touchSession(this.db, child.id, { status: "error" });
+      throw error;
+    }
+  }
+
+  private memoryService(projectPath?: string): MemoryService {
+    const config = this.options.config.config;
+    if (!config.memory.enabled) throw new RannError("E_PERMISSION", "Memori lokal tidak aktif di config");
+    return new MemoryService(this.db, projectPath ?? process.cwd(), {
+      enabled: config.memory.enabled,
+      promptChars: config.memory.prompt_chars,
+      retrieve: config.memory.retrieve
+    });
+  }
+
+  private skillStore(projectPath?: string): SkillStore {
+    const config = this.options.config.config;
+    if (!config.skills.enabled) throw new RannError("E_PERMISSION", "Skill lokal tidak aktif di config");
+    return new SkillStore(this.options.layout.profileDir, projectPath ?? process.cwd());
   }
 
   private modelList(): unknown {
@@ -397,6 +621,7 @@ export class RpcServer {
     for (const entry of this.pendingApprovals.values()) entry.settle(false);
     this.pendingApprovals.clear();
     this.sessionApprovals.clear();
+    await this.mcp.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     for (const socket of this.sockets) socket.destroy();
     this.db.close();

@@ -20,12 +20,15 @@ Pemakaian:
   rann resume <sesi> "instruksi" lanjutkan sesi tertentu
   rann turn <id> [--wait]        lihat hasil turn, tunggu kalau perlu
   rann new [--title teks]       buat sesi baru
-  rann sessions [--limit N]     daftar sesi
+  rann sessions [--limit N]     daftar sesi di folder ini (--all untuk semua)
   rann models                   daftar model provider aktif
   rann usage [sesi]             ringkasan token dan biaya
   rann providers                daftar provider dan status key
   rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
   rann provider test [nama]       uji koneksi provider dan model default
+  rann memory list|search|add|update|remove  kelola memori lokal
+  rann skill list|view|create|remove         kelola skill lokal
+  rann config get [kunci]       lihat config efektif atau satu kunci
   rann config explain <kunci>   asal nilai config
   rann config set <kunci> <v>   tulis config global
   rann daemon start|stop|status kelola daemon
@@ -59,7 +62,9 @@ const KNOWN_COMMANDS = new Set([
   "usage",
   "turn",
   "config",
-  "init"
+  "init",
+  "memory",
+  "skill"
 ]);
 
 async function main(argv: string[]): Promise<number> {
@@ -74,8 +79,11 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   const barePrompt = flagString(args, "prompt");
-  if (args.command === undefined && barePrompt) {
-    return await runPrompt(args, barePrompt);
+  if (args.command === undefined) {
+    const positionalPrompt = args.positionals.join(" ").trim();
+    if (positionalPrompt.length > 0) return await runPrompt(args, positionalPrompt);
+    if (barePrompt) return await runPrompt(args, barePrompt);
+    if (process.stdin.isTTY && process.stdout.isTTY) return await chatCommand(args);
   }
   if (flagBool(args, "help") || args.command === undefined) {
     print(HELP);
@@ -115,6 +123,10 @@ async function main(argv: string[]): Promise<number> {
       return await turnCommand(args);
     case "config":
       return await configCommand(args);
+    case "memory":
+      return await memoryCommand(args);
+    case "skill":
+      return await skillCommand(args);
     case "init":
       return initCommand();
     case "run": {
@@ -271,10 +283,13 @@ async function doctorCommand(args: ParsedArgs): Promise<number> {
 async function sessionsCommand(args: ParsedArgs): Promise<number> {
   const limit = Number.parseInt(flagString(args, "limit") ?? "20", 10);
   const status = flagString(args, "status");
+  const project = flagString(args, "project");
+  const scopeProject = flagBool(args, "all") ? undefined : (project ?? process.cwd());
   const sessions = await withClient((client) =>
     client.request<Array<Record<string, unknown>>>("session.list", {
       limit,
-      ...(status ? { status } : {})
+      ...(status ? { status } : {}),
+      ...(scopeProject ? { projectPath: scopeProject } : {})
     })
   );
   if (flagBool(args, "json")) {
@@ -435,12 +450,18 @@ const PERMISSION_MODES = ["read-only", "ask", "accept-edits", "trusted", "custom
 async function chatCommand(args: ParsedArgs): Promise<number> {
   const client = await ensureDaemon();
   try {
-    const sessions = await client.request<Array<Record<string, unknown>>>("session.list", {
-      limit: 1,
-      status: "active",
-      projectPath: process.cwd()
-    });
-    let session = sessions[0];
+    const requestedSession = flagString(args, "session");
+    let session: Record<string, unknown> | undefined;
+    if (requestedSession) {
+      session = await client.request<Record<string, unknown>>("session.get", { sessionId: requestedSession });
+    } else {
+      const sessions = await client.request<Array<Record<string, unknown>>>("session.list", {
+        limit: 1,
+        status: "active",
+        projectPath: process.cwd()
+      });
+      session = sessions[0];
+    }
     if (!session?.id) {
       session = await client.request<Record<string, unknown>>("session.create", {
         title: `Chat ${process.cwd().split("/").pop() ?? "project"}`,
@@ -505,7 +526,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line === "/tools") {
-          print("tool: fs_read, fs_write, fs_edit, fs_list, shell_run");
+          print("tool: fs_read, fs_write, fs_edit, fs_list, shell_run, memory, skill, task, mcp__<server>__<tool>");
           continue;
         }
         if (line === "/usage") {
@@ -734,7 +755,218 @@ async function stopDaemonForConfig(): Promise<void> {
   print(ui.dim("daemon dihentikan, config baru dipakai pada perintah berikutnya"));
 }
 
+function localProject(args: ParsedArgs): string {
+  return flagString(args, "project") ?? process.cwd();
+}
+
+function limitFlag(args: ParsedArgs, fallback: number): number {
+  const raw = flagString(args, "limit");
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new RannError("E_INVALID_PARAMS", `--limit harus angka positif, dapat: ${raw}`);
+  }
+  return parsed;
+}
+
+function tagFlag(args: ParsedArgs): string[] | undefined {
+  const raw = flagString(args, "tags");
+  if (raw === undefined) return undefined;
+  const tags = raw
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+  return tags;
+}
+
+interface MemoryView {
+  id: string;
+  scope: string;
+  kind: string;
+  text: string;
+  tags: string[];
+  updated_at: number;
+}
+
+function renderMemories(entries: MemoryView[]): string {
+  if (entries.length === 0) return "belum ada memori";
+  return table(
+    ["id", "scope", "kind", "teks", "diperbarui"],
+    entries.map((entry) => [
+      entry.id,
+      entry.scope,
+      entry.kind,
+      entry.text.replace(/\s+/g, " ").slice(0, 60),
+      relativeTime(entry.updated_at)
+    ])
+  );
+}
+
+async function memoryCommand(args: ParsedArgs): Promise<number> {
+  const projectPath = localProject(args);
+  const asJson = flagBool(args, "json");
+  const sub = args.subcommand ?? "list";
+
+  if (sub === "add") {
+    const text = flagString(args, "text") ?? args.positionals.join(" ").trim();
+    if (!text) throw new RannError("E_INVALID_PARAMS", "memory add butuh teks");
+    const scope = (flagString(args, "scope") ?? "project") as "global" | "project";
+    const entry = await withClient((client) =>
+      client.request<MemoryView>("memory.add", {
+        projectPath,
+        text,
+        scope,
+        kind: flagString(args, "kind") ?? "fact",
+        tags: tagFlag(args) ?? []
+      })
+    );
+    print(asJson ? JSON.stringify(entry, null, 2) : `memori ${entry.id} disimpan (${entry.scope})`);
+    return 0;
+  }
+
+  if (sub === "search") {
+    const query = args.positionals.join(" ").trim() || flagString(args, "text");
+    if (!query) throw new RannError("E_INVALID_PARAMS", "memory search butuh kata kunci");
+    const entries = await withClient((client) =>
+      client.request<MemoryView[]>("memory.search", { projectPath, query, limit: limitFlag(args, 10) })
+    );
+    print(asJson ? JSON.stringify(entries, null, 2) : renderMemories(entries));
+    return 0;
+  }
+
+  if (sub === "update") {
+    const id = args.positionals[0];
+    if (!id) throw new RannError("E_INVALID_PARAMS", "memory update butuh id");
+    const text = flagString(args, "text");
+    const kind = flagString(args, "kind");
+    const tags = tagFlag(args);
+    if (text === undefined && kind === undefined && tags === undefined) {
+      throw new RannError("E_INVALID_PARAMS", "memory update butuh --text, --kind, atau --tags");
+    }
+    const entry = await withClient((client) =>
+      client.request<MemoryView>("memory.update", { projectPath, id, text, kind, tags })
+    );
+    print(asJson ? JSON.stringify(entry, null, 2) : `memori ${entry.id} diperbarui`);
+    return 0;
+  }
+
+  if (sub === "remove") {
+    const id = args.positionals[0];
+    if (!id) throw new RannError("E_INVALID_PARAMS", "memory remove butuh id");
+    const result = await withClient((client) => client.request<{ removed: boolean }>("memory.remove", { projectPath, id }));
+    print(result.removed ? `memori ${id} dihapus` : `memori ${id} tidak ditemukan`);
+    return result.removed ? 0 : 1;
+  }
+
+  if (sub !== "list") throw new RannError("E_INVALID_PARAMS", `Subcommand memory tidak dikenal: ${sub}`);
+  const scope = (flagString(args, "scope") ?? "all") as "global" | "project" | "all";
+  const entries = await withClient((client) =>
+    client.request<MemoryView[]>("memory.list", { projectPath, scope, limit: limitFlag(args, 30) })
+  );
+  print(asJson ? JSON.stringify(entries, null, 2) : renderMemories(entries));
+  return 0;
+}
+
+interface SkillView {
+  name: string;
+  description: string;
+  scope: string;
+  version: string;
+  updated_at: number;
+  body?: string;
+}
+
+async function skillCommand(args: ParsedArgs): Promise<number> {
+  const projectPath = localProject(args);
+  const asJson = flagBool(args, "json");
+  const sub = args.subcommand ?? "list";
+
+  if (sub === "list") {
+    const skills = await withClient((client) =>
+      client.request<SkillView[]>("skill.list", { projectPath, limit: limitFlag(args, 40) })
+    );
+    if (asJson) {
+      print(JSON.stringify(skills, null, 2));
+    } else if (skills.length === 0) {
+      print("belum ada skill");
+    } else {
+      print(
+        table(
+          ["nama", "scope", "versi", "deskripsi"],
+          skills.map((skill) => [skill.name, skill.scope, skill.version, skill.description.slice(0, 60)])
+        )
+      );
+    }
+    return 0;
+  }
+
+  if (sub === "view") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill view butuh nama");
+    const skill = await withClient((client) => client.request<SkillView>("skill.view", { projectPath, name }));
+    if (asJson) {
+      print(JSON.stringify(skill, null, 2));
+    } else {
+      print(`# ${skill.name} (${skill.scope}, v${skill.version})`);
+      print(skill.description);
+      print("");
+      print(skill.body ?? "");
+    }
+    return 0;
+  }
+
+  if (sub === "create") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill create butuh nama");
+    const description = flagString(args, "description");
+    if (!description) throw new RannError("E_INVALID_PARAMS", "skill create butuh --description");
+    const bodyFile = flagString(args, "body-file");
+    const body = flagString(args, "body") ?? (bodyFile ? readFileSync(bodyFile, "utf8") : args.positionals.slice(1).join("\n"));
+    if (!body.trim()) throw new RannError("E_INVALID_PARAMS", "skill create butuh --body atau --body-file");
+    const skill = await withClient((client) =>
+      client.request<SkillView>("skill.create", {
+        projectPath,
+        name,
+        description,
+        body,
+        scope: (flagString(args, "scope") ?? "project") as "global" | "project",
+        overwrite: flagBool(args, "overwrite")
+      })
+    );
+    print(asJson ? JSON.stringify(skill, null, 2) : `skill ${skill.name} disimpan (${skill.scope})`);
+    return 0;
+  }
+
+  if (sub === "remove") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill remove butuh nama");
+    const result = await withClient((client) =>
+      client.request<{ removed: boolean }>("skill.remove", {
+        projectPath,
+        name,
+        scope: (flagString(args, "scope") ?? "project") as "global" | "project"
+      })
+    );
+    print(result.removed ? `skill ${name} dihapus` : `skill ${name} tidak ditemukan`);
+    return result.removed ? 0 : 1;
+  }
+
+  throw new RannError("E_INVALID_PARAMS", `Subcommand skill tidak dikenal: ${sub}`);
+}
+
 async function configCommand(args: ParsedArgs): Promise<number> {
+  if (args.subcommand === "get" || args.subcommand === undefined) {
+    const key = args.positionals[0];
+    if (key) {
+      const data = await withClient((client) => client.request<Record<string, unknown>>("config.explain", { key }));
+      if (flagBool(args, "json")) print(JSON.stringify(data, null, 2));
+      else print(`${data.key} = ${JSON.stringify(data.value)}  (${data.source})`);
+      return 0;
+    }
+    const data = await withClient((client) => client.request<Record<string, unknown>>("config.get", {}));
+    print(JSON.stringify(data, null, 2));
+    return 0;
+  }
   if (args.subcommand === "explain") {
     const key = args.positionals[0];
     if (!key) throw new RannError("E_INVALID_PARAMS", "Pakai: rann config explain <kunci>");
@@ -754,7 +986,7 @@ async function configCommand(args: ParsedArgs): Promise<number> {
     print(`${key} = ${value}`);
     return 0;
   }
-  throw new RannError("E_INVALID_PARAMS", "Pakai: rann config explain <kunci> | rann config set <kunci> <nilai>");
+  throw new RannError("E_INVALID_PARAMS", "Pakai: rann config get [kunci] | rann config set <kunci> <nilai>");
 }
 
 function initCommand(): number {
