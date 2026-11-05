@@ -2,32 +2,36 @@
 
 CLI agent coding lokal dengan daemon, sesi SQLite, memori jangka panjang, skill yang bisa tumbuh, subagent, MCP, dan alur izin eksplisit. Dibangun ulang dari PRD v1.
 
-Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri, tanpa cloud dan tanpa layanan model pihak ketiga kecuali provider yang kamu pasang sendiri.
+Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
 
 Panduan lengkap dari instalasi sampai update ada di `tutorial.txt`.
 
+Versi teks yang bisa dibagikan: https://cdn.adelrann.my.id/f/ec7fd917f6/tutorial.txt
+
 ## Kebutuhan
 
-- Node >= 22.11
-- pnpm 9.15.9
-- Linux atau macOS
+- Node.js 22.11 atau lebih baru.
+- Windows 10/11, macOS, atau Linux.
+
+pnpm dan Git hanya dibutuhkan kalau kamu mengembangkan source, bukan untuk memakai aplikasi.
 
 ## Pasang
 
+Untuk pengguna:
+
 ```bash
-cd /root/rann-code
-export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
-pnpm install
-pnpm build
-ln -sf /root/rann-code/packages/cli/dist/main.js /usr/local/bin/rann
-chmod +x /root/rann-code/packages/cli/dist/main.js
+npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
 rann --version
 ```
 
-Kalau tidak mau symlink global:
+Tidak perlu npx, tidak perlu clone repository, dan tidak perlu build dari source. Data disimpan di `~/.rann` (Windows: `%USERPROFILE%\.rann`).
+
+Untuk kontributor yang mengembangkan source:
 
 ```bash
-node /root/rann-code/packages/cli/dist/main.js --help
+pnpm install
+pnpm build
+pnpm check
 ```
 
 ## Mulai cepat
@@ -142,7 +146,7 @@ Agent juga punya tool `skill` untuk membuat skill baru saat menemukan prosedur y
 
 ## Konteks, budget, dan subagent
 
-- Konteks panjang diringkas otomatis dengan digest lokal. Tidak ada panggilan model tambahan dan tidak ada data yang keluar dari mesin.
+- Konteks panjang diringkas otomatis dengan digest lokal. Tidak ada panggilan model tambahan untuk meringkas.
 - Budget harian dan per turn dicek dari tabel `usage_events`. Kalau habis, turn ditolak dengan `E_BUDGET_EXHAUSTED` sebelum provider dipanggil.
 
 ```bash
@@ -220,7 +224,7 @@ Default di `~/.rann`, bisa dipindah lewat `RANN_HOME`:
 
 Database SQLite memakai WAL, foreign key, dan FTS5. Isi utamanya: sesi, pesan, turn, event, tool call, usage, dan memori. Semua sesi terikat ke folder kerja. `rann "..."` memakai sesi aktif dari folder saat ini, `rann sessions` hanya menampilkan folder itu kecuali diberi `--all`.
 
-Tidak ada sinkronisasi cloud, telemetry, atau upload berkas. Backup cukup dengan menyalin `~/.rann` dan folder proyek.
+Tidak ada sinkronisasi cloud, telemetry, atau upload otomatis. Prompt hanya dikirim ke provider model yang kamu pilih. Backup cukup dengan menyalin `~/.rann` dan folder proyek.
 
 ## Arsitektur
 
@@ -236,8 +240,6 @@ CLI tidak menyentuh database langsung. Semua lewat JSON-RPC 2.0 di Unix socket, 
 ## Tes
 
 ```bash
-export PATH=/root/.nvm/versions/node/v22.23.3/bin:$PATH
-cd /root/rann-code
 pnpm check
 ```
 
