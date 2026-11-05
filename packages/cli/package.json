@@ -1,0 +1,20 @@
+{
+  "name": "@rann/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "rann": "./dist/main.js",
+    "rannd": "./dist/daemon-main.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@rann/shared": "workspace:*",
+    "@rann/runtime": "workspace:*",
+    "@rann/storage": "workspace:*"
+  }
+}
