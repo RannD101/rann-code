@@ -6,7 +6,7 @@ Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri. Prompt hany
 
 Panduan lengkap dari instalasi sampai update ada di `tutorial.txt`.
 
-Versi teks yang bisa dibagikan: https://cdn.adelrann.my.id/f/ec7fd917f6/tutorial.txt
+Versi teks yang bisa dibagikan: https://cdn.adelrann.my.id/f/ae6a60dde9/tutorial.txt
 
 ## Kebutuhan
 

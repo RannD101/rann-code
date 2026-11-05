@@ -57,6 +57,25 @@ Yang dibutuhkan:
 Tidak perlu kartu kredit untuk mencoba alur aplikasi dengan provider mock.
 Kalau ingin jawaban AI sungguhan, kamu perlu API key dari provider model.
 
+1.1 Cara membaca tutorial ini
+
+Baris yang menjorok ke kanan adalah perintah. Contoh:
+
+    node -v
+
+Cara memakainya:
+
+1. Blok perintah dengan mouse.
+2. Salin dengan Ctrl+C, atau Command+C di macOS.
+3. Tempel di terminal dengan Ctrl+V, atau Command+V di macOS.
+4. Tekan Enter.
+
+Jangan menyalin tanda `$` atau `>` kalau tanda itu muncul di contoh. Tanda
+tersebut hanya penanda terminal, bukan bagian perintah.
+
+Kalau sebuah perintah panjang terpotong menjadi beberapa baris dalam tutorial,
+salin semuanya sebagai satu baris. Jangan menekan Enter di tengah perintah.
+
 
 2. PASANG NODE.JS
 =================
