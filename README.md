@@ -64,11 +64,15 @@ rann config set provider lokal
 | `rann "prompt"` | Satu turn lalu keluar |
 | `rann chat [--session <id>]` | REPL interaktif |
 | `rann new --title "..."` | Membuat sesi baru |
-| `rann sessions [--all] [--json]` | Daftar sesi |
+| `rann sessions [--limit N] [--json]` | Daftar sesi |
 | `rann send <id> "teks"` | Kirim prompt ke sesi tertentu |
 | `rann resume <id>` | Alias `send` untuk sesi yang sudah ada |
+| `rann "..." --detach` | Jalankan turn di latar belakang |
+| `rann turn <id> [--wait]` | Lihat status dan hasil turn |
 | `rann providers` | Status provider dan ada tidaknya key |
+| `rann provider test [nama]` | Uji koneksi provider dan model default |
 | `rann models` | Model default dan daftar model |
+| `rann usage [sesi]` | Ringkasan token dan biaya per provider/model |
 | `rann config get [key]` | Lihat config efektif |
 | `rann config set <key> <value>` | Ubah config |
 | `rann doctor` | Cek instalasi, daemon, database, config |
@@ -76,7 +80,30 @@ rann config set provider lokal
 | `rann daemon logs [-n 50]` | Lihat log daemon |
 | `rann --version` | Versi CLI dan protokol |
 
-Di dalam `rann chat`: `/help`, `/status`, `/sessions`, `/new`, `/model`, `/permission`, `/tools`, `/exit`.
+Di dalam `rann chat`: `/help`, `/status`, `/sessions`, `/new`, `/model`, `/permission`, `/tools`, `/usage`, `/exit`.
+
+## Otomasi dan pipe
+
+```bash
+rann -p "ringkas repo ini" --output-format json
+git diff | rann -p "review diff ini" --output-format json
+rann "refactor src/auth.ts" --output-format stream-json
+```
+
+`--output-format json` mencetak satu objek ke stdout:
+
+```json
+{"ok":true,"result":"...","session_id":"ses_...","turn_id":"turn_...","steps":1,"usage":{"input_tokens":10,"output_tokens":20},"error":null}
+```
+
+`stream-json` mencetak NDJSON per event: `message.delta`, `tool.start`, `tool.end`, `approval.request`, `turn.end`, dan `error`. Log, izin, dan diagnostik tetap di stderr. Tanpa TTY, permintaan izin otomatis ditolak supaya proses tidak menggantung; pakai `--yes` atau mode `trusted` untuk otomasi yang memang boleh menulis.
+
+Turn juga bisa dilepas ke latar belakang. Daemon tetap menjalankannya setelah CLI keluar:
+
+```bash
+rann "bangun ulang indeks dokumen" --detach --permission trusted
+rann turn turn_abc123 --wait
+```
 
 ## Izin
 

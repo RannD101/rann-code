@@ -8,7 +8,7 @@ import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue } from "./config-store.js";
 import { choose, chooseWith, print, printErr, relativeTime, table, ui } from "./ui.js";
-import { runStreaming, type ApprovalDecision, type ApprovalRequest } from "./stream.js";
+import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat } from "./stream.js";
 
 const HELP = `rann-code ${packageVersion()}
 
@@ -18,11 +18,14 @@ Pemakaian:
   rann -p "instruksi"           sama, gaya non-interaktif
   rann send <sesi> "instruksi"  kirim ke sesi tertentu
   rann resume <sesi> "instruksi" lanjutkan sesi tertentu
+  rann turn <id> [--wait]        lihat hasil turn, tunggu kalau perlu
   rann new [--title teks]       buat sesi baru
   rann sessions [--limit N]     daftar sesi
   rann models                   daftar model provider aktif
+  rann usage [sesi]             ringkasan token dan biaya
   rann providers                daftar provider dan status key
   rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
+  rann provider test [nama]       uji koneksi provider dan model default
   rann config explain <kunci>   asal nilai config
   rann config set <kunci> <v>   tulis config global
   rann daemon start|stop|status kelola daemon
@@ -33,6 +36,8 @@ Flag umum:
   --model <nama>        override model
   --permission <mode>   read-only | ask | accept-edits | trusted | custom
   --yes                 setujui otomatis semua permintaan tool
+  --detach              jalankan turn di latar, langsung cetak id turn
+  --output-format <f>   text | json | stream-json
   --json                keluaran JSON
   -v, --version         versi
   -h, --help            bantuan`;
@@ -51,6 +56,8 @@ const KNOWN_COMMANDS = new Set([
   "models",
   "providers",
   "provider",
+  "usage",
+  "turn",
   "config",
   "init"
 ]);
@@ -65,6 +72,10 @@ async function main(argv: string[]): Promise<number> {
   if (flagBool(args, "version")) {
     print(`rann-code ${packageVersion()}`);
     return 0;
+  }
+  const barePrompt = flagString(args, "prompt");
+  if (args.command === undefined && barePrompt) {
+    return await runPrompt(args, barePrompt);
   }
   if (flagBool(args, "help") || args.command === undefined) {
     print(HELP);
@@ -98,12 +109,18 @@ async function main(argv: string[]): Promise<number> {
       return await providersCommand(args);
     case "provider":
       return await providerCommand(args);
+    case "usage":
+      return await usageCommand(args);
+    case "turn":
+      return await turnCommand(args);
     case "config":
       return await configCommand(args);
     case "init":
       return initCommand();
-    case "run":
-      return await runPrompt(args, args.positionals.join(" "));
+    case "run": {
+      const prompt = [flagString(args, "prompt"), args.positionals.join(" ").trim()].filter((part): part is string => Boolean(part)).join("\n");
+      return await runPrompt(args, prompt);
+    }
     default: {
       const prompt = args.positionals.join(" ").trim();
       if (prompt.length > 0) return await runPrompt(args, prompt);
@@ -303,8 +320,19 @@ async function sendCommand(args: ParsedArgs): Promise<number> {
   return await sendToSession(sessionId, text, args);
 }
 
+async function readPipedStdin(): Promise<string> {
+  if (process.stdin.isTTY === true) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
 async function runPrompt(args: ParsedArgs, text: string): Promise<number> {
-  if (text.trim().length === 0) throw new RannError("E_INVALID_PARAMS", "Prompt kosong. Pakai: rann \"instruksi\"");
+  const stdin = await readPipedStdin();
+  const prompt = stdin.length > 0 ? `${text}\n\nKonteks tambahan dari stdin:\n${stdin.slice(0, 200_000)}` : text;
+  if (prompt.trim().length === 0) throw new RannError("E_INVALID_PARAMS", "Prompt kosong. Pakai: rann \"instruksi\"");
   const { sessionId, reused } = await withClient(async (client) => {
     const sessions = await client.request<Array<Record<string, unknown>>>("session.list", {
       limit: 50,
@@ -314,25 +342,66 @@ async function runPrompt(args: ParsedArgs, text: string): Promise<number> {
     const target = sessions[0];
     if (target?.id) return { sessionId: target.id as string, reused: true };
     const created = await client.request<Record<string, unknown>>("session.create", {
-      title: text.slice(0, 70),
+      title: prompt.slice(0, 70),
       model: flagString(args, "model"),
       permissionMode: flagString(args, "permission"),
       projectPath: process.cwd()
     });
     return { sessionId: created.id as string, reused: false };
   });
-  if (!reused) print(ui.dim(`sesi ${sessionId}`));
-  return await sendToSession(sessionId, text, args);
+  if (!reused && resolveOutputFormat(args) === "text") print(ui.dim(`sesi ${sessionId}`));
+  return await sendToSession(sessionId, prompt, args);
+}
+
+function resolveOutputFormat(args: ParsedArgs): OutputFormat {
+  const raw = flagString(args, "output-format") ?? (flagBool(args, "json") ? "json" : "text");
+  if (raw === "text" || raw === "json" || raw === "stream-json") return raw;
+  throw new RannError("E_INVALID_PARAMS", `output-format tidak dikenal: ${raw}. Pakai text, json, atau stream-json.`);
 }
 
 async function sendToSession(sessionId: string, text: string, args: ParsedArgs): Promise<number> {
+  const output = resolveOutputFormat(args);
   const client = await ensureDaemon();
   try {
+    if (flagBool(args, "detach")) {
+      const started = await client.request<Record<string, unknown>>("session.send", {
+        sessionId,
+        text,
+        ...(flagString(args, "model") ? { model: flagString(args, "model") } : {}),
+        ...(flagString(args, "permission") ? { permissionMode: flagString(args, "permission") } : {})
+      });
+      const turnId = String(started.turnId);
+      if (output === "json") {
+        print(JSON.stringify({ ok: true, session_id: sessionId, turn_id: turnId, status: "running" }));
+      } else if (output === "stream-json") {
+        print(JSON.stringify({ type: "detached", session_id: sessionId, turn_id: turnId }));
+      } else {
+        print(`turn ${turnId} berjalan di latar (sesi ${sessionId})`);
+        print(ui.dim(`cek: rann turn ${turnId} --wait`));
+      }
+      return 0;
+    }
     const result = await runStreaming(client, sessionId, text, {
       model: flagString(args, "model"),
       permissionMode: flagString(args, "permission"),
+      output,
       onApproval: makeApprovalHandler(args)
     });
+    if (output === "json") {
+      const payload = {
+        ok: result.ok,
+        result: result.text,
+        session_id: sessionId,
+        turn_id: result.turnId,
+        steps: result.steps,
+        usage: {
+          input_tokens: result.usage.inputTokens,
+          output_tokens: result.usage.outputTokens
+        },
+        error: result.error ?? null
+      };
+      process.stdout.write(`${JSON.stringify(payload)}\n`);
+    }
     return result.ok ? 0 : 1;
   } finally {
     client.close();
@@ -423,7 +492,26 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /model [nama], /permission [mode], /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /permission [mode], /tools, /usage, /sessions, /exit");
+          continue;
+        }
+        if (line === "/status") {
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          print(`sesi     ${sessionId}`);
+          print(`model    ${model ?? String(data.model ?? "default")}`);
+          print(`izin     ${permissionMode ?? String(data.permission_mode ?? "default")}`);
+          print(`folder   ${process.cwd()}`);
+          print(`status   ${String(data.status ?? "active")}`);
+          continue;
+        }
+        if (line === "/tools") {
+          print("tool: fs_read, fs_write, fs_edit, fs_list, shell_run");
+          continue;
+        }
+        if (line === "/usage") {
+          const rows = await client.request<Array<Record<string, unknown>>>("usage.summary", { sessionId });
+          if (rows.length === 0) print("belum ada pemakaian token di sesi ini");
+          else for (const row of rows) print(formatUsageRow(row));
           continue;
         }
         if (line.startsWith("/new")) {
@@ -507,6 +595,75 @@ async function modelsCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
+async function turnCommand(args: ParsedArgs): Promise<number> {
+  const turnId = args.positionals[0];
+  if (!turnId) throw new RannError("E_INVALID_PARAMS", "Pakai: rann turn <id-turn> [--wait] [--json]");
+  const wait = flagBool(args, "wait") || flagBool(args, "follow");
+  const client = await ensureDaemon();
+  try {
+    let data: Record<string, unknown>;
+    for (;;) {
+      data = await client.request<Record<string, unknown>>("turn.get", { turnId });
+      const status = String(data.status);
+      if (!wait || status === "done" || status === "failed" || status === "cancelled") break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (flagBool(args, "json")) {
+      print(JSON.stringify(data, null, 2));
+    } else {
+      const status = String(data.status);
+      print(`turn ${turnId}  ${status}`);
+      if (typeof data.usage_json === "string" && data.usage_json.length > 0) {
+        try {
+          const usage = JSON.parse(data.usage_json) as { inputTokens?: number; outputTokens?: number };
+          print(`token masuk ${usage.inputTokens ?? 0}  keluar ${usage.outputTokens ?? 0}`);
+        } catch {
+          // usage lama bisa berupa JSON yang tidak lengkap; abaikan saja
+        }
+      }
+      const messages = Array.isArray(data.messages) ? (data.messages as Array<Record<string, unknown>>) : [];
+      const last = [...messages].reverse().find((message) => message.role === "assistant");
+      if (last && String(last.content ?? "").trim().length > 0) {
+        print("");
+        print(String(last.content));
+      }
+      if (status === "failed") print(ui.red(String(data.error_message ?? data.error_code ?? "turn gagal")));
+    }
+    return String(data.status) === "failed" ? 1 : 0;
+  } finally {
+    client.close();
+  }
+}
+
+function formatUsageRow(row: Record<string, unknown>): string {
+  return (
+    `${String(row.provider)}/${String(row.model)}  ${String(row.turns)} turn  ` +
+    `masuk ${String(row.input_tokens)}  keluar ${String(row.output_tokens)}  ` +
+    `biaya $${Number(row.cost_usd ?? 0).toFixed(4)}  terakhir ${relativeTime(Number(row.last_at ?? Date.now()))}`
+  );
+}
+
+async function usageCommand(args: ParsedArgs): Promise<number> {
+  const sessionId = args.positionals[0] ?? flagString(args, "session");
+  const rows = await withClient((client) =>
+    client.request<Array<Record<string, unknown>>>("usage.summary", {
+      ...(sessionId ? { sessionId } : {})
+    })
+  );
+  if (flagBool(args, "json")) {
+    print(JSON.stringify(rows, null, 2));
+    return 0;
+  }
+  if (rows.length === 0) {
+    print("belum ada pemakaian token");
+    return 0;
+  }
+  for (const row of rows) {
+    print(formatUsageRow(row));
+  }
+  return 0;
+}
+
 async function providersCommand(args: ParsedArgs): Promise<number> {
   const providers = await withClient((client) => client.request<Array<Record<string, unknown>>>("provider.list"));
   if (flagBool(args, "json")) {
@@ -529,7 +686,23 @@ async function providersCommand(args: ParsedArgs): Promise<number> {
 }
 
 async function providerCommand(args: ParsedArgs): Promise<number> {
-  if (args.subcommand !== "add") throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider add <nama> ...");
+  if (args.subcommand === "test") {
+    const name = args.positionals[0];
+    const data = await withClient((client) =>
+      client.request<Record<string, unknown>>("provider.test", {
+        ...(name ? { name } : {}),
+        ...(flagString(args, "model") ? { model: flagString(args, "model") } : {})
+      })
+    );
+    if (flagBool(args, "json")) {
+      print(JSON.stringify(data, null, 2));
+    } else {
+      print(`OK  ${String(data.provider)}  ${String(data.model)}  ${String(data.latency_ms)} ms`);
+      print(`balasan: ${String(data.reply)}`);
+    }
+    return 0;
+  }
+  if (args.subcommand !== "add") throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider add <nama> ... atau rann provider test [nama]");
   const name = args.positionals[0];
   if (!name) throw new RannError("E_INVALID_PARAMS", "Nama provider wajib diisi");
   const baseUrl = flagString(args, "base-url");

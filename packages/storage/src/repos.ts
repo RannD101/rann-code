@@ -300,6 +300,28 @@ export function recordUsage(db: Db, input: UsageInput): void {
   );
 }
 
+export interface UsageSummaryRow {
+  provider: string;
+  model: string;
+  turns: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  last_at: string;
+}
+
+export function summarizeUsage(db: Db, sessionId?: string): UsageSummaryRow[] {
+  const where = sessionId ? "WHERE session_id = ?" : "";
+  const statement = db.prepare(
+    `SELECT provider, model, COUNT(*) AS turns, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+            SUM(cost_usd) AS cost_usd, MAX(created_at) AS last_at
+     FROM usage_events ${where}
+     GROUP BY provider, model
+     ORDER BY output_tokens DESC`
+  );
+  return (sessionId ? statement.all(sessionId) : statement.all()) as UsageSummaryRow[];
+}
+
 export interface AppendEventInput {
   type: EventType;
   sessionId: string;

@@ -53,9 +53,10 @@ describe("daemon dan RPC", () => {
       expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
       expect(detail.messages[1]?.content).toBe("Balasan mock: halo dunia");
 
-      const turn = await client.request<{ status: string; usage_json: string }>("turn.get", { turnId });
+      const turn = await client.request<{ status: string; usage_json: string; messages: Array<{ role: string; content: string }> }>("turn.get", { turnId });
       expect(turn.status).toBe("done");
       expect(JSON.parse(turn.usage_json)).toMatchObject({ outputTokens: expect.any(Number) });
+      expect(turn.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     } finally {
       client.close();
       await daemon.stop();
@@ -163,4 +164,20 @@ describe("daemon dan RPC", () => {
       await daemon.stop();
     }
   }, 30_000);
+
+  it("mengetes provider lewat RPC", async () => {
+    const home = mkdtempSync(join(tmpdir(), "rann-provider-"));
+    const daemon = await startDaemon({ home, version: "0.0.0-test" });
+    const client = await RpcClient.connect(daemon.layout.socketPath);
+    try {
+      const result = await client.request<Record<string, unknown>>("provider.test", {});
+      expect(result.ok).toBe(true);
+      expect(result.provider).toBe("mock");
+      expect(result.model).toBe("mock-1");
+      expect(String(result.reply)).toContain("Balasan mock");
+    } finally {
+      client.close();
+      await daemon.stop();
+    }
+  }, 20_000);
 });

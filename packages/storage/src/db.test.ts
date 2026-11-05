@@ -19,7 +19,9 @@ import {
   listSessions,
   markTurnRunning,
   openDatabase,
+  recordUsage,
   schemaVersion,
+  summarizeUsage,
   type Db
 } from "./index.js";
 
@@ -80,5 +82,12 @@ describe("database", () => {
 
     finishTurn(db, { id: turn.id, status: "done", usage: { inputTokens: 3, outputTokens: 2 } });
     expect(getTurn(db, turn.id)?.status).toBe("done");
+
+    recordUsage(db, { provider: "mock", model: "mock-1", sessionId: session.id, turnId: turn.id, inputTokens: 3, outputTokens: 2 });
+    const summary = summarizeUsage(db);
+    expect(summary).toHaveLength(1);
+    expect(summary[0]).toMatchObject({ provider: "mock", model: "mock-1", turns: 1, input_tokens: 3, output_tokens: 2 });
+    expect(summarizeUsage(db, session.id)).toHaveLength(1);
+    expect(summarizeUsage(db, "sesi-lain")).toHaveLength(0);
   });
 });

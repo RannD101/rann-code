@@ -183,7 +183,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens
         });
-        publish("turn.completed", { steps, usage });
+        publish("turn.completed", { steps, usage, text: finalText });
         finalize("done");
         return { text: finalText, steps, usage };
       }

@@ -82,6 +82,13 @@ export const permissionRespondParams = z.object({
   approved: z.boolean(),
   remember: z.boolean().default(false)
 });
+export const providerTestParams = z.object({
+  name: z.string().min(1).optional(),
+  model: z.string().min(1).optional()
+});
+export const usageSummaryParams = z.object({
+  sessionId: z.string().min(1).optional()
+});
 
 export const methodParams = {
   health: empty,
@@ -96,6 +103,8 @@ export const methodParams = {
   "model.list": empty,
   "provider.list": empty,
   "config.explain": configExplainParams,
+  "provider.test": providerTestParams,
+  "usage.summary": usageSummaryParams,
   "permission.respond": permissionRespondParams
 } as const;
 

@@ -12,6 +12,7 @@ import {
   listSessions,
   openDatabase,
   schemaVersion,
+  summarizeUsage,
   type Db
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
@@ -167,6 +168,8 @@ export class RpcServer {
       }
       case "session.send":
         return this.sessionSend(input);
+      case "turn.get":
+        return this.turnGet(input);
       case "session.cancel": {
         const sessionId = input.sessionId as string;
         const controller = this.activeTurns.get(sessionId);
@@ -174,17 +177,16 @@ export class RpcServer {
         controller.abort();
         return { cancelled: true };
       }
-      case "turn.get": {
-        const turn = getTurn(this.db, input.turnId as string);
-        if (!turn) throw new RannError("E_TURN_NOT_FOUND", `Turn tidak ditemukan: ${input.turnId}`);
-        return turn;
-      }
       case "turn.events":
         return eventsForTurn(this.db, input.turnId as string, (input.afterSeq as number) ?? 0);
       case "model.list":
         return this.modelList();
       case "provider.list":
         return this.providerList();
+      case "provider.test":
+        return await this.providerTest(input);
+      case "usage.summary":
+        return summarizeUsage(this.db, input.sessionId as string | undefined);
       case "config.explain": {
         const { explainKey } = await import("@rann/shared");
         return explainKey(this.options.config, input.key as string);
@@ -270,6 +272,13 @@ export class RpcServer {
     return session;
   }
 
+  private turnGet(input: Record<string, unknown>): unknown {
+    const turn = getTurn(this.db, input.turnId as string);
+    if (!turn) throw new RannError("E_TURN_NOT_FOUND", `Turn tidak ditemukan: ${input.turnId}`);
+    const messages = listMessages(this.db, turn.session_id, 500).filter((message) => message.turn_id === turn.id);
+    return { ...turn, messages };
+  }
+
   private sessionSend(input: Record<string, unknown>): unknown {
     const sessionId = input.sessionId as string;
     const session = getSession(this.db, sessionId);
@@ -343,8 +352,41 @@ export class RpcServer {
       base_url: provider.base_url,
       default_model: provider.default_model,
       models: provider.models,
-      has_key: Boolean(provider.api_key_env ?? provider.api_key_file)
+      has_key: Boolean(
+        (provider.api_key_env && process.env[provider.api_key_env]) ||
+        (provider.api_key_file && existsSync(provider.api_key_file))
+      )
     }));
+  }
+
+  private async providerTest(input: Record<string, unknown>): Promise<unknown> {
+    const config = this.options.config.config;
+    const name = (input.name as string | undefined) ?? config.provider;
+    const providerConfig = providerFor(config, name);
+    const provider = createProvider(name, providerConfig);
+    const model = (input.model as string | undefined) ?? resolveModel(providerConfig);
+    const started = Date.now();
+    let reply = "";
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    for await (const chunk of provider.chat({
+      model,
+      messages: [{ role: "user", content: "Balas hanya OK" }],
+      maxTokens: 32
+    })) {
+      if (chunk.type === "text") reply += chunk.text;
+      if (chunk.type === "usage") {
+        usage.inputTokens += chunk.inputTokens;
+        usage.outputTokens += chunk.outputTokens;
+      }
+    }
+    return {
+      ok: true,
+      provider: name,
+      model,
+      reply: reply.trim(),
+      usage,
+      latency_ms: Date.now() - started
+    };
   }
 
   async close(): Promise<void> {

@@ -21,7 +21,8 @@ const VALUE_FLAGS = new Set([
   "profile",
   "base-url",
   "key-env",
-  "type"
+  "type",
+  "output-format"
 ]);
 
 function setFlag(flags: ParsedArgs["flags"], key: string, value: string | boolean): void {
