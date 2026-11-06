@@ -20,7 +20,7 @@ pnpm dan Git hanya dibutuhkan kalau kamu mengembangkan source, bukan untuk memak
 Untuk pengguna:
 
 ```bash
-npm install -g https://github.com/RannD101/rann-code/releases/download/v1.0.0/rann-code-1.0.0.tgz
+npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
 rann --version
 ```
 
