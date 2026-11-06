@@ -330,12 +330,17 @@ Windows Command Prompt:
 
     setx OPENAI_API_KEY "sk-isi-key-kamu"
 
-Setelah `setx`, tutup Command Prompt dan buka lagi. `setx` tidak mengubah
-terminal yang sedang berjalan.
+Setelah `setx`, tutup terminal dan buka lagi. `setx` tidak mengubah terminal
+yang sedang berjalan.
 
 Windows PowerShell:
 
     setx OPENAI_API_KEY "sk-isi-key-kamu"
+
+Di PowerShell, `export` bukan perintah. Untuk satu sesi saja, tanpa menutup
+terminal:
+
+    $env:OPENAI_API_KEY = "sk-isi-key-kamu"
 
 macOS atau Linux:
 
