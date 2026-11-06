@@ -119,7 +119,7 @@ export type RannConfig = z.infer<typeof configSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type PermissionMode = RannConfig["permissions"]["mode"];
 
-export type ConfigSource = "default" | "global" | "project" | "env" | "flag";
+export type ConfigSource = "default" | "global" | "profile" | "project" | "env" | "flag";
 
 export interface LoadedConfig {
   config: RannConfig;
@@ -200,6 +200,15 @@ export function loadConfig(options: LoadConfigOptions): LoadedConfig {
     merged = deepMerge(merged, patch);
     markSources(patch, "global", sources);
     files.push(globalPath);
+  }
+
+  const activeProfile = env.RANN_PROFILE ?? (typeof merged.profile === "string" ? merged.profile : "default");
+  const profilePath = join(home, "profiles", activeProfile, "config.toml");
+  if (existsSync(profilePath)) {
+    const patch = readToml(profilePath);
+    merged = deepMerge(merged, patch);
+    markSources(patch, "profile", sources);
+    files.push(profilePath);
   }
 
   const projectConfig = join(projectPath, ".rann", "config.toml");

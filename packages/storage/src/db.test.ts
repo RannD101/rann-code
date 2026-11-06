@@ -17,6 +17,7 @@ import {
   getTurn,
   inspectDatabase,
   LATEST_VERSION,
+  MIGRATIONS,
   listMemories,
   listMessages,
   listSessions,
@@ -96,6 +97,74 @@ describe("database", () => {
     expect(summary[0]).toMatchObject({ provider: "mock", model: "mock-1", turns: 1, input_tokens: 3, output_tokens: 2 });
     expect(summarizeUsage(db, session.id)).toHaveLength(1);
     expect(summarizeUsage(db, "sesi-lain")).toHaveLength(0);
+  });
+
+  it("memulihkan backup kalau migrasi gagal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-migrate-"));
+    const path = join(dir, "rann.db");
+    const first = openDatabase({ path, migrations: MIGRATIONS.slice(0, 2) });
+    first.db.prepare("INSERT INTO config_kv (key, value_json, scope, scope_id, updated_at) VALUES ('uji', '\"aman\"', 'global', '', 1)").run();
+    first.db.close();
+
+    const broken = [
+      ...MIGRATIONS.slice(0, 2),
+      { version: 3, name: "broken", sql: "CREATE TABLE sementara (id TEXT); INSERT INTO tabel_tidak_ada VALUES (1);" }
+    ];
+    expect(() => openDatabase({ path, migrations: broken })).toThrow(/dipulihkan/);
+
+    const restored = openDatabase({ path, migrations: MIGRATIONS.slice(0, 2) });
+    open.push(restored.db);
+    expect(schemaVersion(restored.db)).toBe(2);
+    const row = restored.db.prepare("SELECT value_json FROM config_kv WHERE key = 'uji'").get() as { value_json: string };
+    expect(row.value_json).toBe('"aman"');
+  });
+
+  it("menyediakan seluruh tabel skema V1", () => {
+    const { db } = freshDb();
+    const names = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    for (const table of [
+      "profiles",
+      "projects",
+      "sessions",
+      "turns",
+      "messages",
+      "tool_calls",
+      "tasks",
+      "task_steps",
+      "plans",
+      "plan_nodes",
+      "agents",
+      "agent_runs",
+      "agent_messages",
+      "memory_entries",
+      "memory_links",
+      "memory_events",
+      "skills",
+      "skill_versions",
+      "tools",
+      "mcp_servers",
+      "plugins",
+      "hooks",
+      "providers",
+      "models",
+      "model_capabilities",
+      "routing_logs",
+      "scheduler_jobs",
+      "job_runs",
+      "checkpoints",
+      "artifacts",
+      "path_leases",
+      "approvals",
+      "audit_log",
+      "usage_events",
+      "config_kv",
+      "events"
+    ]) {
+      expect(names.has(table), `tabel ${table} tidak ada`).toBe(true);
+    }
+    expect(names.has("memories")).toBe(false);
   });
 
   it("menyimpan memori global dan proyek dengan pencarian FTS", () => {

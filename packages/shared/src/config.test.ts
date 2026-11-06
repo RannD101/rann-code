@@ -29,6 +29,24 @@ describe("config", () => {
     expect(loaded.files).toHaveLength(2);
   });
 
+  it("profil menimpa global dan project menimpa profil", () => {
+    const home = tempDir("rann-cfg-profile-");
+    const project = tempDir("rann-cfg-profile-proj-");
+    mkdirSync(join(home, "config"), { recursive: true });
+    mkdirSync(join(home, "profiles", "kerja"), { recursive: true });
+    mkdirSync(join(project, ".rann"), { recursive: true });
+    writeFileSync(join(home, "config", "config.toml"), ['[permissions]', 'mode = "ask"'].join("\n"));
+    writeFileSync(join(home, "profiles", "kerja", "config.toml"), ['[permissions]', 'mode = "trusted"', "[agent]", "max_steps = 7"].join("\n"));
+    writeFileSync(join(project, ".rann", "config.toml"), ["[agent]", "max_steps = 4"].join("\n"));
+    const loaded = loadConfig({ home, projectPath: project, env: { RANN_PROFILE: "kerja" } });
+    expect(loaded.config.profile).toBe("kerja");
+    expect(loaded.config.permissions.mode).toBe("trusted");
+    expect(loaded.config.agent.max_steps).toBe(4);
+    expect(loaded.sources["permissions.mode"]).toBe("profile");
+    expect(loaded.sources["agent.max_steps"]).toBe("project");
+    expect(loaded.files).toHaveLength(3);
+  });
+
   it("env menimpa berkas config", () => {
     const home = tempDir("rann-cfg-env-");
     mkdirSync(join(home, "config"), { recursive: true });

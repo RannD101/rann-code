@@ -334,24 +334,46 @@ export type MemoryScope = "global" | "project";
 
 export interface MemoryEntry {
   id: string;
+  profile_id: string;
   scope: MemoryScope;
+  project_id: string | null;
+  session_id: string | null;
   project_path: string | null;
   kind: string;
+  title: string | null;
   text: string;
+  content: string;
   tags: string[];
   source: string | null;
+  confidence: number;
+  importance: number;
+  status: string;
+  expires_at: number | null;
+  last_used_at: number | null;
+  version: number;
   created_at: number;
   updated_at: number;
 }
 
 interface MemoryDbRow {
   id: string;
+  profile_id: string;
   scope: MemoryScope;
+  project_id: string | null;
+  session_id: string | null;
   project_path: string | null;
   kind: string;
+  title: string | null;
   text: string;
+  content: string;
   tags: string;
   source: string | null;
+  confidence: number;
+  importance: number;
+  status: string;
+  expires_at: number | null;
+  last_used_at: number | null;
+  version: number;
   created_at: number;
   updated_at: number;
 }
@@ -381,22 +403,28 @@ function memoryFilter(scope: MemoryScope | "all", projectPath?: string): { where
 export interface AddMemoryInput {
   text: string;
   scope?: MemoryScope;
+  profileId?: string;
   projectPath?: string;
   kind?: string;
+  title?: string;
   tags?: string[];
   source?: string;
+  confidence?: number;
+  importance?: number;
+  expiresAt?: number;
 }
 
 export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   const scope = input.scope ?? (input.projectPath ? "project" : "global");
   const projectPath = scope === "project" ? (input.projectPath ?? "") : null;
+  const profileId = input.profileId ?? ensureDefaultProfile(db);
   const at = Date.now();
   const existing = db
-    .prepare("SELECT * FROM memories WHERE scope = ? AND COALESCE(project_path, '') = ? AND text = ? LIMIT 1")
-    .get(scope, projectPath ?? "", input.text) as MemoryDbRow | undefined;
+    .prepare("SELECT * FROM memory_entries WHERE profile_id = ? AND scope = ? AND COALESCE(project_path, '') = ? AND text = ? LIMIT 1")
+    .get(profileId, scope, projectPath ?? "", input.text) as MemoryDbRow | undefined;
   if (existing) {
     const tags = [...new Set([...parseTags(existing.tags), ...(input.tags ?? [])])];
-    db.prepare("UPDATE memories SET tags = ?, source = COALESCE(?, source), updated_at = ? WHERE id = ?").run(
+    db.prepare("UPDATE memory_entries SET tags = ?, source = COALESCE(?, source), updated_at = ? WHERE id = ?").run(
       JSON.stringify(tags),
       input.source ?? null,
       at,
@@ -406,10 +434,25 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   }
   const id = newId("mem");
   db.prepare(
-    `INSERT INTO memories (id, scope, project_path, kind, text, tags, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, scope, projectPath, input.kind ?? "fact", input.text, JSON.stringify(input.tags ?? []), input.source ?? null, at, at);
-  return toMemoryEntry(db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow);
+    `INSERT INTO memory_entries (id, profile_id, scope, project_path, kind, title, text, tags, source, confidence, importance, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    profileId,
+    scope,
+    projectPath,
+    input.kind ?? "fact",
+    input.title ?? null,
+    input.text,
+    JSON.stringify(input.tags ?? []),
+    input.source ?? null,
+    input.confidence ?? 1,
+    input.importance ?? 0.5,
+    input.expiresAt ?? null,
+    at,
+    at
+  );
+  return toMemoryEntry(db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow);
 }
 
 export interface ListMemoryOptions {
@@ -422,7 +465,7 @@ export function listMemories(db: Db, options: ListMemoryOptions = {}): MemoryEnt
   const filter = memoryFilter(options.scope ?? "all", options.projectPath);
   return (
     db
-      .prepare(`SELECT * FROM memories WHERE ${filter.where} ORDER BY updated_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM memory_entries WHERE ${filter.where} ORDER BY updated_at DESC LIMIT ?`)
       .all(...filter.values, options.limit ?? 50) as MemoryDbRow[]
   ).map(toMemoryEntry);
 }
@@ -444,41 +487,41 @@ export function searchMemories(db: Db, query: string, options: ListMemoryOptions
   try {
     const rows = db
       .prepare(
-        `SELECT m.* FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
-         WHERE memories_fts MATCH ? AND ${filter.where}
+        `SELECT m.* FROM memory_fts f JOIN memory_entries m ON m.rowid = f.rowid
+         WHERE memory_fts MATCH ? AND ${filter.where}
          ORDER BY rank LIMIT ?`
       )
       .all(match, ...filter.values, options.limit ?? 20) as MemoryDbRow[];
     return rows.map(toMemoryEntry);
   } catch {
     const rows = db
-      .prepare(`SELECT * FROM memories WHERE ${filter.where} AND text LIKE ? ORDER BY updated_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM memory_entries WHERE ${filter.where} AND text LIKE ? ORDER BY updated_at DESC LIMIT ?`)
       .all(...filter.values, `%${query}%`, options.limit ?? 20) as MemoryDbRow[];
     return rows.map(toMemoryEntry);
   }
 }
 
 export function updateMemory(db: Db, id: string, patch: { text?: string; tags?: string[]; kind?: string }): MemoryEntry | undefined {
-  const existing = db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow | undefined;
+  const existing = db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow | undefined;
   if (!existing) return undefined;
-  db.prepare("UPDATE memories SET text = ?, tags = ?, kind = ?, updated_at = ? WHERE id = ?").run(
+  db.prepare("UPDATE memory_entries SET text = ?, tags = ?, kind = ?, updated_at = ? WHERE id = ?").run(
     patch.text ?? existing.text,
     JSON.stringify(patch.tags ?? parseTags(existing.tags)),
     patch.kind ?? existing.kind,
     Date.now(),
     id
   );
-  return toMemoryEntry(db.prepare("SELECT * FROM memories WHERE id = ?").get(id) as MemoryDbRow);
+  return toMemoryEntry(db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow);
 }
 
 export function removeMemory(db: Db, idOrText: string): number {
-  const result = db.prepare("DELETE FROM memories WHERE id = ? OR text = ?").run(idOrText, idOrText);
+  const result = db.prepare("DELETE FROM memory_entries WHERE id = ? OR text = ?").run(idOrText, idOrText);
   return result.changes;
 }
 
 export function countMemories(db: Db, options: ListMemoryOptions = {}): number {
   const filter = memoryFilter(options.scope ?? "all", options.projectPath);
-  return (db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE ${filter.where}`).get(...filter.values) as { c: number }).c;
+  return (db.prepare(`SELECT COUNT(*) AS c FROM memory_entries WHERE ${filter.where}`).get(...filter.values) as { c: number }).c;
 }
 
 export interface AppendEventInput {

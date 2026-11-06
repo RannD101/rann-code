@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
+import { SCHEMA_V3 } from "./schema-v3.js";
 
 export type Db = Database.Database;
 
@@ -16,6 +17,7 @@ export interface OpenDatabaseOptions {
   backupBeforeMigrate?: boolean;
   backupDir?: string;
   readonly?: boolean;
+  migrations?: Migration[];
 }
 
 export interface OpenDatabaseResult {
@@ -24,7 +26,7 @@ export interface OpenDatabaseResult {
   backupPath?: string;
 }
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     name: "initial",
@@ -215,6 +217,11 @@ CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
   INSERT INTO memories_fts(rowid, text, tags) VALUES (new.rowid, new.text, new.tags);
 END;
 `
+  },
+  {
+    version: 3,
+    name: "v1-schema",
+    sql: SCHEMA_V3
   }
 ];
 
@@ -234,11 +241,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );`);
 }
 
-function pending(db: Db): Migration[] {
+function pending(db: Db, migrations: Migration[]): Migration[] {
   const rows = db.prepare("SELECT version, checksum FROM schema_migrations").all() as Array<{ version: number; checksum: string }>;
   const applied = new Map(rows.map((row) => [row.version, row.checksum]));
   const todo: Migration[] = [];
-  for (const migration of MIGRATIONS) {
+  for (const migration of migrations) {
     const existing = applied.get(migration.version);
     if (existing === undefined) {
       todo.push(migration);
@@ -269,26 +276,40 @@ export function openDatabase(options: OpenDatabaseOptions): OpenDatabaseResult {
   db.pragma("busy_timeout = 5000");
 
   ensureSchemaTable(db);
-  const todo = pending(db);
+  const migrations = options.migrations ?? MIGRATIONS;
+  const todo = pending(db, migrations);
   let backupPath: string | undefined;
-  if (todo.length > 0 && path !== ":memory:" && options.backupBeforeMigrate && existsSync(path)) {
+  if (todo.length > 0 && path !== ":memory:" && options.backupBeforeMigrate !== false && existsSync(path)) {
     const hasRows = (db.prepare("SELECT COUNT(*) AS c FROM schema_migrations").get() as { c: number }).c > 0;
     if (hasRows) backupPath = backup(db, options.backupDir ?? `${dirname(path)}/backups`);
   }
 
   const applied: number[] = [];
-  for (const migration of todo) {
-    const run = db.transaction(() => {
-      db.exec(migration.sql);
-      db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)").run(
-        migration.version,
-        migration.name,
-        checksum(migration.sql),
-        Date.now()
-      );
-    });
-    run();
-    applied.push(migration.version);
+  try {
+    for (const migration of todo) {
+      const run = db.transaction(() => {
+        db.exec(migration.sql);
+        db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)").run(
+          migration.version,
+          migration.name,
+          checksum(migration.sql),
+          Date.now()
+        );
+      });
+      run();
+      applied.push(migration.version);
+    }
+  } catch (error) {
+    db.close();
+    if (path !== ":memory:" && backupPath && existsSync(backupPath)) {
+      copyFileSync(backupPath, path);
+      rmSync(`${path}-wal`, { force: true });
+      rmSync(`${path}-shm`, { force: true });
+      throw new Error(`Migrasi gagal dan database dipulihkan dari ${backupPath}: ${(error as Error).message}`, {
+        cause: error
+      });
+    }
+    throw error;
   }
 
   const result: OpenDatabaseResult = { db, applied };
