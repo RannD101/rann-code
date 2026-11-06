@@ -7,8 +7,9 @@ Cukup pasang sekali, lalu pakai perintah rann.
 Tidak perlu pnpm.
 Tidak perlu Git.
 
-Versi tutorial: 1.0
+Versi tutorial: 1.1
 Versi Rann Code: 0.1.0
+Diperbarui: 7 November 2026
 Sistem: Windows 10/11, macOS, dan Linux
 Syarat utama: Node.js 22 LTS
 
@@ -80,9 +81,9 @@ salin semuanya sebagai satu baris. Jangan menekan Enter di tengah perintah.
 2. PASANG NODE.JS
 =================
 
-Rann Code membutuhkan Node.js versi 22.11 atau lebih baru. Gunakan Node.js 22
-LTS. Jangan memakai Node 23 atau 24 kalau tidak yakin, karena modul database
-lebih aman di versi LTS.
+Rann Code membutuhkan Node.js versi 22.11 atau lebih baru. Tutorial ini memakai
+Node.js 22 LTS. Node.js 24 LTS juga memenuhi syarat, tetapi kalau modul database
+gagal dipasang, kembali ke Node.js 22 LTS.
 
 2.1 Windows 10 atau 11
 
@@ -105,7 +106,11 @@ Contoh hasil yang benar:
     v22.23.3
     10.9.4
 
-Nomor versi Node harus 22.x.x. Nomor npm tidak harus sama.
+Nomor versi Node minimal 22.11. Nomor npm tidak harus sama.
+
+Di Windows, tool shell memerlukan `bash`. Pasang WSL 2 atau jalankan Rann Code
+dari Git Bash. Tanpa `bash`, baca dan tulis file tetap berjalan, tetapi perintah
+shell akan gagal.
 
 2.2 macOS
 
@@ -146,7 +151,7 @@ Artinya Node belum terpasang atau PATH belum terbaca.
 - Di Windows, pastikan opsi "Add to PATH" dicentang saat memasang.
 - Jalankan `node -v` lagi.
 
-Jangan lanjut sebelum `node -v` menampilkan versi 22.
+Jangan lanjut sebelum `node -v` menampilkan versi 22.11 atau lebih baru.
 
 
 3. PASANG RANN CODE
@@ -164,6 +169,8 @@ Arti perintah:
 - `-g`: memasang secara global, supaya perintah `rann` bisa dipakai dari
   folder mana pun.
 - URL: lokasi file rilis Rann Code.
+
+Repo publik dan tutorial: https://github.com/RannD101/rann-code
 
 Tunggu sampai muncul pesan seperti:
 
@@ -236,9 +243,15 @@ Environment Variables, lalu buka Command Prompt baru.
 
 4.1 Buat folder latihan
 
-Di Windows:
+Di Windows Command Prompt:
 
     cd %USERPROFILE%
+    mkdir rann-projek
+    cd rann-projek
+
+Di Windows PowerShell:
+
+    cd $env:USERPROFILE
     mkdir rann-projek
     cd rann-projek
 
@@ -358,10 +371,15 @@ Hasil yang benar kurang lebih:
 
 Simpan key:
 
-    setx OPENROUTER_API_KEY "sk-or-isi-key-kamu"
+Windows:
 
-Windows: tutup dan buka Command Prompt lagi.
-macOS atau Linux: gunakan export seperti di atas.
+    setx OPENROUTER_API_KEY "sk-or-...kamu"
+
+macOS atau Linux:
+
+    export OPENROUTER_API_KEY="sk-or-...kamu"
+
+Di Windows, tutup dan buka terminal lagi.
 
 Daftarkan:
 
@@ -379,7 +397,16 @@ Nama model harus sama dengan nama yang ada di dashboard OpenRouter.
 
 Kalau kamu mengikuti kelas dan diberi base URL, key, dan nama model:
 
+Windows:
+
     setx RANN_KELAS_KEY "key-dari-pengajar"
+
+macOS atau Linux:
+
+    export RANN_KELAS_KEY="key-dari-pengajar"
+
+Daftarkan:
+
     rann provider add kelas --type openai-compatible --base-url https://alamat-endpoint/v1 --key-env RANN_KELAS_KEY --model nama-model
 
 Lalu:
@@ -397,13 +424,20 @@ Ini opsional dan hanya kalau komputer cukup kuat.
 
 Contoh Ollama:
 
+Windows:
+
     setx OLLAMA_KEY "ollama"
+
+macOS atau Linux:
+
+    export OLLAMA_KEY="ollama"
+
+Daftarkan:
+
     rann provider add ollama --type openai-compatible --base-url http://127.0.0.1:11434/v1 --key-env OLLAMA_KEY --model qwen2.5-coder:7b
     rann config set provider ollama
     rann config set model.default qwen2.5-coder:7b
     rann provider test ollama
-
-Di macOS atau Linux, gunakan `export OLLAMA_KEY="ollama"` sebagai ganti `setx`.
 
 Model lokal membutuhkan RAM besar. Kalau laptop hanya 8 GB, pakai provider
 online atau model kecil.
@@ -413,9 +447,17 @@ online atau model kecil.
 Daemon membaca environment saat start. Setelah mengganti key:
 
     rann daemon stop
+
+Windows:
+
     setx OPENAI_API_KEY "key-baru"
 
-Tutup terminal, buka lagi, lalu:
+macOS atau Linux:
+
+    export OPENAI_API_KEY="key-baru"
+
+Di Windows, tutup terminal dan buka lagi. Di macOS atau Linux, pakai terminal
+yang sama atau tambahkan export ke shell rc. Lalu:
 
     rann provider test openai
 
@@ -427,7 +469,8 @@ backup, jangan menjalankan `provider add` berulang tanpa menghapus blok lama.
 
 Lokasi config:
 
-- Windows: `%USERPROFILE%\.rann\config\config.toml`
+- Windows Command Prompt: `%USERPROFILE%\.rann\config\config.toml`
+- Windows PowerShell: `$env:USERPROFILE\.rann\config\config.toml`
 - macOS atau Linux: `~/.rann/config/config.toml`
 
 
@@ -436,9 +479,13 @@ Lokasi config:
 
 6.1 Data Rann Code
 
-Windows:
+Windows Command Prompt:
 
     %USERPROFILE%\.rann
+
+Windows PowerShell:
+
+    $env:USERPROFILE\.rann
 
 macOS atau Linux:
 
@@ -449,7 +496,7 @@ Isi penting:
     config/config.toml              pengaturan global
     profiles/default/rann.db         database sesi dan memori
     profiles/default/skills/         skill global
-    run/daemon.sock                  socket daemon
+    run/daemon.sock                  socket daemon (Windows memakai named pipe)
     profiles/default/logs/           log
 
 6.2 Data proyek
@@ -465,17 +512,32 @@ kerja.
 
 6.3 Pindah folder data
 
+Hentikan daemon dulu, lalu salin folder data. Jangan memindahkan folder saat
+daemon masih berjalan.
+
 Windows Command Prompt:
 
+    rann daemon stop
+    xcopy "%USERPROFILE%\.rann" "D:\rann-data" /E /I /H /Y
+    setx RANN_HOME "D:\rann-data"
+
+Windows PowerShell:
+
+    rann daemon stop
+    New-Item -ItemType Directory -Force D:\rann-data | Out-Null
+    Copy-Item "$env:USERPROFILE\.rann\*" "D:\rann-data" -Recurse -Force
     setx RANN_HOME "D:\rann-data"
 
 macOS atau Linux:
 
+    rann daemon stop
+    mkdir -p ~/rann-data
+    cp -a ~/.rann/. ~/rann-data/
     export RANN_HOME="$HOME/rann-data"
 
-Hentikan daemon dulu sebelum memindahkan data:
-
-    rann daemon stop
+Tutup dan buka terminal baru setelah `setx`. Di macOS atau Linux, tambahkan
+`export RANN_HOME=...` ke `~/.zshrc` atau `~/.bashrc` kalau ingin permanen.
+Setelah data baru terbaca, folder lama boleh dihapus.
 
 6.4 Backup
 
@@ -760,8 +822,9 @@ dalam skill.
 
 11.1 Ringkasan konteks
 
-Kalau percakapan terlalu panjang, Rann Code membuat ringkasan teks dari pesan
-lama. Pesan asli tetap ada di database. Tidak ada panggilan model tambahan
+Kalau perkiraan konteks melewati `context.max_tokens`, Rann Code memotong pesan
+lama, membuat ringkasan teks, dan mempertahankan `context.keep_recent` pesan
+terakhir. Pesan asli tetap ada di database. Tidak ada panggilan model tambahan
 untuk meringkas.
 
     rann config set context.max_tokens 24000
@@ -825,9 +888,13 @@ pengguna lanjutan. Kalau tidak membutuhkannya, lewati bagian ini.
 
 13.1 Config
 
-Windows:
+Windows Command Prompt:
 
     notepad %USERPROFILE%\.rann\config\config.toml
+
+Windows PowerShell:
+
+    notepad $env:USERPROFILE\.rann\config\config.toml
 
 macOS atau Linux:
 
@@ -901,10 +968,13 @@ Simpan file `server-mcp.cjs`:
 
 Lalu isi config seperti di atas, dengan path file yang benar.
 
-Uji:
+Uji dengan provider model yang sudah aktif:
 
     rann daemon stop
     rann --permission trusted "pakai tool mcp__echo__echo untuk mengirim teks halo mcp"
+
+Dengan provider mock, tool MCP tidak dipanggil karena mock hanya mengembalikan
+teks.
 
 13.4 Matikan MCP
 
@@ -974,8 +1044,18 @@ Contoh:
 14.6 Exit code
 
 - 0: berhasil.
-- 1: gagal, termasuk turn gagal atau data yang dicari tidak ada.
-- Kode lain mengikuti pesan `E_*` di stderr.
+- 1: tool gagal, database, storage, recovery, atau error internal.
+- 2: parameter salah, command tidak dikenal, atau tool tidak ditemukan.
+- 3: config tidak valid.
+- 4: provider, autentikasi, rate limit, budget, atau daemon tidak tersedia.
+- 5: izin ditolak atau approval dibutuhkan.
+- 6: sesi, turn, atau data yang dicari tidak ditemukan.
+- 7: tool timeout, turn timeout, atau stream terpotong.
+- 8: turn dibatalkan.
+- 9: konflik, misalnya sesi masih menjalankan turn lain.
+
+Kode lain mengikuti pesan `E_*` di stderr. Turn yang sudah berjalan lalu gagal
+tetap keluar dengan 1; kode detailnya ada di pesan `E_*`.
 
 
 15. CONFIG
@@ -1354,16 +1434,21 @@ Cek:
 
 Data tidak otomatis terhapus. Kalau ingin menghapus semua data juga:
 
-Windows:
+Windows Command Prompt:
 
     rmdir /s /q "%USERPROFILE%\.rann"
+
+Windows PowerShell:
+
+    Remove-Item "$env:USERPROFILE\.rann" -Recurse -Force
 
 macOS atau Linux:
 
     rm -rf ~/.rann
 
 Hati-hati: perintah itu menghapus semua sesi, memori, dan skill. Backup dulu
-kalau masih butuh.
+kalau masih butuh. Kalau pernah mengatur `RANN_HOME`, hapus juga folder yang
+kamu tunjuk.
 
 
 20. TROUBLESHOOTING
@@ -1396,9 +1481,13 @@ Daemon gagal start atau socket tidak bisa dihubungi.
 
 Pastikan folder data bisa ditulis. Cek log di:
 
-Windows:
+Windows Command Prompt:
 
     %USERPROFILE%\.rann\profiles\default\logs
+
+Windows PowerShell:
+
+    $env:USERPROFILE\.rann\profiles\default\logs
 
 macOS atau Linux:
 
@@ -1417,18 +1506,29 @@ Biasanya daemon lama masih hidup setelah aplikasi diperbarui.
 Config TOML rusak atau ada blok provider duplikat.
 
     rann config get
+
+Windows Command Prompt:
+
     notepad %USERPROFILE%\.rann\config\config.toml
 
-Di macOS atau Linux:
+Windows PowerShell:
+
+    notepad $env:USERPROFILE\.rann\config\config.toml
+
+macOS atau Linux:
 
     nano ~/.rann/config/config.toml
 
 Backup dulu sebelum mengedit. Kalau perlu kembali ke config default, pindahkan
 file lama, jangan langsung hapus:
 
-Windows:
+Windows Command Prompt:
 
     ren "%USERPROFILE%\.rann\config\config.toml" config.toml.bak
+
+Windows PowerShell:
+
+    Rename-Item "$env:USERPROFILE\.rann\config\config.toml" config.toml.bak
 
 macOS atau Linux:
 
@@ -1462,6 +1562,8 @@ Budget habis.
 
 Key dibaca dari environment saat daemon start.
 
+Windows:
+
     setx OPENAI_API_KEY "key-kamu"
 
 Tutup terminal, buka lagi, lalu:
@@ -1469,13 +1571,17 @@ Tutup terminal, buka lagi, lalu:
     rann daemon stop
     rann provider test openai
 
-Di macOS atau Linux gunakan `export` pada terminal yang sama.
+macOS atau Linux:
+
+    export OPENAI_API_KEY="key-kamu"
+
+Pakai terminal yang sama, lalu jalankan dua perintah di atas.
 
 20.10 `better-sqlite3` gagal dipasang
 
 Penyebab paling umum:
 
-- Node bukan versi 22 LTS.
+- Node lebih lama dari 22.11.
 - Node 32-bit.
 - Tidak ada prebuilt untuk sistem.
 - Izin folder npm.
@@ -1544,17 +1650,15 @@ Install dari nol:
 
     rann --version
 
-Mulai:
+Mulai dari folder proyek yang kamu buat di bagian 4:
 
-    cd ~/rann-projek
     rann doctor
     rann new --title "Coba"
     rann "jelaskan folder ini"
     rann chat
 
-Provider:
+Provider (key sudah diset seperti bagian 5):
 
-    setx OPENAI_API_KEY "key-kamu"
     rann provider add openai --base-url https://api.openai.com/v1 --key-env OPENAI_API_KEY --model gpt-4o-mini
     rann config set provider openai
     rann config set model.default gpt-4o-mini
