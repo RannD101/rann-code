@@ -6,7 +6,7 @@ Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri. Prompt hany
 
 Panduan lengkap dari instalasi sampai update ada di `tutorial.txt`.
 
-Versi teks yang bisa dibagikan: https://cdn.adelrann.my.id/f/ae6a60dde9/tutorial.txt
+Versi teks yang bisa dibagikan: https://github.com/RannD101/rann-code/blob/main/tutorial.txt
 
 ## Kebutuhan
 
@@ -20,7 +20,7 @@ pnpm dan Git hanya dibutuhkan kalau kamu mengembangkan source, bukan untuk memak
 Untuk pengguna:
 
 ```bash
-npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
+npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.0/rann-code-0.1.0.tgz
 rann --version
 ```
 

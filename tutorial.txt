@@ -156,7 +156,7 @@ Jangan lanjut sebelum `node -v` menampilkan versi 22.
 
 Buka terminal, lalu jalankan:
 
-    npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.0/rann-code-0.1.0.tgz
 
 Arti perintah:
 
@@ -208,7 +208,7 @@ Kalau memakai bash, ganti `.zshrc` dengan `.bashrc`.
 
 Ulangi:
 
-    npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.0/rann-code-0.1.0.tgz
     rann --version
 
 3.5 Kalau `rann` tidak dikenali setelah install
@@ -1301,7 +1301,7 @@ macOS atau Linux:
 
 Ganti URL di bawah dengan URL versi baru yang diberikan:
 
-    npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.0/rann-code-0.1.0.tgz
 
 Cek:
 
@@ -1538,7 +1538,7 @@ Install dari nol:
     2. Buka terminal baru.
     3. Jalankan:
 
-    npm install -g https://cdn.adelrann.my.id/f/f851c60e9f/rann-code-0.1.0.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.0/rann-code-0.1.0.tgz
 
     4. Cek:
 
