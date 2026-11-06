@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { RannError } from "@rann/shared";
 import { RpcClient } from "@rann/runtime";
 import { resolveHome, resolveLayout } from "@rann/runtime";
@@ -31,7 +32,8 @@ export async function ensureDaemon(): Promise<RpcClient> {
 
   const layout = currentLayout();
   const daemonEntry = new URL("./daemon-main.js", import.meta.url);
-  const child = spawn(process.execPath, [daemonEntry.pathname], {
+  // spawn tidak menerima URL; pathname Windows berbentuk /C:/... dan gagal ENOENT.
+  const child = spawn(process.execPath, [fileURLToPath(daemonEntry)], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, RANN_HOME: layout.home, RANN_PROFILE: layout.profile }
