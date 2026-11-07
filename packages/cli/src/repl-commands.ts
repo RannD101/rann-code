@@ -104,7 +104,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("agent", [], "/agent <spawn|show|stop|logs>", "Kelola satu instans agen", "agen", "write", false, NOT_YET),
   cmd("delegate", ["del"], "/delegate \"<tugas>\"", "Delegasikan tugas ke subagent", "agen", "exec", false, NOT_YET),
   cmd("tasks", ["t"], "/tasks", "Daftar task dan statusnya", "agen"),
-  cmd("task", [], "/task <show|logs|cancel|retry|resume> <id>", "Lihat atau kendalikan task", "agen", "write"),
+  cmd("task", [], "/task <show|logs|cancel|retry|resume|priority> <id>", "Lihat, kendalikan, atau ubah prioritas task", "agen", "write"),
   cmd("plan", ["p"], "/plan <tugas>", "Buat, lihat, atau setujui rencana", "agen", "write"),
   cmd("execute", ["run"], "/execute <tugas>", "Susun rencana lalu jalankan", "agen", "exec"),
   cmd("cancel", ["stop"], "/cancel", "Batalkan task atau turn", "agen", "write"),
@@ -291,4 +291,62 @@ export function completeReplLine(line: string): [string[], string] {
   const query = line.slice(1);
   const hits = matchReplCommands(query).map((command) => `/${command.name}`);
   return [hits, line];
+}
+
+const CATEGORY_ORDER: CommandCategory[] = [
+  "umum",
+  "sesi",
+  "model",
+  "agen",
+  "memori",
+  "skill",
+  "tool",
+  "proyek",
+  "konfigurasi",
+  "infra"
+];
+
+export function renderCommandCatalog(version: string, query?: string): string {
+  const needle = query?.trim().toLowerCase() ?? "";
+  if (needle.length > 0) {
+    const command = REPL_COMMANDS.find(
+      (item) => item.name.toLowerCase() === needle || item.aliases?.some((alias) => alias.toLowerCase() === needle)
+    );
+    if (!command) {
+      const nearest = nearestCommands(needle, 3);
+      return [
+        `Command tidak ditemukan: ${query}`,
+        nearest.length > 0 ? `Mungkin maksud kamu: ${nearest.map((item) => item.name).join(", ")}` : "",
+        "Jalankan rann --help untuk daftar lengkap."
+      ].filter(Boolean).join("\n");
+    }
+    const lines = [
+      `rann-code ${version}`,
+      "",
+      `Command: /${command.name}${command.aliases?.length ? ` (alias: ${command.aliases.map((alias) => `/${alias}`).join(", ")})` : ""}`,
+      `Pemakaian: ${command.usage}`,
+      `Kategori: ${command.category}`,
+      `Izin: ${command.permission ?? "read"}`,
+      `Status: ${isAvailable(command) ? "tersedia" : `belum tersedia (${command.unavailableReason ?? "backend"})`}`,
+      "",
+      command.description,
+      command.docs && command.docs !== `${command.usage}  ${command.description}` ? command.docs : "",
+      command.arguments.length > 0 ? `Argumen: ${command.arguments.map((arg) => `${arg.name}${arg.required ? " (wajib)" : " (opsional)"}`).join(", ")}` : "",
+      command.optionalParams.length > 0 ? `Flag: ${command.optionalParams.map((flag) => `--${flag}`).join(", ")}` : "",
+      `Error: ${command.errors.join(", ")}`
+    ];
+    return lines.filter((line) => line !== "").join("\n");
+  }
+  const lines = [`rann-code ${version}`, "", "Pemakaian:", "  rann \"instruksi\"              kirim tugas ke sesi terbaru", "  rann chat                     sesi interaktif", "  rann help <command>           bantuan satu command", "", "Command:"];
+  for (const category of CATEGORY_ORDER) {
+    const items = REPL_COMMANDS.filter((command) => command.category === category && !command.hidden);
+    if (items.length === 0) continue;
+    lines.push("", `${category}:`);
+    for (const command of items) {
+      const status = isAvailable(command) ? "" : ` [belum tersedia: ${command.unavailableReason ?? "backend"}]`;
+      lines.push(`  ${command.usage.padEnd(34)} ${command.description}${status}`);
+    }
+  }
+  lines.push("", "Flag umum:", "  --model <nama>        override model", "  --permission <mode>   read-only | ask | accept-edits | trusted | custom", "  --yes                 setujui otomatis semua permintaan tool", "  --output-format <f>   text | json | stream-json | ndjson", "  --theme <nama>        dark | light | auto | custom", "  --no-color            matikan warna dan escape ANSI", "  -v, --version         versi", "  -h, --help            bantuan");
+  return lines.join("\n");
 }

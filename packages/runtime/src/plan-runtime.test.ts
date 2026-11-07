@@ -12,6 +12,7 @@ import {
   updateTaskStatus,
   type Db
 } from "@rann/storage";
+import { updateTaskPriority } from "@rann/storage";
 import { advancePlanTask, currentPlanTask, finishPlan, parseTestFailures, persistPlan, revisePlan, startFirstTask, verifyPlan, verifyPlanLive } from "./plan-runtime.js";
 import type { PlanDraft, PlanValidation } from "./planner.js";
 
@@ -95,6 +96,38 @@ describe("plan runtime", () => {
     const last = advancePlanTask(db, plan, () => {});
     expect(last.allDone).toBe(true);
     expect(last.next).toBeUndefined();
+  });
+
+  it("menyimpan snapshot versi dan menambah saat revisi", () => {
+    const { db, dir } = fresh();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    const turn = createTurn(db, { sessionId: session.id });
+    const plan = persistPlan(db, session.id, turn.id, draft, validation, "awal", () => {});
+    let metadata = JSON.parse((db.prepare("SELECT metadata_json FROM plans WHERE id = ?").get(plan.id) as { metadata_json: string }).metadata_json) as { snapshots: Array<{ version: number }> };
+    expect(metadata.snapshots.map((item) => item.version)).toEqual([1]);
+    revisePlan(db, plan, { reason: "uji revisi", tasks: draft.tasks }, () => {});
+    metadata = JSON.parse((db.prepare("SELECT metadata_json FROM plans WHERE id = ?").get(plan.id) as { metadata_json: string }).metadata_json) as { snapshots: Array<{ version: number }> };
+    expect(metadata.snapshots.map((item) => item.version)).toEqual([1, 2]);
+  });
+
+  it("memilih task root berisiko tinggi lebih dulu", () => {
+    const { db, dir } = fresh();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    const turn = createTurn(db, { sessionId: session.id });
+    const dag: PlanDraft = {
+      ...draft,
+      tasks: [
+        { id: "a", title: "Rendah", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "ok" },
+        { id: "b", title: "Tinggi", agent: "coder", dependsOn: [], files: [], risk: "high", acceptance: "ok" }
+      ]
+    };
+    const plan = persistPlan(db, session.id, turn.id, dag, validation, "prioritas", () => {});
+    startFirstTask(db, plan, () => {});
+    expect(currentPlanTask(db, plan)?.title).toBe("Tinggi");
+    updateTaskPriority(db, plan.taskIds.get("a")!, 10);
+    updateTaskPriority(db, plan.taskIds.get("b")!, -10);
+    const order = db.prepare("SELECT title FROM tasks WHERE plan_id = ? ORDER BY priority DESC, created_at").all(plan.id) as { title: string }[];
+    expect(order[0]?.title).toBe("Rendah");
   });
 
   it("menandai task blocked bila dependensi tidak pernah selesai", () => {

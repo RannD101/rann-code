@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -137,5 +137,48 @@ describe("buildChatContext", () => {
     expect(built.compacted).toBe(false);
     expect(built.dropped).toBe(0);
     expect(built.messages.map((message) => message.content)).toEqual(["system", "halo", "hai"]);
+  });
+});
+
+describe("skrip skill", () => {
+  it("menjalankan skrip dari folder skill dengan env terbatas", async () => {
+    const project = mkdtempSync(join(tmpdir(), "rann-skill-run-"));
+    const store = new SkillStore(join(project, "profile"), project);
+    store.create({ name: "skrip-uji", description: "Skill untuk menguji eksekusi skrip", body: "Jalankan skrip halo.", triggers: ["skrip"], scope: "project" });
+    const file = join(project, ".rann", "skills", "skrip-uji", "scripts", "halo.sh");
+    mkdirSync(join(project, ".rann", "skills", "skrip-uji", "scripts"), { recursive: true });
+    writeFileSync(file, "#!/bin/sh\nprintf 'halo %s' \"$RANN_SKILL\"\n", { mode: 0o755 });
+    const result = await store.runScript("skrip-uji", "halo.sh");
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("halo skrip-uji");
+  });
+
+  it("menolak path skrip di luar folder scripts dan skrip yang timeout", async () => {
+    const project = mkdtempSync(join(tmpdir(), "rann-skill-run-"));
+    const store = new SkillStore(join(project, "profile"), project);
+    store.create({ name: "skrip-uji", description: "Skill untuk menguji eksekusi skrip", body: "Jalankan skrip halo.", scope: "project" });
+    await expect(store.runScript("skrip-uji", "../rahasia.sh")).rejects.toThrow(/nama skrip/);
+    mkdirSync(join(project, ".rann", "skills", "skrip-uji", "scripts"), { recursive: true });
+    const file = join(project, ".rann", "skills", "skrip-uji", "scripts", "lambat.sh");
+    writeFileSync(file, "#!/bin/sh\nsleep 5\n", { mode: 0o755 });
+    const result = await store.runScript("skrip-uji", "lambat.sh", [], { timeoutMs: 1_000 });
+    expect(result).toMatchObject({ ok: false, exitCode: 124 });
+  });
+});
+
+describe("review kandidat memori", () => {
+  it("menyimpan kandidat berkonfidensi rendah sebagai pending, menyaring rahasia, lalu bisa disetujui", () => {
+    const { db, close } = database();
+    try {
+      const service = new MemoryService(db, "/proyek", { enabled: true, promptChars: 2_000, retrieve: 10 });
+      const result = service.rememberFromTurn("Aku pilih pakai pnpm untuk proyek ini. Token api key rahasia jangan disimpan.");
+      expect(result.added).toHaveLength(1);
+      const [candidate] = service.pending();
+      expect(candidate?.text).toContain("pnpm");
+      expect(service.approve(candidate!.id)).toMatchObject({ status: "active" });
+      expect(service.pending()).toHaveLength(0);
+    } finally {
+      close();
+    }
   });
 });

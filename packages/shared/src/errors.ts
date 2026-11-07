@@ -164,20 +164,34 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
   E_APPROVAL_REQUIRED: "Setujui aksi di terminal, atau jalankan ulang dengan izin yang sesuai.",
   E_DAEMON_DOWN: "Jalankan rann doctor lalu coba lagi.",
   E_NO_PROGRESS: "Ubah strategi atau parameter, jangan ulangi perintah yang sama.",
-  E_CONFIG_INVALID: "Periksa rann config list dan betulkan kunci yang dilaporkan."
+  E_CONFIG_INVALID: "Periksa rann config list dan betulkan kunci yang dilaporkan.",
+  E_PERMISSION: "Ubah mode izin dengan /permission, atau tambahkan path/tool ke allow di config. Jalankan rann config explain permissions untuk melihat sumbernya.",
+  E_SANDBOX: "Periksa batas sandbox dan workspace_only; longgarkan hanya kalau aksinya memang disetujui.",
+  E_PLAN_BLOCKED: "Periksa dependensi task yang gagal, lalu revisi rencana atau selesaikan prasyaratnya.",
+  E_GOAL_INCOMPLETE: "Lengkapi kriteria goal dengan bukti, atau ubah goal secara eksplisit sebagai pengguna.",
+  E_VERIFICATION_FAILED: "Baca output verifikasi, perbaiki kegagalan, lalu jalankan ulang.",
+  E_RUNTIME_EXCEEDED: "Pecah tugas menjadi bagian lebih kecil atau naikkan maxRuntime lewat config.",
+  E_RECOVERY_FAILED: "Periksa backup dan checkpoint terakhir sebelum mencoba pemulihan lagi.",
+  E_INPUT_TOO_LARGE: "Kurangi ukuran lampiran atau prompt di bawah batas yang dikonfigurasi.",
+  E_TOOL_INVALID_ARGS: "Periksa skema argumen tool dan tipe nilai yang dikirim.",
+  E_TOOL_NOT_FOUND: "Jalankan /tool list untuk melihat tool yang tersedia.",
+  E_UNSUPPORTED: "Periksa capability model atau platform; pilih jalur yang didukung.",
+  E_STORAGE: "Periksa ruang disk dan integritas database dengan rann doctor.",
+  E_DB: "Jalankan rann doctor dan periksa integritas database.",
+  E_JOB_FAILED: "Buka riwayat job dan log untuk melihat penyebab kegagalan.",
+  E_INTERNAL: "Jalankan ulang dengan --debug, lalu laporkan trace id bila masalah berulang."
 };
 
-export function hintFor(code: ErrorCode): string | undefined {
-  return HINTS[code];
+export function hintFor(code: ErrorCode): string {
+  return HINTS[code] ?? "Jalankan rann doctor atau ulangi dengan --debug untuk detail teknis.";
 }
 
 export function toRpcError(value: unknown, traceId?: string): RpcErrorShape {
   const err = toRannError(value);
-  const data = { ...(err.data ?? {}), ...(traceId ? { trace_id: traceId } : {}) };
+  const data = { ...(err.data ?? {}), trace_id: traceId ?? `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}` };
   const shape: RpcErrorShape = { code: err.code, message: err.message };
   if (Object.keys(data).length > 0) shape.data = data;
-  const hint = hintFor(err.code);
-  if (hint) shape.hint = hint;
+  shape.hint = hintFor(err.code);
   return shape;
 }
 

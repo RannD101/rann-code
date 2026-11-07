@@ -199,6 +199,7 @@ describe("tools", () => {
       "goal_update",
       "shell_run",
       "memory",
+      "procedure",
       "skill",
       "plugin_call",
       "browser",

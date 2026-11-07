@@ -11,6 +11,7 @@ import { SCHEMA_V8 } from "./schema-v8.js";
 import { SCHEMA_V9 } from "./schema-v9.js";
 import { SCHEMA_V10 } from "./schema-v10.js";
 import { SCHEMA_V11 } from "./schema-v11.js";
+import { SCHEMA_V12 } from "./schema-v12.js";
 
 export type Db = Database.Database;
 
@@ -270,6 +271,11 @@ END;
     version: 11,
     name: "file-change-diff",
     sql: SCHEMA_V11
+  },
+  {
+    version: 12,
+    name: "procedural-memory",
+    sql: SCHEMA_V12
   }
 ];
 

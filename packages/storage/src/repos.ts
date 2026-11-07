@@ -514,6 +514,7 @@ export interface AddMemoryInput {
   confidence?: number;
   importance?: number;
   expiresAt?: number;
+  status?: "active" | "pending" | "expired" | "deleted";
 }
 
 export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
@@ -536,8 +537,8 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   }
   const id = newId("mem");
   db.prepare(
-    `INSERT INTO memory_entries (id, profile_id, scope, project_path, session_id, kind, title, text, tags, source, confidence, importance, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO memory_entries (id, profile_id, scope, project_path, session_id, kind, title, text, tags, source, confidence, importance, status, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     profileId,
@@ -551,6 +552,7 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
     input.source ?? null,
     input.confidence ?? 1,
     input.importance ?? 0.5,
+    input.status ?? "active",
     input.expiresAt ?? null,
     at,
     at

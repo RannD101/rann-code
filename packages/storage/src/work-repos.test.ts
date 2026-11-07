@@ -27,6 +27,9 @@ import {
   recordFileChange,
   releasePathLease,
   updateTaskStatus,
+  listProcedures,
+  recordProcedureResult,
+  upsertProcedure,
   type Db
 } from "./index.js";
 
@@ -146,5 +149,24 @@ describe("work repositories", () => {
     expect(acquirePathLease(db, { path, sessionId: session.id }).ok).toBe(true);
     expect(acquirePathLease(db, { path, sessionId: session.id }).ok).toBe(true);
     expect(releasePathLease(db, path)).toBe(true);
+  });
+});
+
+describe("prosedur", () => {
+  it("mempromosikan setelah tiga keberhasilan dan menandai stale setelah tiga kegagalan", () => {
+    const { db } = freshDb();
+    const row = upsertProcedure(db, { projectPath: "/proyek", name: "rilis", trigger: "saat rilis", steps: "1. build\n2. tag", verification: "tes lulus" });
+    expect(row.status).toBe("candidate");
+    let current = recordProcedureResult(db, row.id, true)!;
+    current = recordProcedureResult(db, current.id, true)!;
+    expect(current.status).toBe("candidate");
+    current = recordProcedureResult(db, current.id, true)!;
+    expect(current.status).toBe("active");
+    const failing = upsertProcedure(db, { projectPath: "/proyek", name: "gagal", trigger: "saat gagal", steps: "1. coba", verification: "berhasil" });
+    let other = recordProcedureResult(db, failing.id, false)!;
+    other = recordProcedureResult(db, other.id, false)!;
+    other = recordProcedureResult(db, other.id, false)!;
+    expect(other.status).toBe("stale");
+    expect(listProcedures(db, { projectPath: "/proyek" }).length).toBe(2);
   });
 });

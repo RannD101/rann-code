@@ -2,6 +2,10 @@ import { createServer, type Server, type Socket } from "node:net";
 import { execFileSync, spawn } from "node:child_process";
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
+import { persistPlan } from "./plan-runtime.js";
+import { loadCustomTools, runCustomTool } from "./custom-tools.js";
+import { toolSpecs } from "./tools/index.js";
+import { validatePlan, type PlanDraft } from "./planner.js";
 import { RannError, PROTOCOL_VERSION, explainKey, toRannError, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
   appendAudit,
@@ -40,8 +44,10 @@ import {
   forkSession,
   listProjects,
   listPlans,
+  getPlan,
   listSessions,
   listTasks,
+  updateTaskPriority,
   openDatabase,
   recordRoutingLog,
   recoverInterruptedTurns,
@@ -486,6 +492,18 @@ export class RpcServer {
       }
       case "task.list":
         return listTasks(this.db, input.sessionId as string);
+      case "task.priority": {
+        const task = updateTaskPriority(this.db, input.taskId as string, input.priority as number);
+        if (!task) throw new RannError("E_NOT_FOUND", "Task tidak ditemukan");
+        appendAudit(this.db, {
+          actor: "user",
+          action: "task.priority",
+          resource: task.id,
+          decision: "ok",
+          metadata: { session_id: task.session_id, priority: task.priority }
+        });
+        return task;
+      }
       case "goal.get": {
         const session = getSession(this.db, input.sessionId as string);
         if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
@@ -840,6 +858,87 @@ export class RpcServer {
           tasks: listTasks(this.db, plan.session_id).filter((task) => task.plan_id === plan.id)
         }));
       }
+      case "tool.list": {
+        const loaded = await loadCustomTools(this.options.config.projectPath);
+        const builtins = toolSpecs().map((spec) => ({ ...spec, enabled: true, source: "builtin" }));
+        const custom = loaded.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.schema, enabled: true, source: "project", permission: tool.permission, timeout_ms: tool.timeoutMs, file: tool.source }));
+        return [...builtins, ...custom];
+      }
+      case "tool.test": {
+        const loaded = await loadCustomTools(this.options.config.projectPath);
+        const tool = loaded.tools.find((item) => item.name === input.name);
+        if (!tool) {
+          const invalid = loaded.errors.find((item) => item.file.includes(String(input.name)));
+          throw new RannError("E_TOOL_NOT_FOUND", invalid ? `Tool kustom tidak valid: ${invalid.message}` : `Tool kustom tidak ditemukan: ${String(input.name)}`);
+        }
+        const started = Date.now();
+        const result = await runCustomTool(tool, input.args ?? {}, { workspaceRoot: this.options.config.projectPath });
+        appendAudit(this.db, { actor: "user", action: "tool.test", resource: `tool:${tool.name}`, decision: result.ok ? "ok" : "deny", metadata: { duration_ms: Date.now() - started, exit_code: result.exitCode ?? null } });
+        return { ...result, duration_ms: Date.now() - started };
+      }
+      case "plan.show": {
+        const row = getPlan(this.db, input.planId as string);
+        if (!row) throw new RannError("E_NOT_FOUND", "Plan tidak ditemukan");
+        const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+        const snapshots = Array.isArray(metadata.snapshots)
+          ? (metadata.snapshots as Array<Record<string, unknown>>).map((snapshot) => ({
+              version: snapshot.version,
+              at: snapshot.at,
+              reason: snapshot.reason
+            }))
+          : [{ version: row.version, at: row.created_at, reason: "rencana awal" }];
+        return {
+          id: row.id,
+          session_id: row.session_id,
+          goal: row.goal,
+          status: row.status,
+          version: row.version,
+          active_version: row.version,
+          snapshots,
+          tasks: listTasks(this.db, row.session_id).filter((task) => task.plan_id === row.id)
+        };
+      }
+      case "plan.export": {
+        const row = getPlan(this.db, input.planId as string);
+        if (!row) throw new RannError("E_NOT_FOUND", "Plan tidak ditemukan");
+        const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+        const snapshots = Array.isArray(metadata.snapshots) ? (metadata.snapshots as Array<Record<string, unknown>>) : [];
+        const latest = snapshots[snapshots.length - 1];
+        const draft = (latest?.draft as Record<string, unknown> | undefined) ?? {
+          goal: row.goal,
+          assumptions: metadata.assumptions ?? [],
+          criteria: metadata.criteria ?? [],
+          tasks: listTasks(this.db, row.session_id)
+            .filter((task) => task.plan_id === row.id)
+            .map((task) => {
+              const data = JSON.parse(task.metadata_json) as Record<string, unknown>;
+              return {
+                id: data.planTaskId,
+                title: data.title,
+                description: data.description ?? "",
+                agent: data.agent ?? "coder",
+                files: data.files ?? [],
+                risk: data.risk ?? "low",
+                acceptance: data.acceptance ?? "",
+                dependsOn: data.dependsOn ?? []
+              };
+            }),
+          estimate: metadata.estimate ?? { minutes: 10, source: "heuristic" },
+          risks: metadata.risks ?? []
+        };
+        return { format: "rann-plan", format_version: 1, exported_at: new Date().toISOString(), plan_id: row.id, version: row.version, draft };
+      }
+      case "plan.import": {
+        const draft = input.draft as PlanDraft;
+        const validation = validatePlan(draft);
+        if (!validation.ok) throw new RannError("E_INVALID_PARAMS", `rencana tidak valid: ${validation.errors.join("; ")}`);
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
+        const turn = createTurn(this.db, { sessionId: session.id });
+        const plan = persistPlan(this.db, session.id, turn.id, draft, validation, typeof input.text === "string" ? input.text : draft.goal, () => {});
+        appendAudit(this.db, { actor: "user", action: "plan.import", resource: plan.id, decision: "ok", metadata: { session_id: session.id, tasks: draft.tasks.length } });
+        return { plan_id: plan.id, version: plan.version, tasks: draft.tasks.length };
+      }
       case "budget.status": {
         const config = this.options.config.config;
         const start = new Date();
@@ -982,6 +1081,23 @@ export class RpcServer {
         if (!updated) throw new RannError("E_NOT_FOUND", `Memori tidak ditemukan: ${input.id}`);
         return updated;
       }
+      case "memory.pending":
+        return { candidates: this.memoryService(input.projectPath as string | undefined).pending((input.limit as number | undefined) ?? 50) };
+      case "memory.approve": {
+        const service = this.memoryService(input.projectPath as string | undefined);
+        const entry = service.approve(
+          input.id as string,
+          {
+            ...(typeof input.text === "string" ? { text: input.text } : {}),
+            ...(Array.isArray(input.tags) ? { tags: input.tags as string[] } : {}),
+            ...(typeof input.kind === "string" ? { kind: input.kind } : {})
+          }
+        );
+        if (!entry) throw new RannError("E_NOT_FOUND", "Kandidat memori tidak ditemukan");
+        return { approved: entry };
+      }
+      case "memory.reject":
+        return { rejected: this.memoryService(input.projectPath as string | undefined).reject(input.id as string) };
       case "memory.remove":
         return {
           removed: this.memoryService(input.projectPath as string | undefined).remove(input.id as string)

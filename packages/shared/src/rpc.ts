@@ -131,6 +131,24 @@ export const memoryUpdateParams = z.object({
   kind: z.string().min(1).max(40).optional(),
   tags: z.array(z.string().min(1).max(40)).max(12).optional()
 });
+export const memoryPendingParams = z.object({
+  projectPath: z.string().max(4_096).optional(),
+  limit: z.number().int().min(1).max(100).optional()
+});
+
+export const memoryReviewParams = z.object({
+  projectPath: z.string().max(4_096).optional(),
+  id: z.string().min(1),
+  text: z.string().min(3).max(4_000).optional(),
+  tags: z.array(z.string().max(64)).max(12).optional(),
+  kind: z.string().max(40).optional()
+});
+
+export const memoryRejectParams = z.object({
+  projectPath: z.string().max(4_096).optional(),
+  id: z.string().min(1)
+});
+
 export const memoryRemoveParams = z.object({
   projectPath: localPath,
   id: z.string().min(1)
@@ -179,12 +197,42 @@ export const checkpointRestoreParams = z.object({
   force: z.boolean().optional()
 });
 
+export const planShowParams = z.object({ planId: z.string().min(1) });
+
+export const toolTestParams = z.object({ name: z.string().min(1), args: z.unknown().optional() });
+
+export const planExportParams = z.object({ planId: z.string().min(1) });
+
+export const planImportParams = z.object({
+  sessionId: z.string().min(1),
+  text: z.string().max(200_000).optional(),
+  draft: z.object({
+    goal: z.string().min(1),
+    assumptions: z.array(z.string()).default([]),
+    criteria: z.array(z.object({ id: z.string(), text: z.string(), done: z.boolean().default(false) })).default([]),
+    tasks: z.array(z.object({
+      id: z.string().min(1),
+      title: z.string().min(1),
+      description: z.string().optional(),
+      agent: z.string().min(1),
+      files: z.array(z.string()).default([]),
+      risk: z.enum(["low", "medium", "high"]).default("low"),
+      acceptance: z.string().min(1),
+      dependsOn: z.array(z.string()).default([])
+    })).min(1).max(100),
+    estimate: z.object({ minutes: z.number().int().positive(), source: z.enum(["heuristic", "historical"]).default("heuristic") }),
+    risks: z.array(z.object({ taskId: z.string(), level: z.enum(["low", "medium", "high"]), reason: z.string() })).default([])
+  })
+});
+
 export const planListParams = z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().positive().max(100).default(20)
 });
 
 export const taskListParams = z.object({ sessionId: z.string().min(1) });
+
+export const taskPriorityParams = z.object({ taskId: z.string().min(1), priority: z.number().int().min(-1000).max(1000) });
 
 const goalCriterion = z.union([
   z.string().min(1).max(2_000),
@@ -361,6 +409,9 @@ export const methodParams = {
   "memory.add": memoryAddParams,
   "memory.update": memoryUpdateParams,
   "memory.remove": memoryRemoveParams,
+  "memory.pending": memoryPendingParams,
+  "memory.approve": memoryReviewParams,
+  "memory.reject": memoryRejectParams,
   "skill.list": skillListParams,
   "skill.conflicts": z.object({ projectPath: z.string().min(1).optional() }).default({}),
   "skill.view": skillViewParams,
@@ -373,10 +424,16 @@ export const methodParams = {
   "secret.rotate": empty,
   "budget.status": empty,
   "route.explain": routeExplainParams,
+  "tool.list": z.object({}),
+  "tool.test": toolTestParams,
   "plan.list": planListParams,
+  "plan.show": planShowParams,
+  "plan.export": planExportParams,
+  "plan.import": planImportParams,
   "checkpoint.list": checkpointListParams,
   "checkpoint.restore": checkpointRestoreParams,
   "task.list": taskListParams,
+  "task.priority": taskPriorityParams,
   "goal.get": goalGetParams,
   "goal.list": goalListParams,
   "goal.set": goalSetParams,

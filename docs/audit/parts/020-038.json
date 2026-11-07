@@ -5,17 +5,15 @@
     "status": "partial",
     "evidence": [
       "packages/cli/src/main.ts:1212-1251 /help dan /help <command> membaca REPL_COMMANDS dan matchReplCommands, termasuk penanda perintah yang belum tersedia.",
-      "packages/cli/src/repl-commands.ts:197-211 registerCommands bisa menambah perintah ke REPL_COMMANDS, tetapi fungsi ini tidak dipanggil dari packages/cli/src/main.ts.",
+      "packages/cli/src/main.ts:1253-1258 perintah kustom dicetak dari daftar `custom.commands` terpisah, bukan dari REPL_COMMANDS.",
       "packages/cli/src/main.ts:20-68 teks bantuan `rann --help` adalah string HELP statis, terpisah dari registry REPL.",
       "packages/shared/src/errors.ts:1-43 daftar kode error stabil; packages/shared/src/errors.ts:174-177 toRpcError menambahkan trace_id ke data error.",
       "packages/cli/src/main.ts:3838-3845 mencetak kode, pesan, saran dari data.hint, trace id, dan stack hanya bila process.argv memuat --debug.",
       "packages/cli/src/main.ts:2813-2818 perintah tak dikenal mencetak E_UNKNOWN_COMMAND dan tiga saran dari nearestCommands; packages/cli/src/repl-commands.ts:258-271 menghitung jarak Levenshtein."
     ],
     "gaps": [
-      "Butir 1: `rann --help` memakai string statis (main.ts:20-68), dan registerCommands tidak pernah dipanggil dari CLI (repl-commands.ts:197 hanya dipakai di file itu), jadi perintah kustom tidak muncul di help maupun saran error.",
+      "Butir 1: `rann --help` memakai string statis (main.ts:20-68), bukan REPL_COMMANDS (main.ts:1239), dan perintah kustom dicetak dari daftar terpisah (main.ts:1253-1258), jadi ketiga permukaan bantuan tidak berasal dari satu registry.",
       "Butir 2: tidak semua kode punya saran; HINTS hanya mengisi sebagian kode (errors.ts:153-168), dan trace_id hanya ditambahkan pada respons RPC (rpc.ts:404), sehingga error lokal CLI tampil tanpa trace.",
-      "Butir 3: --debug hanya menambah stack pada penangan error tingkat atas (main.ts:3844); error yang dicetak di dalam REPL tidak berubah detailnya.",
-      "Butir 4: jalur izin ditolak hanya mencetak `Izin ditolak user untuk <tool>` tanpa cara mengubah izin (agent.ts:1129-1131).",
       "Butir 5: tidak ada lapisan i18n atau locale; seluruh pesan berupa literal bahasa Indonesia dan tidak ada sakelar ke bahasa Inggris."
     ]
   },
@@ -24,18 +22,17 @@
     "title": "Agent reasoning loop",
     "status": "partial",
     "evidence": [
-      "packages/runtime/src/agent.ts:596 loop berjalan dari langkah 1 sampai config.maxSteps.",
-      "packages/runtime/src/agent.ts:469-472 planDecision menentukan perlu plan dan mencatat alasan saat planner dilewati.",
-      "packages/runtime/src/agent.ts:497-512 plan disimpan lewat persistPlan lalu startFirstTask dijalankan.",
-      "packages/runtime/src/agent.ts:846-880 setiap tool call dijalankan berurutan, checkpoint DB dibuat, lalu tool.start diumumkan.",
-      "packages/runtime/src/agent.ts:789-805 verifyPlanLive dipanggil saat model berhenti tanpa tool call, dengan maksimal dua percobaan premature.",
-      "packages/runtime/src/agent.ts:832-835 finishPlan dan turn.end berstatus done setelah verifikasi."
+      "packages/runtime/src/agent.ts:650-651 loop berjalan dari langkah 1 sampai config.maxSteps dan mengumumkan fase act.",
+      "packages/runtime/src/agent.ts:522-527 planDecision menentukan perlu plan, lalu fase plan diumumkan.",
+      "packages/runtime/src/agent.ts:553-561 plan disimpan lewat persistPlan sebelum task pertama dijalankan.",
+      "packages/runtime/src/agent.ts:853-855 fase verify memanggil verifyPlanLive saat model berhenti tanpa tool call.",
+      "packages/runtime/src/agent.ts:957-961 setiap hasil tool menghasilkan event observation dan evaluation.",
+      "packages/runtime/src/agent.ts:894-897 finishPlan dan turn.end berstatus done setelah verifikasi."
     ],
     "gaps": [
-      "Butir 1: tidak ada fase eksplisit understand, plan, act, observe, evaluate, verify, report; yang ada hanya plan.update, tool.start, tool.end, message, dan turn.end (agent.ts:596-1170).",
-      "Butir 2: turn tetap difinalisasi done setelah dua kegagalan verifikasi dengan gap masih tersisa (agent.ts:793-832), dan turn tanpa plan langsung done saat model berhenti tanpa tool call.",
-      "Butir 3: tidak ada event observe, evaluate, atau verify tersendiri; hasil tool hanya ditulis sebagai pesan tool (agent.ts:955-969).",
-      "Butir 5: kelanjutan otomatis saat model berhenti tanpa tool call hanya berlaku bila ada plan aktif (agent.ts:789-805); tanpa plan tidak ada pertanyaan atau aksi lanjutan."
+      "Butir 1: hanya enam dari tujuh fase yang punya event; tidak ada fase refleksi (agent.ts:457, 527, 651, 813, 853, 895).",
+      "Butir 2: turn tetap difinalisasi done setelah dua kegagalan verifikasi dengan gap masih tersisa (agent.ts:857-897).",
+      "Butir 5: kelanjutan otomatis saat model berhenti tanpa tool call hanya berlaku bila ada plan aktif (agent.ts:809-855); tanpa plan tidak ada pertanyaan atau aksi lanjutan."
     ]
   },
   {
@@ -158,8 +155,7 @@
     "gaps": [
       "Butir 2: hanya ada setuju atau tolak seluruh plan; tidak ada persetujuan sebagian task dan tidak ada permintaan revisi dengan catatan.",
       "Butir 3: tidak ada status pending per task; setelah plan disetujui, startFirstTask langsung menjalankan task pertama (agent.ts:512).",
-      "Butir 4: masa berlaku hanya timeout permintaan approval 10 menit (rpc.ts:131); plan yang sudah disetujui tidak punya kedaluwarsa dan tidak perlu disetujui ulang.",
-      "Butir 5: audit mencatat aktor dan waktu, tetapi tidak mengikat keputusan ke versi plan atau daftar task yang disetujui (rpc.ts:1272-1285)."
+      "Butir 4: masa berlaku hanya timeout permintaan approval 10 menit (rpc.ts:131); plan yang sudah disetujui tidak punya kedaluwarsa dan tidak perlu disetujui ulang."
     ]
   },
   {
@@ -176,8 +172,7 @@
     "gaps": [
       "Butir 2: plan lama tidak disimpan sebagai baris tersendiri dan status `superseded` tidak ada di CHECK status plans (schema-v3.ts:102); revisi menimpa baris yang sama (plan-runtime.ts:300-320).",
       "Butir 3: `/plan show` tidak ada; hanya `/plan <tugas>` (main.ts:2793) dan `/tasks` yang tidak menampilkan nomor versi atau riwayat versi.",
-      "Butir 4: tidak ada perintah atau RPC untuk ekspor dan impor plan ke JSON; pencarian plan.export dan plan.import tidak menemukan implementasi.",
-      "Butir 1: versi tersimpan, tetapi status plan setelah revisit hanya satu baris sehingga versi lama tidak bisa dibuka ulang sebagai plan utuh."
+      "Butir 4: tidak ada perintah atau RPC untuk ekspor dan impor plan ke JSON; pencarian plan.export dan plan.import tidak menemukan implementasi."
     ]
   },
   {
@@ -185,7 +180,7 @@
     "title": "Replanning dinamis",
     "status": "partial",
     "evidence": [
-      "packages/runtime/src/plan-runtime.ts:248-300 revisePlan membuat plan baru dengan version + 1 dan reason.",
+      "packages/runtime/src/plan-runtime.ts:248-300 revisePlan merevisi plan dengan version + 1 dan reason.",
       "packages/runtime/src/plan-runtime.ts:301-320 metadata.revisions menyimpan alasan perubahan.",
       "packages/runtime/src/agent.ts:1021-1085 plan_revise meminta approval ulang bila goal berubah atau ada task high baru.",
       "packages/runtime/src/plan-runtime.ts:264-281 task yang sudah done dikeluarkan dari daftar task revisi sehingga tidak diulang.",
@@ -193,7 +188,6 @@
     ],
     "gaps": [
       "Butir 1: tidak ada trigger otomatis untuk task gagal permanen, file target hilang, atau dependensi berubah; hanya model yang memanggil tool plan_revise, sementara kegagalan task hanya menandai blocked (plan-runtime.ts:144-175).",
-      "Butir 3: approval ulang hanya untuk perubahan goal atau penambahan task high (agent.ts:1040-1052); perubahan besar lain tidak memicu approval.",
       "Butir 4: perubahan kecil seperti urutan task low tidak bisa otomatis dan tidak dicatat sebagai revisi terpisah; semua revisi harus lewat plan_revise.",
       "Butir 2: plan lama tidak tersimpan sebagai versi terpisah, hanya metadata pada baris plan yang sama (plan-runtime.ts:300-320)."
     ]
@@ -303,7 +297,7 @@
     ],
     "gaps": [
       "AC: runTurn tidak memanggil finishGoal, jadi turn bisa berstatus done meski kriteria goal belum terpenuhi (agent.ts:832); finishGoal hanya dipanggil dari /goal finish (main.ts:1511).",
-      "Butir 2: progres bertambah pada setiap tool, termasuk tool yang gagal (agent.ts:880-890), sehingga angka langkah tidak mencerminkan kemajuan task.",
+      "Butir 2: progres hanya diperbarui saat tool call, bukan setiap langkah model, dan tetap bertambah untuk tool yang gagal (agent.ts:880-890).",
       "Butir 4: kriteria hanya punya status done boolean dan bukti; tidak ada status gagal atau alasan kegagalan per kriteria (goal-repos.ts:4-10).",
       "Butir 1: goal disimpan di tabel goals per sesi, bukan di state task; task hanya menyimpan plan_id dan metadata (schema-v3.ts:127-142)."
     ]
@@ -334,7 +328,7 @@
       "packages/runtime/src/checkpoint-files.ts:10-26 manifest menyimpan path, sha256, ukuran, dan lokasi backup tiap file.",
       "packages/runtime/src/checkpoint-files.ts:51-90 createFileCheckpoint menyalin setiap file, menghitung sha256, dan menulis manifest.json berisi path, hash, ukuran, dan backup.",
       "packages/runtime/src/checkpoint-files.test.ts:20-33 menguji snapshot dan restore seluruh berkas; packages/runtime/src/checkpoint-files.test.ts:35-41 menguji penolakan rollback bila file berubah tanpa force.",
-      "packages/runtime/src/agent-wiring.test.ts:176-210 menguji checkpoint otomatis sebelum tool mengubah workspace dan restore dengan force.",
+      "packages/runtime/src/agent-wiring.test.ts:176-221 menguji checkpoint otomatis sebelum tool mengubah workspace dan restore dengan force.",
       "packages/cli/src/main.ts:2389-2393 `/checkpoint` hanya menampilkan daftar checkpoint."
     ],
     "gaps": [

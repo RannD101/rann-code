@@ -18,12 +18,13 @@ describe("errors", () => {
     expect(error.exitCode).toBe(4);
     expect(error.retryable).toBe(true);
     expect(error.data).toEqual({ retry_after_ms: 1_000 });
-    expect(toRpcError(error)).toEqual({
+    expect(toRpcError(error)).toMatchObject({
       code: "E_PROVIDER_RATE_LIMIT",
       message: "terlalu banyak",
       data: { retry_after_ms: 1_000 },
       hint: "Tunggu atau ganti provider lewat rann provider use."
     });
+    expect(toRpcError(error).data?.trace_id).toBeTypeOf("string");
   });
 
   it("membungkus error tak dikenal sebagai E_INTERNAL", () => {

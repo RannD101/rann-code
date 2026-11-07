@@ -621,3 +621,10 @@ export function dueSchedulerJobs(db: Db, at = now(), limit = 5): SchedulerJobRow
     .prepare("SELECT * FROM scheduler_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?")
     .all(at, limit) as SchedulerJobRow[];
 }
+
+export function updateTaskPriority(db: Db, id: string, priority: number): TaskRow | undefined {
+  if (!Number.isInteger(priority)) throw new Error("prioritas task harus bilangan bulat");
+  const at = now();
+  db.prepare("UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?").run(priority, at, id);
+  return getTask(db, id);
+}

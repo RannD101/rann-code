@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { RannError } from "@rann/shared";
 
 export type SkillScope = "global" | "project" | "builtin";
@@ -174,11 +174,13 @@ function readDirSkills(dir: string, scope: SkillScope): SkillContent[] {
 export class SkillStore {
   private readonly globalDir: string;
   private readonly projectDir: string;
+  private readonly projectPath: string;
   private selected: SkillSelection = { skills: [], reasons: [] };
 
   constructor(profileDir: string, projectPath: string) {
     this.globalDir = join(profileDir, "skills");
     this.projectDir = join(projectPath, ".rann", "skills");
+    this.projectPath = projectPath;
   }
 
   private all(): SkillContent[] {
@@ -222,6 +224,49 @@ export class SkillStore {
       }),
       "Baca isi skill dengan tool skill action=view sebelum memakainya."
     ].join("\n");
+  }
+
+  async runScript(name: string, script: string, args: string[] = [], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }> {
+    const skill = this.view(name);
+    if (!skill) throw new RannError("E_TOOL_NOT_FOUND", `Skill tidak ditemukan: ${name}`);
+    if (!skill.path) throw new RannError("E_TOOL_FAILED", `Skill builtin ${name} tidak punya skrip`);
+    if (!/^[a-zA-Z0-9._-]+$/.test(script)) throw new RannError("E_TOOL_INVALID_ARGS", "nama skrip hanya huruf, angka, titik, garis bawah, atau strip");
+    const root = dirname(skill.path);
+    const file = resolve(root, "scripts", script);
+    if (!file.startsWith(`${resolve(root, "scripts")}/`) || !existsSync(file)) throw new RannError("E_NOT_FOUND", `Skrip tidak ditemukan: ${script}`);
+    const timeout = Math.min(Math.max(options.timeoutMs ?? 30_000, 1_000), 600_000);
+    const started = Date.now();
+    return await new Promise((done, reject) => {
+      const child = spawn(file, args, {
+        cwd: this.projectPath,
+        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "", RANN_SKILL: name, RANN_PROJECT: this.projectPath },
+        stdio: ["ignore", "pipe", "pipe"],
+        signal: options.signal
+      });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const finish = (result: { ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        done(result);
+      };
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        finish({ ok: false, exitCode: 124, stdout: stdout.slice(0, 200_000), stderr: `${stderr.slice(0, 200_000)}\nskrip melewati timeout ${timeout} ms`.trim(), durationMs: Date.now() - started });
+      }, timeout);
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+        if (stdout.length > 400_000) child.kill("SIGKILL");
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+        if (stderr.length > 400_000) child.kill("SIGKILL");
+      });
+      child.on("error", (error) => reject(new RannError("E_TOOL_FAILED", `Skrip gagal dijalankan: ${error.message}`)));
+      child.on("close", (code) => finish({ ok: code === 0, exitCode: code ?? 1, stdout: stdout.slice(0, 200_000), stderr: stderr.slice(0, 200_000), durationMs: Date.now() - started }));
+    });
   }
 
   view(name: string): SkillContent | undefined {

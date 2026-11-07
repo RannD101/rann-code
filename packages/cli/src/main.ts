@@ -11,61 +11,13 @@ import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
 import { choose, chooseWith, clearScreen, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
-import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
+import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, renderCommandCatalog, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
 import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
 
-const HELP = `rann-code ${packageVersion()}
 
-Pemakaian:
-  rann "instruksi"              kirim tugas ke sesi terbaru, buat sesi baru kalau perlu
-  rann plan "instruksi"         susun rencana saja, belum menjalankan tool
-  rann chat                     sesi interaktif (REPL)
-  rann -p "instruksi"           sama, gaya non-interaktif
-  rann send <sesi> "instruksi"  kirim ke sesi tertentu
-  rann resume <sesi> "instruksi" lanjutkan sesi tertentu
-  rann turn <id> [--wait]        lihat hasil turn, tunggu kalau perlu
-  rann new [--title teks]       buat sesi baru
-  rann sessions [--limit N]     daftar sesi di folder ini (--all untuk semua)
-  rann models                   daftar model provider aktif
-  rann route explain "<prompt>"  jelaskan pilihan model tanpa mengirim request
-  rann usage                    ringkasan token, biaya, dan budget hari ini
-  rann providers                daftar provider dan status key
-  rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
-  rann provider login <nama> --env ENV   simpan kunci ke vault terenkripsi
-  rann provider remove <nama>     hapus kunci provider dari vault
-  rann provider test [nama]       uji koneksi provider dan model default
-  rann secret list               daftar secret terenkripsi (tanpa nilai)
-  rann secret set <nama> --env ENV  simpan secret dari environment
-  rann secret remove <nama>      hapus secret
-  rann secret export <path>      ekspor vault terenkripsi
-  rann secret rotate             rotasi master key vault
-  rann memory list|search|add|update|remove  kelola memori lokal
-  rann skill list|view|create|remove         kelola skill lokal
-  rann config get [kunci]       lihat config efektif atau satu kunci
-  rann config explain <kunci>   asal nilai config
-  rann config set <kunci> <v>   tulis config global
-  rann daemon start|stop|status kelola daemon
-  rann gateway status|start|stop|pair|devices  kelola gateway web
-  rann messaging status|enable|disable|send  kelola adapter messaging
-  rann agent list|get|cancel|profiles|message  kelola subagent
-  rann doctor [--json]          periksa instalasi
-  rann init                     siapkan folder .rann di project
-
-Flag umum:
-  --model <nama>        override model
-  --permission <mode>   read-only | ask | accept-edits | trusted | custom
-  --yes                 setujui otomatis semua permintaan tool
-  --plan                susun rencana saja, belum menjalankan tool
-  --detach              jalankan turn di latar, langsung cetak id turn
-  --output-format <f>   text | json | stream-json | ndjson
-  --json                keluaran JSON
-  --theme <nama>        dark | light | auto | custom
-  --no-color            matikan warna dan escape ANSI
-  -v, --version         versi
-  -h, --help            bantuan`;
 
 const KNOWN_COMMANDS = new Set([
   "version",
@@ -120,6 +72,10 @@ async function main(argv: string[]): Promise<number> {
     print(`rann-code ${packageVersion()}`);
     return 0;
   }
+  if (flagBool(args, "help")) {
+    print(renderCommandCatalog(packageVersion(), args.positionals[0]));
+    return 0;
+  }
   const barePrompt = flagString(args, "prompt");
   if (args.command === undefined) {
     const positionalPrompt = args.positionals.join(" ").trim();
@@ -128,8 +84,8 @@ async function main(argv: string[]): Promise<number> {
     if (process.stdin.isTTY && process.stdout.isTTY) return await chatCommand(args);
     if (!process.stdin.isTTY) return await chatCommand(args);
   }
-  if (flagBool(args, "help") || args.command === undefined) {
-    print(HELP);
+  if (args.command === undefined) {
+    print(renderCommandCatalog(packageVersion()));
     return 0;
   }
 
@@ -138,7 +94,7 @@ async function main(argv: string[]): Promise<number> {
       print(`rann-code ${packageVersion()}`);
       return 0;
     case "help":
-      print(HELP);
+      print(renderCommandCatalog(packageVersion(), args.positionals[0]));
       return 0;
     case "daemon":
       return await daemonCommand(args);
@@ -1354,6 +1310,31 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/memory" || line.startsWith("/memory ")) {
           const query = line.slice(7).trim();
+          if (query === "pending") {
+            const candidates = await client.request<MemoryView[]>("memory.pending", { projectPath: process.cwd(), limit: 50 });
+            if (candidates.length === 0) print("tidak ada kandidat memori");
+            else for (const entry of candidates) print(`${entry.id}  [${entry.kind}] ${entry.text}`);
+            continue;
+          }
+          if (query.startsWith("approve ") || query.startsWith("reject ")) {
+            const [action, id, ...rest] = query.split(/\s+/);
+            if (!id) {
+              print(`Pakai: /memory ${action} <id> [teks baru]`);
+              continue;
+            }
+            if (action === "approve") {
+              const entry = await client.request<MemoryView>("memory.approve", {
+                projectPath: process.cwd(),
+                id,
+                ...(rest.length > 0 ? { text: rest.join(" ") } : {})
+              });
+              print(`memori ${entry.id} disetujui`);
+            } else {
+              const result = await client.request<{ rejected: number }>("memory.reject", { projectPath: process.cwd(), id });
+              print(result.rejected > 0 ? `kandidat ${id} ditolak` : `kandidat ${id} tidak ditemukan`);
+            }
+            continue;
+          }
           const entries = await client.request<MemoryView[]>(query ? "memory.search" : "memory.list", {
             projectPath: process.cwd(),
             ...(query ? { query, limit: 20 } : { scope: "all", limit: 30 })
@@ -2621,6 +2602,27 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             for (const tool of tools) print(`${tool.enabled === false ? " " : "*"} ${String(tool.name)}`);
             continue;
           }
+          if (action === "test") {
+            const name = parts[1];
+            if (!name) {
+              print(ui.yellow("Pakai: /tool test <nama> [json-args]"));
+              continue;
+            }
+            const raw = parts.slice(2).join(" ");
+            let args: unknown = {};
+            if (raw.length > 0) {
+              try {
+                args = JSON.parse(raw);
+              } catch {
+                print(ui.red("argumen bukan JSON valid"));
+                continue;
+              }
+            }
+            const result = await client.request<Record<string, unknown>>("tool.test", { name, args });
+            print(`${result.ok ? ui.green("ok") : ui.red("gagal")} ${String(result.duration_ms)}ms`);
+            print(JSON.stringify(result.output, null, 2));
+            continue;
+          }
           if (action === "info") {
             const name = parts[1];
             if (!name) {
@@ -2636,7 +2638,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(JSON.stringify(tool, null, 2));
             continue;
           }
-          print(ui.yellow("Pakai: /tool list|info <nama>"));
+          print(ui.yellow("Pakai: /tool list|info <nama>|test <nama> [json]"));
           continue;
         }
         if (line === "/test" || line.startsWith("/test ")) {
@@ -2707,7 +2709,19 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line === "/task" || line.startsWith("/task ")) {
-          const id = line.split(/\s+/)[1];
+          const parts = line.split(/\s+/);
+          if (parts[1] === "priority") {
+            const taskId = parts[2];
+            const value = Number(parts[3]);
+            if (!taskId || !Number.isInteger(value)) {
+              print(ui.yellow("Pakai: /task priority <id> <bilangan bulat>"));
+              continue;
+            }
+            const updated = await client.request<Record<string, unknown>>("task.priority", { taskId, priority: value });
+            print(ui.green(`prioritas ${String(updated.id)} = ${String(updated.priority)}`));
+            continue;
+          }
+          const id = parts[1];
           const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 10 });
           const tasks: Array<Record<string, unknown>> = plans.flatMap((plan) =>
             ((plan.tasks as Array<Record<string, unknown>> | undefined) ?? []).map((task) => ({ ...task, plan_id: plan.id }) as Record<string, unknown>)
@@ -2790,10 +2804,56 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           continue;
         }
+        if (line === "/plan show" || line.startsWith("/plan show ")) {
+          const wanted = line.slice(10).trim();
+          const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 20 });
+          const active = plans.find((plan) => String(plan.status) === "active") ?? plans[0];
+          const planId = wanted || (active ? String(active.id) : "");
+          if (!planId) {
+            print(ui.dim("belum ada rencana"));
+            continue;
+          }
+          const view = await client.request<Record<string, unknown>>("plan.show", { planId });
+          print(`plan ${String(view.id)}  status ${String(view.status)}  versi aktif ${String(view.active_version)}`);
+          print(`goal: ${String(view.goal)}`);
+          for (const snapshot of (view.snapshots as Array<Record<string, unknown>> | undefined) ?? []) {
+            print(`  v${String(snapshot.version)}  ${new Date(Number(snapshot.at)).toISOString()}  ${String(snapshot.reason)}`);
+          }
+          for (const task of (view.tasks as Array<Record<string, unknown>> | undefined) ?? []) {
+            print(`  [${String(task.status)}] p${String(task.priority)} ${String(task.title)}  ${String(task.id)}`);
+          }
+          continue;
+        }
+        if (line === "/plan export" || line.startsWith("/plan export ")) {
+          const parts = line.slice(12).trim().split(/\s+/).filter(Boolean);
+          const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 20 });
+          const planId = parts[0] || String((plans.find((plan) => String(plan.status) === "active") ?? plans[0])?.id ?? "");
+          if (!planId) {
+            print(ui.dim("belum ada rencana"));
+            continue;
+          }
+          const exported = await client.request<Record<string, unknown>>("plan.export", { planId });
+          const destination = resolve(parts[1] ?? `rann-plan-${planId}.json`);
+          writeFileSync(destination, `${JSON.stringify(exported, null, 2)}\n`, { mode: 0o600 });
+          print(ui.green(`rencana diekspor ke ${destination}`));
+          continue;
+        }
+        if (line === "/plan import" || line.startsWith("/plan import ")) {
+          const source = line.slice(12).trim();
+          if (source.length === 0) {
+            print(ui.yellow("Pakai: /plan import <berkas.json>"));
+            continue;
+          }
+          const parsed = JSON.parse(readFileSync(resolve(source), "utf8")) as Record<string, unknown>;
+          const draft = (parsed.draft ?? parsed) as Record<string, unknown>;
+          const imported = await client.request<Record<string, unknown>>("plan.import", { sessionId, draft });
+          print(ui.green(`rencana diimpor sebagai ${String(imported.plan_id)} (${String(imported.tasks)} task)`));
+          continue;
+        }
         if (line.startsWith("/plan ")) {
           const text = line.slice(6).trim();
           if (text.length === 0) {
-            print(ui.red("Pakai: /plan <tugas>"));
+            print(ui.red("Pakai: /plan <tugas> | /plan show [id] | /plan export [id] [berkas] | /plan import <berkas>"));
             continue;
           }
           busy = true;

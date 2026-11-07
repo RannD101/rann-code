@@ -88,6 +88,7 @@ export class MemoryService {
     expiresAt?: number;
     confidence?: number;
     importance?: number;
+    status?: "active" | "pending";
   }): MemoryEntry {
     const text = input.text.trim();
     if (text.length < 3) throw new Error("Memory terlalu pendek");
@@ -109,7 +110,8 @@ export class MemoryService {
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
       ...(input.importance !== undefined ? { importance: input.importance } : {}),
-      ...(expiresAt !== undefined ? { expiresAt } : {})
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      ...(input.status ? { status: input.status } : {})
     });
   }
 
@@ -200,9 +202,30 @@ export class MemoryService {
           continue;
         }
       }
-      added.push(this.add({ ...candidate, source }));
+      const sensitive = /(password|passwd|token|api[_-]?key|secret|credential|kata sandi|otp|seed phrase|private key)\b/i.test(candidate.text);
+      if (sensitive) continue;
+      const clearSource = source !== "auto-extract";
+      const highConfidence = candidate.confidence >= 0.85;
+      added.push(this.add({ ...candidate, source, ...(clearSource || highConfidence ? {} : { status: "pending" as const }) }));
     }
     return { added, duplicates, conflicts };
+  }
+
+  pending(limit = 50): MemoryEntry[] {
+    return this.list("all", limit).filter((entry) => entry.status === "pending" && belongsToAgent(entry, this.options.agentProfile));
+  }
+
+  approve(id: string, patch: { text?: string; tags?: string[]; kind?: string } = {}): MemoryEntry | undefined {
+    const existing = this.list("all", 500).find((entry) => entry.id === id);
+    if (!existing) return undefined;
+    const updated = this.update(id, patch);
+    if (!updated) return undefined;
+    this.db.prepare("UPDATE memory_entries SET status = 'active', updated_at = ? WHERE id = ?").run(Date.now(), id);
+    return this.list("all", 500).find((entry) => entry.id === id);
+  }
+
+  reject(id: string): number {
+    return this.db.prepare("UPDATE memory_entries SET status = 'deleted', updated_at = ? WHERE id = ? AND status = 'pending'").run(Date.now(), id).changes;
   }
 
   update(id: string, patch: { text?: string; tags?: string[]; kind?: string }): MemoryEntry | undefined {

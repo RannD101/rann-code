@@ -47,7 +47,8 @@ export function persistPlan(
       criteria: draft.criteria,
       estimate: draft.estimate,
       risks: draft.risks,
-      validation
+      validation,
+      snapshots: [{ version: 1, at: Date.now(), reason: "rencana awal", draft }]
     }
   });
   const taskIds = new Map<string, string>();
@@ -92,7 +93,13 @@ export function persistPlan(
 }
 
 export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.update", data: Record<string, unknown>) => void): void {
-  const first = plan.draft.tasks.find((task) => task.dependsOn.length === 0);
+  const first = plan.draft.tasks
+    .map((task, index) => ({ task, index }))
+    .filter((entry) => entry.task.dependsOn.length === 0)
+    .sort((a, b) => {
+      const rank = { high: 3, medium: 2, low: 1 } as const;
+      return rank[b.task.risk] - rank[a.task.risk] || a.index - b.index;
+    })[0]?.task;
   if (!first) return;
   const id = plan.taskIds.get(first.id);
   if (!id) return;
@@ -115,8 +122,8 @@ export interface PlanTaskView {
 
 export function currentPlanTask(db: Db, plan: ActivePlan): PlanTaskView | undefined {
   const rows = db
-    .prepare("SELECT id, status, metadata_json FROM tasks WHERE plan_id = ? ORDER BY created_at")
-    .all(plan.id) as { id: string; status: string; metadata_json: string }[];
+    .prepare("SELECT id, status, priority, metadata_json FROM tasks WHERE plan_id = ? ORDER BY priority DESC, created_at")
+    .all(plan.id) as { id: string; status: string; priority: number; metadata_json: string }[];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]!;
     if (row.status !== "running") continue;
@@ -306,7 +313,11 @@ export function revisePlan(
     estimate: draft.estimate,
     risks: draft.risks,
     validation,
-    revisions: [...history, { version, reason: revision.reason, at: Date.now(), carried_tasks: [...completed] }]
+    revisions: [...history, { version, reason: revision.reason, at: Date.now(), carried_tasks: [...completed] }],
+    snapshots: [
+      ...(Array.isArray(previous.snapshots) ? previous.snapshots : []),
+      { version, at: Date.now(), reason: revision.reason, draft }
+    ]
   };
   updatePlan(db, plan.id, { goal, version, metadata });
   cancelOpenTasks(db, plan.id);

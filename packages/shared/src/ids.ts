@@ -53,7 +53,10 @@ export type IdPrefix =
   | "pair"
   | "gws"
   | "msgx"
-  | "amsg";
+  | "amsg"
+  | "prc"
+  | "mev"
+  | "pacc";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

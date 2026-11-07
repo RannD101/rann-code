@@ -6,7 +6,7 @@ import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import type { Db } from "@rann/storage";
-import { getActiveGoal, renderGoal, updateGoalProgress } from "@rann/storage";
+import { getActiveGoal, renderGoal, updateGoalProgress, listProcedures, recordProcedureResult, upsertProcedure } from "@rann/storage";
 import {
   acquirePathLease,
   createTransaction,
@@ -30,6 +30,7 @@ import type { BrowserActionInput } from "../browser.js";
 import { httpFetch, webSearch } from "../web.js";
 import { detectPackageManager, documentExtract, imageInfo, imageTransform, packageCommand, sqliteQuery, systemInfo } from "../system-tools.js";
 import type { SkillStore } from "../skills.js";
+import { runCustomTool, type CustomTool } from "../custom-tools.js";
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -73,6 +74,7 @@ export interface ToolContext {
   };
   scheduleTask?: (input: { text: string; priority?: number; delaySeconds?: number; idempotencyKey?: string }) => Promise<unknown>;
   sendMessage?: (chatId: number, text: string, threadId?: number) => Promise<unknown>;
+  customTools?: CustomTool[];
 }
 
 export interface ToolResult {
@@ -334,8 +336,20 @@ const memorySchema = z.object({
   limit: z.number().int().min(1).max(100).optional()
 });
 
+const procedureSchema = z.object({
+  action: z.enum(["list", "save", "result", "promote"]),
+  name: z.string().min(3).max(80).optional(),
+  trigger: z.string().min(3).max(300).optional(),
+  prerequisites: z.array(z.string().max(300)).max(20).optional(),
+  steps: z.string().min(10).max(20_000).optional(),
+  verification: z.string().min(3).max(2_000).optional(),
+  id: z.string().min(1).optional(),
+  ok: z.boolean().optional(),
+  status: z.enum(["candidate", "active", "stale", "rejected"]).optional()
+});
+
 const skillSchema = z.object({
-  action: z.enum(["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate"]),
+  action: z.enum(["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate", "run"]),
   name: z.string().min(1).max(64).optional(),
   description: z.string().min(1).max(500).optional(),
   body: z.string().min(1).max(60_000).optional(),
@@ -346,7 +360,10 @@ const skillSchema = z.object({
   triggers: z.array(z.string().min(1).max(80)).max(20).optional(),
   dependencies: z.array(z.string().min(1).max(64)).max(20).optional(),
   version: z.string().min(1).max(40).optional(),
-  reason: z.string().min(1).max(500).optional()
+  reason: z.string().min(1).max(500).optional(),
+  script: z.string().min(1).max(200).optional(),
+  args: z.array(z.string().max(2_000)).max(50).optional(),
+  timeout_ms: z.number().int().min(1_000).max(600_000).optional()
 });
 
 const browserSchema = z.object({
@@ -1369,8 +1386,8 @@ export const tools: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["add", "list", "search", "update", "remove"] },
-          text: { type: "string", description: "Isi memori, maksimal 4.000 karakter" },
+          action: { type: "string", enum: ["add", "list", "search", "update", "remove", "pending", "approve", "reject"] },
+          text: { type: "string", description: "Isi memori, maksimal 4.000 karakter, untuk update atau kandidat yang diedit" },
           id: { type: "string", description: "ID memori untuk update atau remove" },
           query: { type: "string", description: "Kata kunci pencarian" },
           scope: { type: "string", enum: ["global", "project", "all"], description: "Default project untuk add" },
@@ -1409,6 +1426,57 @@ export const tools: ToolDefinition[] = [
       const target = input.id ?? input.text;
       if (!target) throw new RannError("E_TOOL_INVALID_ARGS", "memory remove butuh id atau text");
       return textResult({ removed: ctx.memory.remove(target) });
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "procedure",
+      description: "Simpan prosedur yang terbukti berulang. save mencatat kandidat, result mencatat keberhasilan atau kegagalan, promote mengaktifkan prosedur setelah minimal tiga keberhasilan atau persetujuan pengguna.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "save", "result", "promote"] },
+          name: { type: "string" },
+          trigger: { type: "string" },
+          prerequisites: { type: "array", items: { type: "string" } },
+          steps: { type: "string" },
+          verification: { type: "string" },
+          id: { type: "string" },
+          ok: { type: "boolean" },
+          status: { type: "string", enum: ["candidate", "active", "stale", "rejected"] }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(procedureSchema, args, "procedure");
+      if (!ctx.db) throw new RannError("E_TOOL_NOT_FOUND", "Database tidak aktif");
+      if (input.action === "list") {
+        return textResult({ procedures: listProcedures(ctx.db, { projectPath: ctx.workspaceRoot, ...(input.status ? { status: input.status } : {}), limit: 50 }) });
+      }
+      if (input.action === "save") {
+        assertAllowed({ mode: ctx.permissionMode, tool: "procedure", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+        if (!input.name || !input.trigger || !input.steps || !input.verification) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "procedure save butuh name, trigger, steps, dan verification");
+        }
+        return textResult({ procedure: upsertProcedure(ctx.db, { projectPath: ctx.workspaceRoot, name: input.name, trigger: input.trigger, prerequisites: input.prerequisites, steps: input.steps, verification: input.verification }) });
+      }
+      if (input.action === "result") {
+        assertAllowed({ mode: ctx.permissionMode, tool: "procedure", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+        if (!input.id || input.ok === undefined) throw new RannError("E_TOOL_INVALID_ARGS", "procedure result butuh id dan ok");
+        const row = recordProcedureResult(ctx.db, input.id, input.ok);
+        if (!row) throw new RannError("E_NOT_FOUND", "Prosedur tidak ditemukan");
+        return textResult({ procedure: row });
+      }
+      assertAllowed({ mode: ctx.permissionMode, tool: "procedure", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      if (!input.id) throw new RannError("E_TOOL_INVALID_ARGS", "procedure promote butuh id");
+      const rows = listProcedures(ctx.db, { limit: 500 });
+      const target = rows.find((row) => row.id === input.id);
+      if (!target) throw new RannError("E_NOT_FOUND", "Prosedur tidak ditemukan");
+      if (target.successes < 3) throw new RannError("E_PERMISSION", "Prosedur butuh minimal tiga keberhasilan sebelum dipromosikan");
+      ctx.db.prepare("UPDATE procedures SET status = 'active', approved_by = 'user', updated_at = ? WHERE id = ?").run(Date.now(), input.id);
+      return textResult({ procedure: listProcedures(ctx.db, { limit: 500 }).find((row) => row.id === input.id) });
     }
   },
   {
@@ -1453,6 +1521,15 @@ export const tools: ToolDefinition[] = [
       if (input.action === "history") {
         if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill history butuh name");
         return textResult({ versions: ctx.skills.history(input.name), changelog: ctx.skills.changelog(input.name) });
+      }
+      if (input.action === "run") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill run butuh name");
+        if (!input.script) throw new RannError("E_TOOL_INVALID_ARGS", "skill run butuh script");
+        const result = await ctx.skills.runScript(input.name, input.script, input.args ?? [], {
+          ...(input.timeout_ms ? { timeoutMs: input.timeout_ms } : {}),
+          ...(ctx.signal ? { signal: ctx.signal } : {})
+        });
+        return { ok: result.ok, output: result, ...(result.ok ? {} : { code: "E_TOOL_FAILED", exitCode: result.exitCode }) };
       }
       if (input.action === "validate") {
         if (!input.name || !input.description || !input.body) {
@@ -1799,8 +1876,8 @@ const aliasTools: ToolDefinition[] = [
   aliasTool("stat_file", "fs_stat", "Metadata dan hash berkas.")
 ];
 
-export function toolSpecs(): ToolSpec[] {
-  return [...tools, ...aliasTools].map((tool) => tool.spec);
+export function toolSpecs(custom: CustomTool[] = []): ToolSpec[] {
+  return [...tools, ...aliasTools, ...custom.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.schema as ToolSpec["parameters"] }))].map((tool) => "spec" in tool ? tool.spec : tool);
 }
 
 export function findTool(name: string): ToolDefinition | undefined {
@@ -1808,6 +1885,13 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export async function executeTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const custom = ctx.customTools?.find((item) => item.name === name);
+  if (custom) {
+    assertAllowed({ mode: ctx.permissionMode, tool: name, risk: custom.permission === "read" ? "read" : custom.permission === "write" ? "write" : "exec", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+    const started = Date.now();
+    const result = await runCustomTool(custom, args, { workspaceRoot: ctx.workspaceRoot, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    return { ...result, durationMs: Date.now() - started };
+  }
   if (name.startsWith("mcp__")) {
     if (!ctx.mcp) throw new RannError("E_TOOL_NOT_FOUND", `MCP tidak aktif untuk tool ${name}`);
     assertAllowed({
