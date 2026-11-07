@@ -31,6 +31,7 @@ import type { Layout } from "./paths.js";
 import { routeModel, type HealthState } from "./router.js";
 import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
 import { analyzeFailure } from "./failure-analysis.js";
+import { listFileCheckpoints, restoreFileCheckpoint } from "./checkpoint-files.js";
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
 import { providerHealth } from "./providers/retry.js";
@@ -234,6 +235,32 @@ export class RpcServer {
       }
       case "task.list":
         return listTasks(this.db, input.sessionId as string);
+      case "checkpoint.list": {
+        const dir = this.options.layout.checkpointsDir;
+        if (!dir) return [];
+        return listFileCheckpoints(dir, (input.limit as number | undefined) ?? 20, this.options.config.projectPath).map((item) => ({
+          id: item.id,
+          label: item.label,
+          created_at: item.created_at,
+          files: item.files.length,
+          bytes: item.bytes
+        }));
+      }
+      case "checkpoint.restore": {
+        const dir = this.options.layout.checkpointsDir;
+        if (!dir) throw new RannError("E_TOOL_FAILED", "Direktori checkpoint tidak tersedia");
+        const result = restoreFileCheckpoint(this.options.config.projectPath, dir, input.id as string, {
+          force: input.force === true
+        });
+        appendAudit(this.db, {
+          actor: "user",
+          action: "checkpoint.restore",
+          resource: input.id as string,
+          decision: "ok",
+          metadata: { restored: result.restored.length, workspace: this.options.config.projectPath }
+        });
+        return result;
+      }
       case "plan.list": {
         const plans = listPlans(this.db, input.sessionId as string, (input.limit as number | undefined) ?? 20);
         return plans.map((plan) => ({
@@ -586,6 +613,7 @@ export class RpcServer {
       provider,
       model,
       workspaceRoot,
+      ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
       config: agentConfig,
       context: {
         maxTokens: config.context.max_tokens,
@@ -726,6 +754,7 @@ export class RpcServer {
         provider,
         model: child.model,
         workspaceRoot: options.projectPath,
+        ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
         config: childConfig,
         context: {
           maxTokens: config.context.max_tokens,

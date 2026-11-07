@@ -1,7 +1,8 @@
-import { resolve, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, resolve, sep } from "node:path";
 import { RannError, type PermissionMode } from "@rann/shared";
 
-export type ToolRisk = "read" | "write" | "exec";
+export type ToolRisk = "read" | "write" | "exec" | "net" | "admin";
 export type PolicyDecision = "allow" | "ask" | "deny";
 
 const DANGEROUS_SHELL = [
@@ -13,7 +14,9 @@ const DANGEROUS_SHELL = [
   /\b:\(\)\s*\{[^}]*\}\s*;?\s*:/,
   />\s*\/dev\/(sd|nvme|vd)/i,
   /\bwipefs\b/i,
-  /\bgit\s+push\b/i
+  /\bgit\s+push\b[^\n]*(--force\b|-f\b)/i,
+  /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-[a-z]*[fdx]/i
 ];
 
 export function isDangerousShell(command: string): boolean {
@@ -81,11 +84,24 @@ export interface PathGuardOptions {
   workspaceOnly: boolean;
 }
 
+function realish(path: string): string {
+  let current = resolve(path);
+  const missing: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  const base = existsSync(current) ? realpathSync(current) : current;
+  return missing.length > 0 ? resolve(base, ...missing) : base;
+}
+
 export function resolveInsideWorkspace(path: string, options: PathGuardOptions): string {
-  const root = resolve(options.workspaceRoot);
-  const target = resolve(root, path);
+  const root = realish(options.workspaceRoot);
+  const target = realish(resolve(options.workspaceRoot, path));
   if (options.workspaceOnly && target !== root && !target.startsWith(root + sep)) {
     throw new RannError("E_PERMISSION", `Path keluar workspace ditolak: ${path}`, { data: { path } });
   }
-  return target;
+  return resolve(options.workspaceRoot, path);
 }

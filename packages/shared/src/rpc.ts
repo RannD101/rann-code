@@ -156,6 +156,15 @@ export const routeExplainParams = z.object({
   policy: z.string().min(1).max(64).optional()
 });
 
+export const checkpointListParams = z.object({
+  limit: z.number().int().min(1).max(100).optional()
+});
+
+export const checkpointRestoreParams = z.object({
+  id: z.string().min(1).max(120),
+  force: z.boolean().optional()
+});
+
 export const planListParams = z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().positive().max(100).default(20)
@@ -195,6 +204,8 @@ export const methodParams = {
   "budget.status": empty,
   "route.explain": routeExplainParams,
   "plan.list": planListParams,
+  "checkpoint.list": checkpointListParams,
+  "checkpoint.restore": checkpointRestoreParams,
   "task.list": taskListParams
 } as const;
 

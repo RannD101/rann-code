@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { runTurn, type AgentConfig } from "./agent.js";
 import { MemoryService } from "./memory.js";
 import { SkillStore } from "./skills.js";
 import type { ChatRequest, Provider, ProviderChunk } from "./providers/types.js";
+import { listFileCheckpoints, restoreFileCheckpoint } from "./checkpoint-files.js";
 
 class CaptureProvider implements Provider {
   readonly name = "capture";
@@ -29,6 +30,25 @@ class PartialProvider implements Provider {
   async *chat(_request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
     yield { type: "text", text: "jawaban sebagian" };
     throw new RannError("E_STREAM_TRUNCATED", "stream terputus");
+  }
+}
+
+class WritingProvider implements Provider {
+  readonly name = "writer";
+  readonly kind = "mock";
+  private calls = 0;
+
+  async *chat(_request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: "tool_call", id: "call_1", name: "fs_write", args: { path: "hasil.txt", content: "dibuat agent" } };
+      yield { type: "usage", inputTokens: 5, outputTokens: 2 };
+      yield { type: "done", finishReason: "tool_calls" };
+      return;
+    }
+    yield { type: "text", text: "beres" };
+    yield { type: "usage", inputTokens: 5, outputTokens: 2 };
+    yield { type: "done", finishReason: "stop" };
   }
 }
 
@@ -148,6 +168,42 @@ describe("runTurn dengan memori dan skill lokal", () => {
       ).rejects.toMatchObject({ code: "E_STREAM_TRUNCATED" });
       const messages = listMessages(db, session.id, 10);
       expect(messages.at(-1)).toMatchObject({ role: "assistant", content: "jawaban sebagian" });
+    } finally {
+      close();
+    }
+  });
+
+  it("membuat checkpoint berkas otomatis sebelum tool mengubah workspace", async () => {
+    const { db, close, project, profile } = setup();
+    try {
+      mkdirSync(project, { recursive: true });
+      const checkpointsDir = join(profile, "checkpoints");
+      mkdirSync(checkpointsDir, { recursive: true });
+      writeFileSync(join(project, "awal.txt"), "isi awal", "utf8");
+
+      const session = createSession(db, { projectPath: project, model: "writer", permissionMode: "trusted" });
+      const turn = createTurn(db, { sessionId: session.id });
+      const result = await runTurn({
+        db,
+        session,
+        turnId: turn.id,
+        userText: "halo",
+        provider: new WritingProvider(),
+        model: "writer",
+        workspaceRoot: project,
+        checkpointsDir,
+        config
+      });
+
+      expect(result.text).toBe("beres");
+      expect(readFileSync(join(project, "hasil.txt"), "utf8")).toBe("dibuat agent");
+      const snapshots = listFileCheckpoints(checkpointsDir, 10, project);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]?.label).toBe("sebelum fs_write");
+
+      writeFileSync(join(project, "awal.txt"), "diubah setelah snapshot", "utf8");
+      restoreFileCheckpoint(project, checkpointsDir, snapshots[0]!.id, { force: true });
+      expect(readFileSync(join(project, "awal.txt"), "utf8")).toBe("isi awal");
     } finally {
       close();
     }

@@ -2,6 +2,7 @@ import type { Db, MessageRow, SessionRow } from "@rann/storage";
 import {
   addMessage,
   addToolCall,
+  appendAudit,
   appendEvent,
   completeToolCall,
   createCheckpoint,
@@ -18,6 +19,7 @@ import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
 import { analyzeFailure } from "./failure-analysis.js";
+import { createFileCheckpoint } from "./checkpoint-files.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
 import { loadInstructions } from "./instructions.js";
@@ -81,6 +83,7 @@ export interface RunTurnOptions {
   provider: Provider;
   model: string;
   workspaceRoot: string;
+  checkpointsDir?: string;
   config: AgentConfig;
   context?: ContextOptions;
   budget?: BudgetOptions;
@@ -275,6 +278,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let compactedAny = false;
   let lastCompactionKey = "";
   let prematureCount = 0;
+  let fileCheckpointId: string | undefined;
   let usedProviderName = provider.name;
   let usedModel = model;
 
@@ -641,6 +645,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
       for (const call of calls) {
         if (signal?.aborted) throw new RannError("E_CANCELLED", "Turn dibatalkan");
+        const mutating = ["fs_write", "fs_edit", "fs_delete", "git_write", "shell_run", "checkpoint_restore"].includes(call.name);
+        if (mutating && !fileCheckpointId && options.checkpointsDir) {
+          try {
+            const manifest = createFileCheckpoint(workspaceRoot, options.checkpointsDir, { label: `sebelum ${call.name}` });
+            fileCheckpointId = manifest.id;
+          } catch {
+            fileCheckpointId = undefined;
+          }
+        }
         const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: redactSecrets(call.args) });
         createCheckpoint(db, {
           sessionId: session.id,
@@ -652,7 +665,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             plan_id: activePlan?.id ?? null,
             tool: call.name,
             args: redactSecrets(call.args),
-            premature_count: prematureCount
+            premature_count: prematureCount,
+            file_checkpoint_id: fileCheckpointId ?? null
           }
         });
         publish("tool.start", { tool: call.name, args: redactSecrets(call.args), call_id: call.id, tool_call_id: toolRow.id });
@@ -664,6 +678,24 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             exitCode: result.exitCode,
             durationMs: result.durationMs
           });
+          try {
+            appendAudit(db, {
+              actor: "agent",
+              action: "tool.call",
+              resource: call.name,
+              decision: result.ok ? "ok" : "error",
+              metadata: {
+                session_id: session.id,
+                turn_id: turnId,
+                tool_call_id: toolRow.id,
+                exit_code: result.exitCode ?? null,
+                duration_ms: result.durationMs ?? null,
+                args: redactSecrets(call.args)
+              }
+            });
+          } catch {
+            // audit tidak boleh menggagalkan tool
+          }
           const content = JSON.stringify(result.output).slice(0, 20_000);
           addMessage(db, {
             sessionId: session.id,
@@ -682,6 +714,23 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
         const finishError = (code: string, message: string): void => {
           completeToolCall(db, toolRow.id, { status: "error", result: { code, message } });
+          try {
+            appendAudit(db, {
+              actor: "agent",
+              action: "tool.call",
+              resource: call.name,
+              decision: "error",
+              metadata: {
+                session_id: session.id,
+                turn_id: turnId,
+                tool_call_id: toolRow.id,
+                error_code: code,
+                args: redactSecrets(call.args)
+              }
+            });
+          } catch {
+            // audit tidak boleh menggagalkan tool
+          }
           addMessage(db, {
             sessionId: session.id,
             turnId,
@@ -707,7 +756,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             memory: options.memory,
             skills: options.skills,
             delegate,
-            mcp: options.mcp
+            mcp: options.mcp,
+            sessionId: session.id,
+            turnId,
+            ...(options.checkpointsDir ? { checkpointsDir: options.checkpointsDir } : {})
           });
           try {
             result = await executeTool(call.name, call.args, toolContext(preApproved));

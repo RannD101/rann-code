@@ -1,10 +1,17 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import { assertAllowed, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
+import { commitMessage, runGit, safeGitPath } from "../git.js";
+import {
+  createFileCheckpoint,
+  listFileCheckpoints,
+  restoreFileCheckpoint
+} from "../checkpoint-files.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
 import type { SkillStore } from "../skills.js";
@@ -14,6 +21,9 @@ export interface ToolContext {
   workspaceOnly: boolean;
   permissionMode: PermissionMode;
   approved: boolean;
+  sessionId?: string;
+  turnId?: string;
+  checkpointsDir?: string;
   allow?: string[];
   deny?: string[];
   signal?: AbortSignal;
@@ -50,6 +60,17 @@ function relPath(ctx: ToolContext, absolute: string): string {
   return relative(ctx.workspaceRoot, absolute) || ".";
 }
 
+function sha256(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+const BINARY_SAMPLE = 8_192;
+
+function assertTextFile(path: string, label: string): void {
+  const head = readFileSync(path).subarray(0, BINARY_SAMPLE);
+  if (head.includes(0)) throw new RannError("E_TOOL_FAILED", `Berkas biner tidak didukung: ${label}`);
+}
+
 const fsReadSchema = z.object({
   path: z.string().min(1),
   offset: z.number().int().min(1).optional(),
@@ -65,20 +86,64 @@ const fsListSchema = z.object({
 const fsWriteSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
-  create_dirs: z.boolean().optional()
+  create_dirs: z.boolean().optional(),
+  expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
 });
 
 const fsEditSchema = z.object({
   path: z.string().min(1),
   old: z.string().min(1),
   new: z.string(),
-  all: z.boolean().optional()
+  all: z.boolean().optional(),
+  expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
+});
+
+const fsStatSchema = z.object({
+  path: z.string().min(1)
+});
+
+const fsGlobSchema = z.object({
+  pattern: z.string().min(1).max(500),
+  limit: z.number().int().min(1).max(2_000).optional()
+});
+
+const fsDeleteSchema = z.object({
+  path: z.string().min(1),
+  recursive: z.boolean().optional()
 });
 
 const shellSchema = z.object({
   command: z.string().min(1),
   cwd: z.string().optional(),
   timeout_ms: z.number().int().min(1_000).max(600_000).optional()
+});
+
+const gitReadSchema = z.object({
+  action: z.enum(["status", "diff", "log", "show", "blame", "branch", "remote"]),
+  path: z.string().min(1).optional(),
+  staged: z.boolean().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  ref: z.string().min(1).max(200).optional(),
+  line_start: z.number().int().min(1).optional(),
+  line_end: z.number().int().min(1).optional()
+});
+
+const gitWriteSchema = z.object({
+  action: z.enum(["stage", "unstage", "commit", "branch_create"]),
+  paths: z.array(z.string().min(1)).max(200).optional(),
+  all: z.boolean().optional(),
+  message: z.string().min(1).max(5_000).optional(),
+  name: z.string().min(1).max(200).optional()
+});
+
+const checkpointCreateSchema = z.object({
+  label: z.string().min(1).max(120).optional(),
+  paths: z.array(z.string().min(1)).max(2_000).optional()
+});
+
+const checkpointRestoreSchema = z.object({
+  id: z.string().min(1).max(120),
+  force: z.boolean().optional()
 });
 
 const memorySchema = z.object({
@@ -107,6 +172,19 @@ const taskSchema = z.object({
   context: z.string().max(20_000).optional(),
   label: z.string().min(1).max(80).optional()
 });
+
+const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".rann", ".next", "target", "vendor"]);
+
+const SENSITIVE_ENV = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
+
+function sanitizedShellEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined || SENSITIVE_ENV.test(name)) continue;
+    env[name] = value;
+  }
+  return { ...env, ...extra };
+}
 
 function parse<T extends z.ZodTypeAny>(schema: T, args: unknown, tool: string): z.infer<T> {
   const parsed = schema.safeParse(args);
@@ -139,6 +217,7 @@ export const tools: ToolDefinition[] = [
       const stat = statSync(target);
       if (stat.isDirectory()) throw new RannError("E_TOOL_FAILED", `${input.path} adalah direktori, pakai fs_list`);
       if (stat.size > 5 * 1024 * 1024) throw new RannError("E_TOOL_FAILED", `Berkas terlalu besar: ${stat.size} byte`);
+      assertTextFile(target, input.path);
       const raw = readFileSync(target, "utf8");
       const lines = raw.split("\n");
       const offset = input.offset ?? 1;
@@ -150,7 +229,15 @@ export const tools: ToolDefinition[] = [
         content = content.slice(0, MAX_READ_CHARS);
         truncated = true;
       }
-      return textResult({ path: relPath(ctx, target), offset, lines: slice.length, total_lines: lines.length, truncated, content });
+      return textResult({
+        path: relPath(ctx, target),
+        offset,
+        lines: slice.length,
+        total_lines: lines.length,
+        truncated,
+        sha256: sha256(raw),
+        content
+      });
     }
   },
   {
@@ -177,7 +264,7 @@ export const tools: ToolDefinition[] = [
       const walk = (dir: string, depth: number): void => {
         if (entries.length >= limit || depth > maxDepth) return;
         for (const entry of readdirSync(dir, { withFileTypes: true })) {
-          if (entry.name === ".git" || entry.name === "node_modules") continue;
+          if (entry.name === ".git" || IGNORED_DIRS.has(entry.name)) continue;
           const full = `${dir}/${entry.name}`;
           if (entry.isDirectory()) {
             entries.push({ path: relPath(ctx, full), type: "dir" });
@@ -211,9 +298,22 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsWriteSchema, args, "fs_write");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_write", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
+      if (existsSync(target)) {
+        assertTextFile(target, input.path);
+        if (input.expected_sha256) {
+          const actual = sha256(readFileSync(target));
+          if (actual !== input.expected_sha256.toLowerCase()) {
+            throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} berubah sejak dibaca. Baca ulang sebelum menulis.`, {
+              data: { path: input.path, expected: input.expected_sha256, actual }
+            });
+          }
+        }
+      } else if (input.expected_sha256) {
+        throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} tidak ada, hash yang diharapkan tidak cocok`);
+      }
       if (input.create_dirs !== false) mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, input.content, "utf8");
-      return textResult({ path: relPath(ctx, target), bytes: Buffer.byteLength(input.content, "utf8") });
+      return textResult({ path: relPath(ctx, target), bytes: Buffer.byteLength(input.content, "utf8"), sha256: sha256(input.content) });
     }
   },
   {
@@ -237,7 +337,13 @@ export const tools: ToolDefinition[] = [
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_edit", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
       if (!existsSync(target)) throw new RannError("E_TOOL_FAILED", `Berkas tidak ditemukan: ${input.path}`);
+      assertTextFile(target, input.path);
       const before = readFileSync(target, "utf8");
+      if (input.expected_sha256 && sha256(before) !== input.expected_sha256.toLowerCase()) {
+        throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} berubah sejak dibaca. Baca ulang sebelum mengedit.`, {
+          data: { path: input.path, expected: input.expected_sha256, actual: sha256(before) }
+        });
+      }
       const occurrences = before.split(input.old).length - 1;
       if (occurrences === 0) throw new RannError("E_TOOL_FAILED", "Teks lama tidak ditemukan");
       if (occurrences > 1 && input.all !== true) {
@@ -245,7 +351,265 @@ export const tools: ToolDefinition[] = [
       }
       const after = input.all === true ? before.split(input.old).join(input.new) : before.replace(input.old, input.new);
       writeFileSync(target, after, "utf8");
-      return textResult({ path: relPath(ctx, target), replacements: input.all === true ? occurrences : 1 });
+      return textResult({ path: relPath(ctx, target), replacements: input.all === true ? occurrences : 1, sha256: sha256(after) });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "fs_stat",
+      description: "Statistik berkas atau direktori: ukuran, mtime, mode, dan sha256 untuk berkas teks.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(fsStatSchema, args, "fs_stat");
+      const target = resolveInsideWorkspace(input.path, ctx);
+      if (!existsSync(target)) throw new RannError("E_TOOL_FAILED", `Path tidak ditemukan: ${input.path}`);
+      const stat = statSync(target);
+      const base = {
+        path: relPath(ctx, target),
+        type: stat.isDirectory() ? "dir" : "file",
+        size: stat.size,
+        mtime: stat.mtime.toISOString(),
+        mode: stat.mode.toString(8).slice(-4)
+      };
+      if (stat.isDirectory()) return textResult(base);
+      const head = readFileSync(target).subarray(0, BINARY_SAMPLE);
+      const binary = head.includes(0);
+      return textResult({ ...base, binary, ...(binary ? {} : { sha256: sha256(readFileSync(target)) }) });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "fs_glob",
+      description: "Cari berkas dengan pola glob relatif workspace, misalnya src/**/*.ts. Folder build dan .git diabaikan.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 2000 }
+        },
+        required: ["pattern"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(fsGlobSchema, args, "fs_glob");
+      if (input.pattern.startsWith("/") || input.pattern.includes("..")) {
+        throw new RannError("E_TOOL_FAILED", "Pola glob harus relatif dan tidak boleh memuat ..");
+      }
+      const limit = input.limit ?? 500;
+      const found = globSync(input.pattern, { cwd: ctx.workspaceRoot })
+        .filter((item) => !item.split(/[\\/]/).some((part) => IGNORED_DIRS.has(part)))
+        .slice(0, limit + 1);
+      const paths: string[] = [];
+      for (const item of found.slice(0, limit)) {
+        try {
+          resolveInsideWorkspace(item, ctx);
+          paths.push(item);
+        } catch {
+          continue;
+        }
+      }
+      return textResult({ pattern: input.pattern, count: paths.length, truncated: found.length > limit, paths });
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "fs_delete",
+      description: "Pindahkan berkas atau direktori ke .rann/trash, bukan hapus permanen. Direktori tidak kosong butuh recursive=true.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          recursive: { type: "boolean" }
+        },
+        required: ["path"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(fsDeleteSchema, args, "fs_delete");
+      assertAllowed({ mode: ctx.permissionMode, tool: "fs_delete", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const target = resolveInsideWorkspace(input.path, ctx);
+      if (!existsSync(target)) throw new RannError("E_TOOL_FAILED", `Path tidak ditemukan: ${input.path}`);
+      if (relative(ctx.workspaceRoot, target) === "") throw new RannError("E_TOOL_FAILED", "Workspace root tidak boleh dihapus");
+      const stat = statSync(target);
+      if (stat.isDirectory() && readdirSync(target).length > 0 && input.recursive !== true) {
+        throw new RannError("E_TOOL_FAILED", "Direktori tidak kosong. Set recursive=true untuk memindahkan seluruh isinya ke trash.");
+      }
+      const trashDir = resolveInsideWorkspace(".rann/trash", { ...ctx, workspaceOnly: true });
+      mkdirSync(trashDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const name = target.split(/[\\/]/).pop() ?? "berkas";
+      const destination = `${trashDir}/${stamp}-${name}`;
+      renameSync(target, destination);
+      return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", trash_path: relPath(ctx, destination) });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "git_read",
+      description: "Operasi Git baca: status, diff, log, show, blame, branch, remote. Tidak mengubah working tree.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["status", "diff", "log", "show", "blame", "branch", "remote"] },
+          path: { type: "string" },
+          staged: { type: "boolean" },
+          limit: { type: "integer", minimum: 1, maximum: 100 },
+          ref: { type: "string" },
+          line_start: { type: "integer", minimum: 1 },
+          line_end: { type: "integer", minimum: 1 }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(gitReadSchema, args, "git_read");
+      const cwd = resolveInsideWorkspace(".", ctx);
+      let argv: string[];
+      if (input.action === "status") argv = ["status", "--short", "--branch"];
+      else if (input.action === "diff") {
+        argv = ["diff", ...(input.staged ? ["--cached"] : []), ...(input.path ? ["--", safeGitPath(input.path)] : [])];
+      } else if (input.action === "log") argv = ["log", "--oneline", "--decorate", "-n", String(input.limit ?? 20)];
+      else if (input.action === "show") {
+        const ref = input.ref ?? "HEAD";
+        if (ref.startsWith("-")) throw new RannError("E_TOOL_FAILED", "ref tidak valid");
+        argv = ["show", "--stat", "--oneline", ref];
+      } else if (input.action === "blame") {
+        if (!input.path) throw new RannError("E_TOOL_INVALID_ARGS", "git_read blame butuh path");
+        const range = input.line_start && input.line_end ? ["-L", `${input.line_start},${input.line_end}`] : [];
+        argv = ["blame", ...range, "--", safeGitPath(input.path)];
+      } else if (input.action === "branch") argv = ["branch", "--list", "--verbose", "--no-abbrev"];
+      else argv = ["remote", "-v"];
+
+      const result = await runGit(cwd, argv, { signal: ctx.signal });
+      return { ok: result.code === 0, output: { action: input.action, ...result }, exitCode: result.code };
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "git_write",
+      description: "Operasi Git yang mengubah state: stage, unstage, commit dengan trailer Rann-Code-Session, atau buat branch. Commit ditolak saat masih ada konflik.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["stage", "unstage", "commit", "branch_create"] },
+          paths: { type: "array", items: { type: "string" } },
+          all: { type: "boolean" },
+          message: { type: "string" },
+          name: { type: "string" }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(gitWriteSchema, args, "git_write");
+      assertAllowed({ mode: ctx.permissionMode, tool: "git_write", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const cwd = resolveInsideWorkspace(".", ctx);
+      if (input.action === "stage") {
+        const paths = (input.paths ?? []).map(safeGitPath);
+        if (paths.length === 0 && input.all !== true) throw new RannError("E_TOOL_INVALID_ARGS", "stage butuh paths atau all=true");
+        const argv = paths.length > 0 ? ["add", "--", ...paths] : ["add", "-A"];
+        const result = await runGit(cwd, argv, { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code };
+      }
+      if (input.action === "unstage") {
+        const paths = (input.paths ?? []).map(safeGitPath);
+        if (paths.length === 0) throw new RannError("E_TOOL_INVALID_ARGS", "unstage butuh paths");
+        const result = await runGit(cwd, ["restore", "--staged", "--", ...paths], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code };
+      }
+      if (input.action === "branch_create") {
+        if (!input.name || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(input.name)) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "Nama branch tidak valid");
+        }
+        const result = await runGit(cwd, ["switch", "-c", input.name], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code };
+      }
+      if (!input.message) throw new RannError("E_TOOL_INVALID_ARGS", "commit butuh message");
+      const conflicts = await runGit(cwd, ["diff", "--name-only", "--diff-filter=U"], { signal: ctx.signal });
+      if (conflicts.code !== 0) throw new RannError("E_TOOL_FAILED", conflicts.stderr || "Gagal memeriksa konflik");
+      if (conflicts.stdout.trim().length > 0) {
+        throw new RannError("E_TOOL_FAILED", `Commit ditolak, masih ada konflik: ${conflicts.stdout.trim().split("\n").join(", ")}`);
+      }
+      const result = await runGit(cwd, ["commit", ...commitMessage(input.message, ctx.sessionId)], { signal: ctx.signal });
+      return { ok: result.code === 0, output: result, exitCode: result.code };
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "checkpoint_create",
+      description: "Buat snapshot berkas workspace sebelum perubahan berisiko. Snapshot disimpan di profil Rann, bukan di repo.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          paths: { type: "array", items: { type: "string" } }
+        }
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(checkpointCreateSchema, args, "checkpoint_create");
+      if (!ctx.checkpointsDir) throw new RannError("E_TOOL_FAILED", "Direktori checkpoint tidak tersedia");
+      const manifest = createFileCheckpoint(ctx.workspaceRoot, ctx.checkpointsDir, {
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.paths ? { paths: input.paths } : {})
+      });
+      return textResult({ id: manifest.id, label: manifest.label, files: manifest.files.length, bytes: manifest.bytes, truncated: manifest.truncated });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "checkpoint_list",
+      description: "Daftar checkpoint berkas terbaru beserta label dan jumlah berkas.",
+      parameters: {
+        type: "object",
+        properties: { limit: { type: "integer", minimum: 1, maximum: 100 } }
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(z.object({ limit: z.number().int().min(1).max(100).optional() }), args, "checkpoint_list");
+      if (!ctx.checkpointsDir) throw new RannError("E_TOOL_FAILED", "Direktori checkpoint tidak tersedia");
+      const items = listFileCheckpoints(ctx.checkpointsDir, input.limit ?? 20).map((item) => ({
+        id: item.id,
+        label: item.label,
+        created_at: item.created_at,
+        files: item.files.length,
+        bytes: item.bytes
+      }));
+      return textResult({ count: items.length, checkpoints: items });
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "checkpoint_restore",
+      description: "Kembalikan berkas dari checkpoint. Ditolak bila berkas berubah setelah checkpoint, kecuali force=true.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          force: { type: "boolean" }
+        },
+        required: ["id"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(checkpointRestoreSchema, args, "checkpoint_restore");
+      assertAllowed({ mode: ctx.permissionMode, tool: "checkpoint_restore", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      if (!ctx.checkpointsDir) throw new RannError("E_TOOL_FAILED", "Direktori checkpoint tidak tersedia");
+      const result = restoreFileCheckpoint(ctx.workspaceRoot, ctx.checkpointsDir, input.id, { force: input.force });
+      return textResult(result);
     }
   },
   {
@@ -282,7 +646,7 @@ export const tools: ToolDefinition[] = [
           cwd,
           detached: process.platform !== "win32",
           stdio: ["ignore", "pipe", "pipe"],
-          env: { ...process.env, RANN_TOOL: "shell_run" }
+          env: sanitizedShellEnv({ RANN_TOOL: "shell_run" })
         });
         let stdout = "";
         let stderr = "";

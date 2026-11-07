@@ -535,7 +535,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /checkpoints, /undo [id], /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -663,6 +663,34 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             const tasks = (plan.tasks as Array<Record<string, unknown>> | undefined) ?? [];
             for (const task of tasks) print(`  - [${String(task.status)}] ${String(task.title)}`);
           }
+          continue;
+        }
+        if (line === "/checkpoints") {
+          const items = await client.request<Array<Record<string, unknown>>>("checkpoint.list", { limit: 10 });
+          if (items.length === 0) {
+            print(ui.dim("belum ada checkpoint berkas"));
+            continue;
+          }
+          for (const item of items) {
+            print(`${String(item.id)}  ${String(item.files)} berkas  ${String(item.created_at)}  ${String(item.label)}`);
+          }
+          continue;
+        }
+        if (line === "/undo" || line.startsWith("/undo ")) {
+          const requested = line.slice(6).trim();
+          const items = await client.request<Array<Record<string, unknown>>>("checkpoint.list", { limit: 20 });
+          const target = requested.length > 0 ? items.find((item) => item.id === requested) : items[0];
+          if (!target) {
+            print(ui.red(requested.length > 0 ? "checkpoint tidak ditemukan" : "belum ada checkpoint untuk di-undo"));
+            continue;
+          }
+          const answer = await rl.question(ui.yellow(`Kembalikan ${String(target.files)} berkas dari ${String(target.id)}? (y/N) `));
+          if (!/^y(es)?$/i.test(answer.trim())) {
+            print(ui.dim("undo dibatalkan"));
+            continue;
+          }
+          const result = await client.request<Record<string, unknown>>("checkpoint.restore", { id: target.id, force: true });
+          print(ui.green(`dipulihkan: ${String((result.restored as unknown[] | undefined)?.length ?? 0)} berkas`));
           continue;
         }
         if (line === "/cancel") {

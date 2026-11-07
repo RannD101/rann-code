@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -49,10 +49,19 @@ describe("policy", () => {
   });
 
   it("mengenali perintah shell berbahaya", () => {
-    for (const command of ["rm -rf /", "mkfs.ext4 /dev/sda1", "dd if=x of=/dev/sda", "shutdown -h now", "git push origin main"]) {
+    for (const command of [
+      "rm -rf /",
+      "mkfs.ext4 /dev/sda1",
+      "dd if=x of=/dev/sda",
+      "shutdown -h now",
+      "git push --force origin main",
+      "git reset --hard HEAD~2",
+      "git clean -fdx"
+    ]) {
       expect(isDangerousShell(command)).toBe(true);
     }
     expect(isDangerousShell("git status")).toBe(false);
+    expect(isDangerousShell("git push origin main")).toBe(false);
     expect(isDangerousShell("rm -rf ./dist")).toBe(false);
   });
 
@@ -69,6 +78,20 @@ describe("policy", () => {
     } catch (error) {
       expect((error as RannError).code).toBe("E_PERMISSION");
     }
+  });
+
+  it("menolak symlink yang menunjuk keluar workspace", () => {
+    const base = mkdtempSync(join(tmpdir(), "rann-policy-link-"));
+    const root = join(base, "workspace");
+    const outside = join(base, "rahasia");
+    mkdirSync(root);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "kunci.txt"), "rahasia", "utf8");
+    symlinkSync(outside, join(root, "pintu"), "dir");
+
+    expect(() => resolveInsideWorkspace("pintu/kunci.txt", { workspaceRoot: root, workspaceOnly: true })).toThrowError(RannError);
+    expect(() => resolveInsideWorkspace("pintu/baru.txt", { workspaceRoot: root, workspaceOnly: true })).toThrowError(RannError);
+    expect(resolveInsideWorkspace("pintu/kunci.txt", { workspaceRoot: root, workspaceOnly: false })).toBe(join(root, "pintu/kunci.txt"));
   });
 
   it("menjaga path tetap di dalam workspace", () => {
