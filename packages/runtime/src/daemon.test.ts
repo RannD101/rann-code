@@ -57,6 +57,11 @@ describe("daemon dan RPC", () => {
       expect(turn.status).toBe("done");
       expect(JSON.parse(turn.usage_json)).toMatchObject({ outputTokens: expect.any(Number) });
       expect(turn.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+      const runtime = await client.request<{ status: string; ended_at: number; max_runtime_ms: number }>("turn.runtime", { turnId });
+      expect(runtime.status).toBe("done");
+      expect(runtime.ended_at).toBeGreaterThan(0);
+      expect(runtime.max_runtime_ms).toBe(7_200_000);
     } finally {
       client.close();
       await daemon.stop();

@@ -29,6 +29,8 @@ workspace_only = true
 
 [agent]
 max_steps = 24
+max_runtime_ms = 7200000
+heartbeat_ms = 5000
 `;
 
 export function ensureDefaultConfig(layout: Layout): void {

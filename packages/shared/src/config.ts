@@ -52,6 +52,8 @@ export const configSchema = z.object({
   agent: z
     .object({
       max_steps: z.number().int().positive().max(200).default(24),
+      max_runtime_ms: z.number().int().positive().max(86_400_000).default(7_200_000),
+      heartbeat_ms: z.number().int().min(1_000).max(10_000).default(5_000),
       system_extra: z.string().default("")
     })
     .default({}),

@@ -8,10 +8,15 @@ import {
   createTurn,
   eventsForTurn,
   finishTurn,
+  finishTurnRuntime,
   finishGoal,
+  heartbeatTurnRuntime,
+  startTurnRuntime,
+  markStalledTurns,
   getActiveGoal,
   getSession,
   getTurn,
+  getTurnRuntime,
   listGoals,
   listMessages,
   listPlans,
@@ -76,6 +81,7 @@ export class RpcServer {
   private readonly secrets: SecretStore;
   private readonly mcp: McpManager;
   private readonly startedAt = Date.now();
+  private watchdog?: NodeJS.Timeout;
   recoveredTurns: ReturnType<typeof recoverInterruptedTurns> = [];
   private closing = false;
 
@@ -123,6 +129,31 @@ export class RpcServer {
       } catch {
         // abaikan
       }
+    }
+    this.watchdog = setInterval(() => this.sweepStalledTurns(), 15_000);
+    this.watchdog.unref();
+  }
+
+  private sweepStalledTurns(): void {
+    try {
+      const stalled = markStalledTurns(this.db);
+      for (const item of stalled) {
+        const turn = getTurn(this.db, item.turn_id);
+        if (!turn) continue;
+        const event = appendEvent(this.db, {
+          type: "heartbeat",
+          sessionId: turn.session_id,
+          turnId: item.turn_id,
+          data: {
+            state: "stalled",
+            reason: item.reason,
+            silence_ms: item.silence_ms
+          }
+        });
+        this.broadcast(event);
+      }
+    } catch {
+      // watchdog tidak boleh mematikan daemon
     }
   }
 
@@ -208,6 +239,8 @@ export class RpcServer {
         return this.sessionSend(input);
       case "turn.get":
         return this.turnGet(input);
+      case "turn.runtime":
+        return getTurnRuntime(this.db, input.turnId as string) ?? null;
       case "session.cancel": {
         const sessionId = input.sessionId as string;
         const controller = this.activeTurns.get(sessionId);
@@ -517,6 +550,7 @@ export class RpcServer {
       database: { path: this.options.layout.dbPath, schema_version: schemaVersion(this.db) },
       providers: providerHealth.snapshot(),
       recovered_turns: this.recoveredTurns.splice(0),
+      stalled_turns: this.db.prepare("SELECT turn_id, stall_reason, stalled_at FROM turn_runtime WHERE status = 'stalled'").all(),
       active_turns: [...this.activeTurns.keys()]
     };
   }
@@ -609,6 +643,11 @@ export class RpcServer {
       }
     }
     const turn = createTurn(this.db, { sessionId, idempotencyKey: input.idempotencyKey as string | undefined });
+    startTurnRuntime(this.db, { turnId: turn.id, maxRuntimeMs: config.agent.max_runtime_ms });
+    const heartbeat = setInterval(() => {
+      heartbeatTurnRuntime(this.db, turn.id);
+    }, config.agent.heartbeat_ms);
+    heartbeat.unref();
     setTurnModel(this.db, turn.id, descriptor.id);
     recordRoutingLog(this.db, {
       sessionId,
@@ -634,6 +673,7 @@ export class RpcServer {
       allow: config.permissions.allow,
       deny: config.permissions.deny,
       maxSteps: config.agent.max_steps,
+      maxRuntimeMs: config.agent.max_runtime_ms,
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
       requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal)
@@ -728,7 +768,17 @@ export class RpcServer {
           // kegagalan pencatatan tidak boleh menutupi kegagalan turn
         }
       })
-      .finally(() => this.activeTurns.delete(sessionId));
+      .finally(() => {
+        clearInterval(heartbeat);
+        try {
+          const finalTurn = getTurn(this.db, turn.id);
+          const runtimeStatus = finalTurn?.status === "done" ? "done" : finalTurn?.status === "cancelled" ? "cancelled" : "failed";
+          finishTurnRuntime(this.db, turn.id, runtimeStatus);
+        } catch {
+          // runtime tracking bersifat best effort
+        }
+        this.activeTurns.delete(sessionId);
+      });
 
     return { turnId: turn.id, status: "running", sessionId };
   }
@@ -964,6 +1014,7 @@ export class RpcServer {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    if (this.watchdog) clearInterval(this.watchdog);
     for (const controller of this.activeTurns.values()) controller.abort();
     this.activeTurns.clear();
     for (const entry of this.pendingApprovals.values()) entry.settle(false);

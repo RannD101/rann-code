@@ -6,6 +6,7 @@ import { SCHEMA_V3 } from "./schema-v3.js";
 import { SCHEMA_V4 } from "./schema-v4.js";
 import { SCHEMA_V5 } from "./schema-v5.js";
 import { SCHEMA_V6 } from "./schema-v6.js";
+import { SCHEMA_V7 } from "./schema-v7.js";
 
 export type Db = Database.Database;
 
@@ -240,6 +241,11 @@ END;
     version: 6,
     name: "goal-tracking",
     sql: SCHEMA_V6
+  },
+  {
+    version: 7,
+    name: "turn-runtime",
+    sql: SCHEMA_V7
   }
 ];
 

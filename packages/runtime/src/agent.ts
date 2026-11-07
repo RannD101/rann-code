@@ -70,6 +70,7 @@ export interface AgentConfig {
   allow: string[];
   deny: string[];
   maxSteps: number;
+  maxRuntimeMs?: number;
   systemExtra: string;
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
@@ -459,8 +460,16 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const availableSpecs: ToolSpec[] = [...specs, ...mcpSpecs];
 
   try {
+    const deadline = Date.now() + (config.maxRuntimeMs ?? 7_200_000);
     for (steps = 1; steps <= config.maxSteps; steps += 1) {
       if (signal?.aborted) throw new RannError("E_CANCELLED", "Turn dibatalkan");
+      if (Date.now() > deadline) {
+        const message = `Batas waktu turn ${Math.round((config.maxRuntimeMs ?? 7_200_000) / 1000)} detik terlampaui`;
+        publish("error", { error_code: "E_RUNTIME_EXCEEDED", message });
+        publish("turn.end", { status: "failed", error_code: "E_RUNTIME_EXCEEDED" });
+        finalize("failed", { code: "E_RUNTIME_EXCEEDED", message });
+        throw new RannError("E_RUNTIME_EXCEEDED", message);
+      }
       const history = listMessages(db, session.id, 400);
       const built = buildChatContext(history, baseSystem, contextOptions);
       if (built.compacted) {

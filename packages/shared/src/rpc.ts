@@ -218,6 +218,7 @@ export const methodParams = {
   "session.send": sessionSendParams,
   "session.cancel": sessionCancelParams,
   "turn.get": turnGetParams,
+  "turn.runtime": turnGetParams,
   "turn.events": turnEventsParams,
   "model.list": empty,
   "provider.list": empty,
