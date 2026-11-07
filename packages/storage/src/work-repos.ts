@@ -181,6 +181,37 @@ export function updatePlanStatus(db: Db, id: string, status: PlanStatus): PlanRo
   return getPlan(db, id);
 }
 
+export function updatePlan(
+  db: Db,
+  id: string,
+  input: { goal?: string; version?: number; metadata?: Record<string, unknown> }
+): PlanRow | undefined {
+  const current = getPlan(db, id);
+  if (!current) return undefined;
+  db.prepare("UPDATE plans SET goal = ?, version = ?, metadata_json = ?, updated_at = ? WHERE id = ?").run(
+    input.goal ?? current.goal,
+    input.version ?? current.version,
+    JSON.stringify(input.metadata ?? JSON.parse(current.metadata_json) as Record<string, unknown>),
+    now(),
+    id
+  );
+  return getPlan(db, id);
+}
+
+export function cancelOpenTasks(db: Db, planId: string, keepStatuses: string[] = ["done"]): number {
+  const placeholders = keepStatuses.map(() => "?").join(", ");
+  const at = now();
+  const result = db
+    .prepare(
+      `UPDATE tasks SET status = 'cancelled', ended_at = ?, updated_at = ? WHERE plan_id = ? AND status NOT IN (${placeholders})`
+    )
+    .run(at, at, planId, ...keepStatuses);
+  db.prepare(
+    "UPDATE plan_nodes SET status = 'skipped', updated_at = ? WHERE plan_id = ? AND task_id IN (SELECT id FROM tasks WHERE plan_id = ? AND status = 'cancelled')"
+  ).run(at, planId, planId);
+  return Number(result.changes);
+}
+
 export function addPlanNode(
   db: Db,
   input: {

@@ -7,10 +7,12 @@ import {
   completeToolCall,
   createSession,
   createTurn,
+  getPlan,
   openDatabase,
+  updateTaskStatus,
   type Db
 } from "@rann/storage";
-import { finishPlan, persistPlan, verifyPlan } from "./plan-runtime.js";
+import { finishPlan, persistPlan, revisePlan, verifyPlan } from "./plan-runtime.js";
 import type { PlanDraft, PlanValidation } from "./planner.js";
 
 const open: Db[] = [];
@@ -87,5 +89,56 @@ describe("plan runtime", () => {
     result = verifyPlan(db, turn.id, draft, dir);
     expect(result.passed).toBe(true);
     expect(result.checked).toBe(2);
+  });
+
+  it("merevisi plan, menaikkan versi, dan mempertahankan task selesai", () => {
+    const { db, dir } = fresh();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    const turn = createTurn(db, { sessionId: session.id });
+    const plan = persistPlan(db, session.id, turn.id, draft, validation, "teks rencana", () => {});
+    const first = plan.taskIds.get("t1");
+    expect(first).toBeTypeOf("string");
+    updateTaskStatus(db, first!, "done");
+
+    const next = revisePlan(
+      db,
+      plan,
+      {
+        reason: "file target berubah",
+        tasks: [
+          {
+            id: "t1",
+            title: "Buat endpoint",
+            agent: "coding",
+            dependsOn: [],
+            files: ["src/app.ts"],
+            risk: "medium",
+            acceptance: "Endpoint mengembalikan 200"
+          },
+          {
+            id: "t2",
+            title: "Tambah tes endpoint",
+            agent: "testing",
+            dependsOn: ["t1"],
+            files: ["src/app.test.ts"],
+            risk: "low",
+            acceptance: "tes lulus"
+          }
+        ]
+      },
+      () => {}
+    );
+
+    expect(next.version).toBe(2);
+    expect(getPlan(db, plan.id)?.version).toBe(2);
+    const tasks = db
+      .prepare("SELECT title, status FROM tasks WHERE plan_id = ? ORDER BY created_at")
+      .all(plan.id) as { title: string; status: string }[];
+    expect(tasks.find((task) => task.title === "Buat endpoint")?.status).toBe("done");
+    expect(tasks.find((task) => task.title === "Tambah tes endpoint")?.status).toBe("queued");
+    const metadata = JSON.parse(getPlan(db, plan.id)?.metadata_json ?? "{}") as {
+      revisions?: { reason: string }[];
+    };
+    expect(metadata.revisions?.at(-1)?.reason).toBe("file target berubah");
   });
 });

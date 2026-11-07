@@ -27,7 +27,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | M1 | Storage, backup, restore, migrasi | selesai |
 | M2 | Provider, router, kapabilitas model | berjalan |
 | M3 | CLI, command registry, streaming | hampir selesai |
-| M4 | Agent core, planner, verifier, checkpoint | berjalan |
+| M4 | Agent core, planner, verifier, checkpoint | selesai |
 | M5 | Coding tools, Git, project map | sebagian besar |
 | M6 | Tool broker, sandbox, approval | sebagian besar |
 | M7 | Memory dan instruction | sebagian besar |
@@ -90,8 +90,9 @@ Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan he
 - `packages/runtime/src/failure-analysis.ts`: kategori kegagalan (auth, rate limit, timeout, budget, izin, konteks, stream, plan), sifat bisa diulang, dan saran tindakan; ikut terkirim di event `error` dan `turn.failed`.
 - `packages/cli/src/stream.ts`: menampilkan saran tindakan saat turn gagal.
 - Tes: `planner.test.ts`, `plan-runtime.test.ts`, `failure-analysis.test.ts`, `rpc.test.ts` lulus. Total 109 tes (23 berkas).
+- `packages/runtime/src/plan-runtime.ts` (`revisePlan`) dan tool `plan_revise`: versi rencana naik, alasan dicatat di metadata, task selesai dipertahankan, task terbuka dibatalkan, dan revisi yang mengubah goal atau menambah risiko tinggi meminta persetujuan ulang.
 
-Sisa M4: replan otomatis setelah turn gagal. Goal tracking sudah dikerjakan (`schema-v6`, repo, 5 RPC, 26 tool, `/goal`).
+M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`).
 
 ### M5 background, scheduler, dan gateway
 

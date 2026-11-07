@@ -3,15 +3,19 @@ import { isAbsolute, join } from "node:path";
 import type { Db } from "@rann/storage";
 import {
   addPlanNode,
+  cancelOpenTasks,
   createPlan,
   createTask,
+  getPlan,
+  updatePlan,
   updatePlanStatus,
   updateTaskStatus
 } from "@rann/storage";
-import type { PlanDraft, PlanValidation } from "./planner.js";
+import { validatePlan, type PlanDraft, type PlanValidation } from "./planner.js";
 
 export interface ActivePlan {
   id: string;
+  version: number;
   draft: PlanDraft;
   validation: PlanValidation;
   taskIds: Map<string, string>;
@@ -81,7 +85,7 @@ export function persistPlan(
     tasks: draft.tasks.length,
     high_risk: validation.highRisk
   });
-  return { id: row.id, draft, validation, taskIds, text };
+  return { id: row.id, version: row.version, draft, validation, taskIds, text };
 }
 
 export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.update", data: Record<string, unknown>) => void): void {
@@ -91,6 +95,119 @@ export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.u
   if (!id) return;
   updateTaskStatus(db, id, "running");
   publish("task.update", { task_id: id, plan_task_id: first.id, status: "running", title: first.title });
+}
+
+export function revisePlan(
+  db: Db,
+  plan: ActivePlan,
+  revision: {
+    reason: string;
+    goal?: string;
+    assumptions?: string[];
+    criteria?: PlanDraft["criteria"];
+    estimate?: PlanDraft["estimate"];
+    tasks: PlanDraft["tasks"];
+  },
+  publish: (type: "plan.update" | "task.update", data: Record<string, unknown>) => void
+): ActivePlan {
+  const row = getPlan(db, plan.id);
+  if (!row) throw new Error("plan tidak ditemukan");
+  const previous = JSON.parse(row.metadata_json) as Record<string, unknown>;
+  const completed = new Set(
+    (
+      db
+        .prepare("SELECT metadata_json FROM tasks WHERE plan_id = ? AND status = 'done'")
+        .all(plan.id) as { metadata_json: string }[]
+    )
+      .map((task) => {
+        try {
+          return String((JSON.parse(task.metadata_json) as { planTaskId?: unknown }).planTaskId ?? "");
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+  );
+  const tasks = revision.tasks
+    .filter((task) => !completed.has(task.id))
+    .map((task) => ({ ...task, dependsOn: task.dependsOn.filter((dep) => !completed.has(dep)) }));
+  const goal = revision.goal ?? plan.draft.goal;
+  const criteria = revision.criteria ?? plan.draft.criteria;
+  const draft: PlanDraft = {
+    goal,
+    assumptions: revision.assumptions ?? plan.draft.assumptions,
+    criteria,
+    tasks,
+    estimate: revision.estimate ?? plan.draft.estimate,
+    risks: tasks
+      .filter((task) => task.risk !== "low")
+      .map((task) => ({ taskId: task.id, level: task.risk, reason: revision.reason }))
+  };
+  const validation = validatePlan(draft);
+  if (!validation.ok) {
+    const error = new Error(`rencana revisi tidak valid: ${validation.errors.join("; ")}`);
+    (error as Error & { code?: string }).code = "E_PLAN_INVALID";
+    throw error;
+  }
+  const version = row.version + 1;
+  const history = Array.isArray(previous.revisions) ? previous.revisions : [];
+  const metadata = {
+    ...previous,
+    assumptions: draft.assumptions,
+    criteria: draft.criteria,
+    estimate: draft.estimate,
+    risks: draft.risks,
+    validation,
+    revisions: [...history, { version, reason: revision.reason, at: Date.now(), carried_tasks: [...completed] }]
+  };
+  updatePlan(db, plan.id, { goal, version, metadata });
+  cancelOpenTasks(db, plan.id);
+  const taskIds = new Map<string, string>();
+  for (const planTask of tasks) {
+    const task = createTask(db, {
+      sessionId: row.session_id,
+      planId: plan.id,
+      title: planTask.title,
+      description: planTask.description ?? "",
+      priority: planTask.risk === "high" ? 3 : planTask.risk === "medium" ? 2 : 1,
+      metadata: {
+        planTaskId: planTask.id,
+        agent: planTask.agent,
+        files: planTask.files,
+        risk: planTask.risk,
+        acceptance: planTask.acceptance,
+        dependsOn: planTask.dependsOn,
+        revision: version
+      }
+    });
+    addPlanNode(db, {
+      planId: plan.id,
+      taskId: task.id,
+      title: planTask.title,
+      kind: "task",
+      dependsOn: planTask.dependsOn,
+      metadata: { planTaskId: planTask.id, risk: planTask.risk, files: planTask.files, revision: version }
+    });
+    taskIds.set(planTask.id, task.id);
+    publish("task.update", {
+      task_id: task.id,
+      plan_task_id: planTask.id,
+      status: "queued",
+      title: planTask.title,
+      revision: version
+    });
+  }
+  updatePlanStatus(db, plan.id, "active");
+  publish("plan.update", {
+    plan_id: plan.id,
+    status: "active",
+    version,
+    reason: revision.reason,
+    tasks: tasks.length,
+    carried: [...completed],
+    high_risk: validation.highRisk
+  });
+  return { id: plan.id, version, draft, validation, taskIds, text: plan.text };
 }
 
 export function finishPlan(

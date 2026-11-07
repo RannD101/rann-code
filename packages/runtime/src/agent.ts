@@ -33,6 +33,7 @@ import {
   finishPlan,
   persistPlan,
   planVerificationGapPrompt,
+  revisePlan,
   startFirstTask,
   verifyPlan,
   type ActivePlan
@@ -842,6 +843,74 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             memory: options.memory,
             skills: options.skills,
             delegate,
+            planRevise: async (input: {
+              reason: string;
+              goal?: string;
+              tasks: Array<{
+                id: string;
+                title: string;
+                description?: string;
+                agent: string;
+                dependsOn: string[];
+                files: string[];
+                risk: "low" | "medium" | "high";
+                acceptance: string;
+              }>;
+            }) => {
+              const current = activePlan;
+              if (!current || options.planOnly) {
+                throw new RannError("E_TOOL_FAILED", "Tidak ada rencana aktif yang bisa direvisi");
+              }
+              const goalChanged = input.goal !== undefined && input.goal !== current.draft.goal;
+              const addsHighRisk = input.tasks.some(
+                (task) =>
+                  task.risk === "high" &&
+                  !current.draft.tasks.some((old) => old.id === task.id && old.risk === "high")
+              );
+              if (goalChanged || addsHighRisk) {
+                if (!options.approvePlan) {
+                  throw new RannError(
+                    "E_PLAN_REQUIRED_APPROVAL",
+                    "Revisi rencana mengubah goal atau menambah task berisiko tinggi; butuh persetujuan"
+                  );
+                }
+                const approved = await options.approvePlan({
+                  goal: input.goal ?? current.draft.goal,
+                  highRisk: true,
+                  text: [
+                    `Revisi rencana ke versi ${current.version + 1}`,
+                    `Alasan: ${input.reason}`,
+                    goalChanged ? `Goal baru: ${input.goal}` : "",
+                    ...input.tasks.map(
+                      (task) => `- [${task.risk}] ${task.title} (${task.agent})`
+                    )
+                  ]
+                    .filter(Boolean)
+                    .join("\n")
+                });
+                if (!approved) throw new RannError("E_PLAN_REQUIRED_APPROVAL", "Revisi rencana ditolak user");
+              }
+              const next = revisePlan(
+                db,
+                current,
+                {
+                  reason: input.reason,
+                  ...(input.goal !== undefined ? { goal: input.goal } : {}),
+                  tasks: input.tasks
+                },
+                (type, data) => publish(type, data)
+              );
+              activePlan = next;
+              startFirstTask(db, next, (type, data) => publish(type, data));
+              return {
+                plan_id: next.id,
+                reason: input.reason,
+                tasks: next.draft.tasks.map((task) => ({ id: task.id, title: task.title, risk: task.risk })),
+                carried: current.draft.tasks
+                  .filter((task) => !next.draft.tasks.some((item) => item.id === task.id))
+                  .map((task) => task.id)
+              };
+            },
             mcp: options.mcp,
             sessionId: session.id,
             turnId,

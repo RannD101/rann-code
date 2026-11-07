@@ -36,6 +36,20 @@ export interface ToolContext {
   memory?: MemoryService;
   skills?: SkillStore;
   delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number }) => Promise<unknown>;
+  planRevise?: (input: {
+    reason: string;
+    goal?: string;
+    tasks: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      agent: string;
+      dependsOn: string[];
+      files: string[];
+      risk: "low" | "medium" | "high";
+      acceptance: string;
+    }>;
+  }) => Promise<unknown>;
   mcp?: {
     callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
   };
@@ -221,6 +235,26 @@ const taskSchema = z.object({
   profile: z.string().min(1).max(64).optional(),
   background: z.boolean().optional(),
   max_steps: z.number().int().min(1).max(30).optional()
+});
+
+const planReviseSchema = z.object({
+  reason: z.string().min(10).max(2_000),
+  goal: z.string().min(5).max(4_000).optional(),
+  tasks: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(80),
+        title: z.string().min(3).max(200),
+        description: z.string().max(4_000).optional(),
+        agent: z.string().min(1).max(64).default("coder"),
+        depends_on: z.array(z.string().min(1).max(80)).max(20).default([]),
+        files: z.array(z.string().min(1).max(500)).max(50).default([]),
+        risk: z.enum(["low", "medium", "high"]).default("low"),
+        acceptance: z.string().min(1).max(2_000)
+      })
+    )
+    .min(1)
+    .max(30)
 });
 
 const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".rann", ".next", "target", "vendor"]);
@@ -781,6 +815,59 @@ export const tools: ToolDefinition[] = [
         { ...ctx, approved: true }
       );
       return textResult({ action: input.action, command, ...result });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "plan_revise",
+      description:
+        "Ganti rencana aktif dengan versi baru saat task gagal permanen, dependensi berubah, file target hilang, atau goal berubah. Sertakan alasan dan daftar task yang masih relevan. Task yang sudah selesai dipertahankan otomatis.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "Alasan revisi, minimal 10 karakter" },
+          goal: { type: "string", description: "Goal baru bila berubah" },
+          tasks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                description: { type: "string" },
+                agent: { type: "string" },
+                depends_on: { type: "array", items: { type: "string" } },
+                files: { type: "array", items: { type: "string" } },
+                risk: { type: "string", enum: ["low", "medium", "high"] },
+                acceptance: { type: "string" }
+              },
+              required: ["id", "title", "acceptance"]
+            }
+          }
+        },
+        required: ["reason", "tasks"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(planReviseSchema, args, "plan_revise");
+      if (!ctx.planRevise) throw new RannError("E_TOOL_FAILED", "Tidak ada rencana aktif untuk direvisi");
+      return textResult(
+        await ctx.planRevise({
+          reason: input.reason,
+          ...(input.goal !== undefined ? { goal: input.goal } : {}),
+          tasks: input.tasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            ...(task.description !== undefined ? { description: task.description } : {}),
+            agent: task.agent,
+            dependsOn: task.depends_on,
+            files: task.files,
+            risk: task.risk,
+            acceptance: task.acceptance
+          }))
+        })
+      );
     }
   },
   {
