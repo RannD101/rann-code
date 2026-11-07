@@ -1,7 +1,7 @@
 import type { RpcClient } from "@rann/runtime";
 import type { EventEnvelope } from "@rann/shared";
 import { RannError } from "@rann/shared";
-import { printErr, ui } from "./ui.js";
+import { printErr, Spinner, ui } from "./ui.js";
 
 export type OutputFormat = "text" | "json" | "stream-json";
 
@@ -97,12 +97,31 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       clearTimeout(timer);
       handler = undefined;
       unsubscribe();
+      unsubscribeClose();
     };
 
     const breakLine = (): void => {
       if (format === "text" && wroteText) process.stdout.write("\n");
       wroteText = false;
     };
+
+    const toolSpinner = new Spinner();
+    let toolStartedAt = 0;
+    const unsubscribeClose = client.onClose(() => {
+      if (!handler) return;
+      toolSpinner.stop();
+      breakLine();
+      if (format === "text") printErr(ui.yellow("[koneksi terputus, jawaban mungkin tidak lengkap]"));
+      cleanup();
+      resolve({
+        ok: false,
+        turnId,
+        text: collected,
+        steps: 0,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        error: { code: "E_STREAM_TRUNCATED", message: "Koneksi ke daemon terputus sebelum turn selesai" }
+      });
+    });
 
     const askApproval = async (event: EventEnvelope): Promise<void> => {
       const requestId = String(event.data.request_id ?? "");
@@ -148,17 +167,33 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       }
       if (event.type === "tool.start" || event.type === "tool.started") {
         breakLine();
-        if (format === "text") process.stdout.write(ui.dim(`[tool] ${String(event.data.tool)}\n`));
-        emit({ type: "tool.start", turn_id: turnId, tool: String(event.data.tool), args: event.data.args });
+        const tool = String(event.data.tool);
+        if (format === "text") {
+          if (process.stderr.isTTY) {
+            toolStartedAt = Date.now();
+            toolSpinner.start(`[tool] ${tool}`);
+          } else {
+            process.stdout.write(ui.dim(`[tool] ${tool}\n`));
+          }
+        }
+        emit({ type: "tool.start", turn_id: turnId, tool, args: event.data.args });
         return;
       }
       if (event.type === "tool.end" || event.type === "tool.finished") {
         const status = String(event.data.status ?? "ok");
+        const tool = String(event.data.tool);
         if (format === "text") {
           const label = status === "ok" ? ui.green("ok") : ui.red(status);
-          process.stdout.write(ui.dim(`[tool] ${String(event.data.tool)} ${label}\n`));
+          const duration = Number(event.data.duration_ms ?? (toolStartedAt > 0 ? Date.now() - toolStartedAt : 0));
+          const timing = duration > 0 ? ` ${(duration / 1000).toFixed(1)}s` : "";
+          if (process.stderr.isTTY) {
+            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}`));
+          } else {
+            process.stdout.write(ui.dim(`[tool] ${tool} ${label}${timing}\n`));
+          }
+          toolStartedAt = 0;
         }
-        emit({ type: "tool.end", turn_id: turnId, tool: String(event.data.tool), status });
+        emit({ type: "tool.end", turn_id: turnId, tool, status, duration_ms: event.data.duration_ms });
         return;
       }
       if (event.type === "plan.update") {
@@ -190,6 +225,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "turn.end") {
+        toolSpinner.stop();
         breakLine();
         const usage = readUsage(event.data.usage);
         const steps = Number(event.data.steps ?? 0);
@@ -210,6 +246,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "turn.completed") {
+        toolSpinner.stop();
         breakLine();
         const usage = readUsage(event.data.usage);
         const steps = Number(event.data.steps ?? 0);
@@ -220,6 +257,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "turn.failed") {
+        toolSpinner.stop();
         breakLine();
         const code = String(event.data.error_code ?? "E_INTERNAL");
         const message = String(event.data.message ?? "turn gagal");

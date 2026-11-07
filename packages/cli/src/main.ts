@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 import { RannError, toRannError } from "@rann/shared";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
 import { inspectDatabase, renderGoal, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
-import { choose, chooseWith, print, printErr, relativeTime, table, ui } from "./ui.js";
-import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat } from "./stream.js";
-import { commandName, completeReplLine, findReplCommand, matchReplCommands, REPL_COMMANDS } from "./repl-commands.js";
+import { choose, chooseWith, clearScreen, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
+import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
+import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
+import { HistoryStore } from "./history.js";
+import { LineEditor, ReplExit } from "./line-editor.js";
 
 const HELP = `rann-code ${packageVersion()}
 
@@ -498,12 +501,154 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     let sessionId = String(session.id);
     let model = flagString(args, "model") ?? (session.model ? String(session.model) : undefined);
     let permissionMode = flagString(args, "permission") ?? (session.permission_mode ? String(session.permission_mode) : undefined);
-    let onApproval = makeApprovalHandler(args);
+    const layout = homeLayout();
+    loadCustomThemeIfPresent(resolveHome());
+    const history = new HistoryStore(layout.historyDir, process.cwd());
+    let branch = "";
+    try {
+      branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      branch = "";
+    }
+    let busy = false;
+    let totalTokens = 0;
+    let totalCost = 0;
+    let lastTurnId: string | undefined;
+    let lastResponse = "";
+    let pendingAttachment: { name: string; content: string } | undefined;
+
+    const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
+    const statusPrompt = (): string => {
+      const width = process.stdout.columns ?? 80;
+      const parts = [model ?? "default"];
+      if (totalTokens > 0) parts.push(`${(totalTokens / 1000).toFixed(1)}k tok`);
+      if (totalCost > 0) parts.push(`$${totalCost.toFixed(3)}`);
+      parts.push(permissionMode ?? "ask");
+      if (pendingAttachment) parts.push(`lampiran ${pendingAttachment.name}`);
+      const text = parts.join("  ");
+      return ui.cyan("› ") + (width >= 64 ? ui.dim(`${truncateWidth(text, Math.max(10, width - 8))} `) : "");
+    };
+
+    const editor = new LineEditor({
+      history,
+      busy: () => busy,
+      prompt: statusPrompt,
+      palette: REPL_COMMANDS.filter((command) => isAvailable(command)).map((command: ReplCommand) => ({
+        name: command.name,
+        description: command.description,
+        category: command.category,
+        usage: command.usage
+      })),
+      completer: async (line: string, cursor: number) => {
+        const before = line.slice(0, cursor);
+        if (/^\/[^\s]*$/.test(before)) {
+          const [items] = completeReplLine(before);
+          return { start: 0, items: items.map((value) => ({ value })) };
+        }
+        const match = /^(\/[a-z-]+)\s+(.*)$/.exec(before);
+        if (!match) return { start: cursor, items: [] };
+        const command = match[1] ?? "";
+        const rest = match[2] ?? "";
+        const start = before.length - rest.length;
+        const query = rest.split(/\s+/).pop() ?? "";
+        const tokenStart = start + Math.max(0, rest.length - query.length);
+        if (command === "/model") {
+          const data = await client.request<Record<string, unknown>>("model.list");
+          const models = (data.models as string[] | undefined) ?? [];
+          return { start: tokenStart, items: models.filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/provider" || command === "/providers") {
+          const list = await client.request<Array<Record<string, unknown>>>("provider.list");
+          return { start: tokenStart, items: list.map((item) => String(item.name)).filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/permission") {
+          return { start: tokenStart, items: PERMISSION_MODES.filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/theme") {
+          return { start: tokenStart, items: ["dark", "light", "auto", "custom"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/resume" || command === "/history") {
+          const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 20, projectPath: process.cwd() });
+          return { start: tokenStart, items: list.map((item) => String(item.id)).filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/skill") {
+          const list = await client.request<Array<Record<string, unknown>>>("skill.list", { projectPath: process.cwd(), limit: 50 });
+          return { start: tokenStart, items: list.map((item) => String(item.name)).filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/attach" || command === "/files" || command === "/export") {
+          try {
+            const directory = resolve(process.cwd(), rest.slice(0, rest.length - query.length));
+            const items = readdirSync(directory, { withFileTypes: true })
+              .filter((entry) => entry.name.startsWith(query))
+              .slice(0, 50)
+              .map((entry) => ({ value: `${entry.name}${entry.isDirectory() ? "/" : ""}` }));
+            return { start: tokenStart, items };
+          } catch {
+            return { start: tokenStart, items: [] };
+          }
+        }
+        return { start: cursor, items: [] };
+      },
+      onCancel: async () => {
+        if (!busy) return false;
+        const result = await client.request<Record<string, unknown>>("session.cancel", { sessionId });
+        return result.cancelled === true;
+      },
+      onCtrlD: async (isBusy: boolean) => {
+        if (!isBusy) return "exit";
+        return choose("Turn masih berjalan. Pilih tindakan:", [
+          { key: "wait" as const, label: "tunggu sampai selesai" },
+          { key: "cancel" as const, label: "batalkan turn" },
+          { key: "exit" as const, label: "keluar tanpa menunggu" }
+        ], "wait");
+      },
+      onExpand: async () => {
+        if (!lastTurnId) return lastResponse || undefined;
+        const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+        const messages = ((data.messages as Array<Record<string, unknown>> | undefined) ?? []).filter(
+          (message) => message.role === "tool" && message.turn_id === lastTurnId
+        );
+        const blocks: string[] = [];
+        for (const message of messages) {
+          const text = String(message.content ?? "");
+          const label = String((message.content_json as Record<string, unknown> | undefined)?.toolName ?? "tool");
+          if (text.length > 20_000) {
+            const name = `tool-${Date.now()}-${blocks.length}.txt`;
+            const path = join(layout.artifactsDir, name);
+            writeFileSync(path, text, { mode: 0o600 });
+            blocks.push(`${label}: output ${String(text.length)} karakter, disimpan di ${path}`);
+          } else if (text.length > 0) {
+            blocks.push(`${label}:\n${text}`);
+          }
+        }
+        return blocks.length > 0 ? blocks.join("\n\n") : lastResponse || undefined;
+      }
+    });
+    const onApproval = makeApprovalHandler(args, (question) => editor.readLine(question));
 
     const header = (): void => {
-      print(ui.bold(`Rann Code`) + ui.dim(`  ${process.cwd()}`));
-      print(ui.dim(`sesi ${sessionId}  model ${model ?? "default"}  izin ${permissionMode ?? "default"}`));
+      print(ui.bold("Rann Code") + ui.dim(`  ${process.cwd()}${branch ? `  (${branch})` : ""}`));
+      print(ui.dim(`sesi ${sessionLabel()}  model ${model ?? "default"}  izin ${permissionMode ?? "default"}  profil ${process.env.RANN_PROFILE ?? "default"}`));
       print(ui.dim("ketik /help untuk perintah, /plan <tugas> untuk rencana, /exit untuk keluar"));
+    };
+
+    const outgoing = (text: string): string => {
+      const attachment = pendingAttachment;
+      pendingAttachment = undefined;
+      if (!attachment) return text;
+      return `<file name="${attachment.name}">\n${attachment.content}\n</file>\n\n${text}`;
+    };
+
+    const recordResult = async (result: StreamResult): Promise<void> => {
+      totalTokens += result.usage.inputTokens + result.usage.outputTokens;
+      lastResponse = result.text;
+      lastTurnId = result.turnId;
+      try {
+        const budget = await client.request<Record<string, unknown>>("budget.status", {});
+        totalCost = Number(budget.spent_usd_today ?? totalCost);
+      } catch {
+        // status biaya bersifat pelengkap
+      }
     };
 
     if (process.stdin.isTTY !== true) {
@@ -523,28 +668,9 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     if (recoveredTurns.length > 0) {
       print(ui.yellow(`${recoveredTurns.length} turn sebelumnya terputus, riwayat sudah ditandai. Kirim pesan untuk melanjutkan.`));
     }
-    const { createInterface } = await import("node:readline/promises");
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-      completer: (line: string) => completeReplLine(line)
-    });
-    onApproval = makeApprovalHandler(args, (question) => rl.question(question));
-    let busy = false;
-    rl.on("SIGINT", () => {
-      if (busy) {
-        void client.request("session.cancel", { sessionId }).catch(() => undefined);
-        print(ui.yellow("\n[dibatalkan]"));
-        return;
-      }
-      print("");
-      rl.prompt();
-    });
-
     try {
       for (;;) {
-        let line = (await rl.question(ui.cyan("› "))).trim();
+        let line = (await editor.readLine()).trim();
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/review" || line.startsWith("/review ")) {
@@ -557,17 +683,18 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/help" || line.startsWith("/help ")) {
           const query = line.slice(5).trim();
-          const commands = query ? matchReplCommands(query) : REPL_COMMANDS;
+          const commands = query ? matchReplCommands(query, { includeUnavailable: true }) : REPL_COMMANDS;
           if (commands.length === 0) {
             print(`tidak ada perintah cocok "${query}"`);
           } else {
-            const categories = ["sesi", "model", "rencana", "berkas", "memori", "diagnosa"] as const;
+            const categories = ["umum", "sesi", "model", "agen", "memori", "skill", "tool", "proyek", "konfigurasi", "infra"] as const;
             for (const category of categories) {
               const items = commands.filter((command) => command.category === category);
               if (items.length === 0) continue;
               print(ui.bold(category));
               for (const command of items) {
-                print(`  ${command.usage.padEnd(22)} ${command.description}`);
+                const suffix = isAvailable(command) ? "" : `  [belum tersedia: ${command.unavailableReason ?? "backend"}]`;
+                print(`  ${command.usage.padEnd(32)} ${command.description}${suffix}`);
               }
             }
           }
@@ -578,6 +705,13 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(`perintah tidak dikenal: ${commandName(line)}`);
           if (suggestions.length > 0) print(`mungkin: ${suggestions.map((item) => `/${item.name}`).join(", ")}`);
           continue;
+        }
+        if (line.startsWith("/")) {
+          const registered = findReplCommand(commandName(line));
+          if (registered && !isAvailable(registered)) {
+            print(ui.yellow(`/${registered.name} belum tersedia: ${registered.unavailableReason ?? "backend belum ada"}`));
+            continue;
+          }
         }
         if (line === "/memory" || line.startsWith("/memory ")) {
           const query = line.slice(7).trim();
@@ -778,8 +912,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           continue;
         }
-        if (line === "/provider" || line.startsWith("/provider ")) {
-          const name = line.slice(9).trim();
+        if (line === "/provider" || line.startsWith("/provider ") || line === "/providers") {
+          const name = line === "/providers" ? "" : line.slice(9).trim();
           const list = await client.request<Array<Record<string, unknown>>>("provider.list");
           if (name.length === 0) {
             for (const item of list) {
@@ -812,6 +946,269 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             permissionMode = mode;
             print(ui.dim(`izin ${permissionMode}`));
           }
+          continue;
+        }
+        if (line === "/clear" || line === "/cls") {
+          clearScreen(true);
+          header();
+          continue;
+        }
+        if (line === "/version" || line === "/v") {
+          const health = await client.request<Record<string, unknown>>("health");
+          print(`rann-code ${packageVersion()}  node ${process.version}  ${process.platform}/${process.arch}`);
+          print(`daemon ${String(health.status ?? "ok")}  protokol ${String(health.protocol ?? "1")}`);
+          continue;
+        }
+        if (line === "/whoami") {
+          print(`profil   ${process.env.RANN_PROFILE ?? "default"}`);
+          print(`home     ${resolveHome()}`);
+          print(`user     ${process.env.USER ?? process.env.USERNAME ?? "tidak diketahui"}`);
+          print(`folder   ${process.cwd()}`);
+          print(`sesi     ${sessionId}`);
+          continue;
+        }
+        if (line === "/health") {
+          const health = await client.request<Record<string, unknown>>("health");
+          const rows = Object.entries(health).map(([key, value]) => [key, typeof value === "object" ? JSON.stringify(value) : String(value)]);
+          print(table(["komponen", "nilai"], rows));
+          continue;
+        }
+        if (line === "/doctor" || line.startsWith("/doctor ")) {
+          const health = await client.request<Record<string, unknown>>("health");
+          const checks: Array<[string, boolean, string]> = [
+            ["node", Number(process.versions.node.split(".")[0]) >= 22, process.version],
+            ["daemon", health.status === "ok" || health.ok === true, String(health.status ?? "ok")],
+            ["database", health.db === undefined ? true : Boolean(health.db), String(health.db ?? "ok")],
+            ["provider", true, model ?? "default"],
+            ["folder", existsSync(process.cwd()), process.cwd()]
+          ];
+          for (const [name, ok, detail] of checks) print(`${ok ? ui.green("[ok]") : ui.red("[gagal]")} ${name}  ${detail}`);
+          continue;
+        }
+        if (line === "/theme" || line.startsWith("/theme ")) {
+          const argument = line.slice(6).trim();
+          if (argument.length === 0 || argument === "list" || argument === "status") {
+            print(`tema aktif: ${process.env.RANN_THEME ?? "auto"}  warna ${colorsEnabled() ? "aktif" : "nonaktif"}`);
+            const tokens = themeTokens();
+            print(`contoh  ${ui.fg("teks")}  ${ui.dim("dim")}  ${ui.accent("accent")}  ${ui.green("ok")}  ${ui.yellow("peringatan")}  ${ui.red("bahaya")}`);
+            print(`token   ${Object.keys(tokens).join(", ")}`);
+            continue;
+          }
+          if (!["dark", "light", "auto", "custom"].includes(argument)) {
+            print(ui.red("tema tidak dikenal. Pilihan: dark, light, auto, custom"));
+            continue;
+          }
+          if (argument === "custom") {
+            const path = join(resolveHome(), "theme.json");
+            if (!existsSync(path)) {
+              print(ui.yellow(`buat ${path} dengan token foreground, dim, accent, success, warning, danger, border`));
+              continue;
+            }
+            loadCustomThemeIfPresent(resolveHome());
+          } else {
+            setTheme(argument as "dark" | "light" | "auto");
+          }
+          history.add(`/theme ${argument}`);
+          print(ui.dim(`tema ${argument}`));
+          continue;
+        }
+        if (line === "/history" || line.startsWith("/history ")) {
+          const argument = line.slice(8).trim();
+          const limit = Number(/--limit\s+(\d+)/.exec(argument)?.[1] ?? 20);
+          const search = /--search\s+(.+)$/.exec(argument)?.[1]?.trim();
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          const messages = ((data.messages as Array<Record<string, unknown>> | undefined) ?? [])
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .filter((message) => (search ? String(message.content ?? "").toLowerCase().includes(search.toLowerCase()) : true))
+            .slice(-Math.max(1, Math.min(200, limit)));
+          if (messages.length === 0) print(ui.dim("belum ada pesan cocok"));
+          else {
+            for (const message of messages) {
+              const text = String(message.content ?? "").replace(/\s+/g, " ").slice(0, 240);
+              print(`${String(message.role).padEnd(9)} ${text}`);
+            }
+          }
+          continue;
+        }
+        if (line === "/export" || line.startsWith("/export ")) {
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          const messages = (data.messages as Array<Record<string, unknown>> | undefined) ?? [];
+          const target = line.slice(7).trim() || join(process.cwd(), `rann-session-${sessionLabel()}.md`);
+          const body = [`# Sesi ${sessionId}`, "", `model: ${model ?? "default"}`, `folder: ${process.cwd()}`, ""];
+          for (const message of messages) body.push(`## ${String(message.role)}`, "", String(message.content ?? ""), "");
+          writeFileSync(target, `${body.join("\n")}\n`, { mode: 0o600 });
+          print(ui.green(`sesi diekspor ke ${target}`));
+          continue;
+        }
+        if (line === "/attach" || line.startsWith("/attach ")) {
+          const target = line.slice(7).trim();
+          if (target.length === 0) {
+            print("Pakai: /attach <path>");
+            continue;
+          }
+          const path = resolve(process.cwd(), target);
+          if (!existsSync(path) || !statSync(path).isFile()) {
+            print(ui.red(`berkas tidak ditemukan: ${target}`));
+            continue;
+          }
+          const size = statSync(path).size;
+          if (size > 256 * 1024) {
+            print(ui.red(`berkas terlalu besar (${size} byte), batas 262144 byte`));
+            continue;
+          }
+          const content = readFileSync(path, "utf8");
+          if (content.includes("\u0000")) {
+            print(ui.red("berkas biner tidak bisa dilampirkan"));
+            continue;
+          }
+          pendingAttachment = { name: relative(process.cwd(), path) || target, content };
+          print(ui.green(`dilampirkan ${pendingAttachment.name} (${content.length} karakter)`));
+          continue;
+        }
+        if (line === "/files" || line.startsWith("/files ")) {
+          const target = resolve(process.cwd(), line.slice(6).trim() || ".");
+          if (!existsSync(target)) {
+            print(ui.red(`path tidak ditemukan: ${target}`));
+            continue;
+          }
+          const info = statSync(target);
+          if (info.isFile()) {
+            print(`${target}  ${formatBytes(info.size)}`);
+            continue;
+          }
+          const entries = readdirSync(target, { withFileTypes: true })
+            .filter((entry) => !entry.name.startsWith(".git") && entry.name !== "node_modules")
+            .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+            .slice(0, 200);
+          for (const entry of entries) {
+            const path = join(target, entry.name);
+            const stat = statSync(path);
+            print(`${entry.isDirectory() ? "d" : "-"} ${String(entry.name).padEnd(40)} ${entry.isDirectory() ? "" : formatBytes(stat.size)}`);
+          }
+          continue;
+        }
+        if (line === "/diff" || line.startsWith("/diff ")) {
+          try {
+            const stat = execFileSync("git", ["diff", "--no-color", "--stat"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+            const diff = execFileSync("git", ["diff", "--no-color"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+            print(stat.trim() || ui.dim("tidak ada perubahan"));
+            if (diff.trim().length > 0) print(diff.length > 60_000 ? `${diff.slice(0, 60_000)}\n[dipotong]` : diff);
+          } catch {
+            print(ui.red("bukan repositori git atau git tidak tersedia"));
+          }
+          continue;
+        }
+        if (line === "/search" || line.startsWith("/search ")) {
+          const query = line.slice(7).trim();
+          if (query.length === 0) {
+            print("Pakai: /search <teks>");
+            continue;
+          }
+          const hits = searchLocal(process.cwd(), query, 100);
+          if (hits.length === 0) print(ui.dim(`tidak ada hasil untuk "${query}"`));
+          else for (const hit of hits) print(`${hit.path}:${hit.line}  ${hit.text.slice(0, 160)}`);
+          continue;
+        }
+        if (line === "/recall" || line.startsWith("/recall ")) {
+          const query = line.slice(7).trim();
+          if (query.length === 0) {
+            print("Pakai: /recall <query>");
+            continue;
+          }
+          const entries = await client.request<MemoryView[]>("memory.search", { projectPath: process.cwd(), query, limit: 20 });
+          if (entries.length === 0) print(ui.dim(`tidak ada memori cocok "${query}"`));
+          else for (const entry of entries) print(`${entry.id}  [${entry.scope}] ${entry.text}`);
+          continue;
+        }
+        if (line === "/resume" || line.startsWith("/resume ")) {
+          const target = line.slice(7).trim();
+          if (target.length === 0) {
+            const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 15, projectPath: process.cwd() });
+            for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
+            print(ui.dim("pakai /resume <id> untuk melanjutkan"));
+            continue;
+          }
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId: target });
+          sessionId = String(data.id);
+          if (data.model) model = String(data.model);
+          if (data.permission_mode) permissionMode = String(data.permission_mode);
+          print(ui.dim(`sesi ${sessionId}  model ${model ?? "default"}`));
+          const messages = ((data.messages as Array<Record<string, unknown>> | undefined) ?? []).slice(-6);
+          for (const message of messages) print(`${String(message.role).padEnd(9)} ${String(message.content ?? "").replace(/\s+/g, " ").slice(0, 200)}`);
+          continue;
+        }
+        if (line === "/project" || line.startsWith("/project ")) {
+          const sub = line.slice(8).trim();
+          if (sub.length > 0 && sub !== "show") {
+            print(ui.dim("subcommand project belum tersedia di REPL, pakai rann init atau edit .rann/project-map.json"));
+            continue;
+          }
+          print(projectMapSummary(buildProjectMap(process.cwd())));
+          continue;
+        }
+        if (line === "/init") {
+          initCommand();
+          continue;
+        }
+        if (line === "/checkpoint" || line.startsWith("/checkpoint ")) {
+          const items = await client.request<Array<Record<string, unknown>>>("checkpoint.list", { limit: 20 });
+          if (items.length === 0) print(ui.dim("belum ada checkpoint berkas"));
+          else for (const item of items) print(`${String(item.id)}  ${String(item.files)} berkas  ${String(item.created_at)}  ${String(item.label)}`);
+          print(ui.dim("buat checkpoint lewat tool checkpoint_create saat turn berjalan"));
+          continue;
+        }
+        if (line === "/logs" || line.startsWith("/logs ")) {
+          const requested = line.slice(5).trim();
+          if (!existsSync(layout.logsDir)) {
+            print(ui.dim("belum ada log"));
+            continue;
+          }
+          const files = readdirSync(layout.logsDir)
+            .map((name) => ({ name, path: join(layout.logsDir, name), mtime: statSync(join(layout.logsDir, name)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime);
+          const picked = requested ? files.find((file) => file.name.includes(requested)) : files[0];
+          if (!picked) {
+            print(ui.dim("belum ada log"));
+            continue;
+          }
+          const lines = readFileSync(picked.path, "utf8").trimEnd().split("\n").slice(-40);
+          print(ui.dim(`log ${picked.path}`));
+          print(lines.join("\n"));
+          continue;
+        }
+        if (line === "/route" || line.startsWith("/route ")) {
+          const text = line.slice(6).trim();
+          if (text.length === 0) {
+            print("Pakai: /route explain <prompt>");
+            continue;
+          }
+          const result = await client.request<Record<string, unknown>>("route.explain", { prompt: text });
+          print(JSON.stringify(result, null, 2));
+          continue;
+        }
+        if (line === "/create-skill" || line.startsWith("/create-skill ")) {
+          const argument = line.slice(13).trim();
+          const separator = argument.indexOf("|");
+          const name = (separator >= 0 ? argument.slice(0, separator) : argument).trim();
+          const description = (separator >= 0 ? argument.slice(separator + 1) : "").trim();
+          if (name.length === 0 || description.length < 12) {
+            print("Pakai: /create-skill <nama> | <deskripsi minimal 12 karakter>");
+            continue;
+          }
+          const body = `# ${name}\n\n${description}\n\n## Kapan dipakai\n\nJelaskan pemicu dan konteks pemakaian skill ini.\n\n## Langkah\n\n1. Langkah pertama.\n2. Verifikasi hasil dengan perintah nyata.\n\n## Pitfall\n\nCatat kesalahan yang pernah terjadi dan cara menghindarinya.\n`;
+          const skill = await client.request<Record<string, unknown>>("skill.create", {
+            projectPath: process.cwd(),
+            name,
+            description,
+            body,
+            scope: "project",
+            overwrite: false
+          });
+          print(ui.green(`skill ${String(skill.name)} dibuat di ${String(skill.path)}`));
+          continue;
+        }
+        if (line === "/mcp" || line.startsWith("/mcp ")) {
+          print(ui.yellow("backend MCP belum tersedia di versi ini"));
           continue;
         }
         if (line === "/sessions") {
@@ -851,7 +1248,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(ui.red(requested.length > 0 ? "checkpoint tidak ditemukan" : "belum ada checkpoint untuk di-undo"));
             continue;
           }
-          const answer = await rl.question(ui.yellow(`Kembalikan ${String(target.files)} berkas dari ${String(target.id)}? (y/N) `));
+          const answer = await editor.readLine(ui.yellow(`Kembalikan ${String(target.files)} berkas dari ${String(target.id)}? (y/N) `));
           if (!/^y(es)?$/i.test(answer.trim())) {
             print(ui.dim("undo dibatalkan"));
             continue;
@@ -873,12 +1270,13 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           busy = true;
           try {
-            const result = await runStreaming(client, sessionId, text, {
+            const result = await runStreaming(client, sessionId, outgoing(text), {
               ...(model ? { model } : {}),
               ...(permissionMode ? { permissionMode } : {}),
               forcePlan: true,
               ...(onApproval ? { onApproval } : {})
             });
+            await recordResult(result);
             if (!result.ok) print(ui.red("[eksekusi gagal]"));
           } finally {
             busy = false;
@@ -893,12 +1291,13 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           busy = true;
           try {
-            const result = await runStreaming(client, sessionId, text, {
+            const result = await runStreaming(client, sessionId, outgoing(text), {
               ...(model ? { model } : {}),
               ...(permissionMode ? { permissionMode } : {}),
               planOnly: true,
               ...(onApproval ? { onApproval } : {})
             });
+            await recordResult(result);
             if (!result.ok) print(ui.red("[rencana gagal]"));
           } finally {
             busy = false;
@@ -912,18 +1311,22 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
 
         busy = true;
         try {
-          const result = await runStreaming(client, sessionId, line, {
+          const result = await runStreaming(client, sessionId, outgoing(line), {
             ...(model ? { model } : {}),
             ...(permissionMode ? { permissionMode } : {}),
             ...(onApproval ? { onApproval } : {})
           });
+          await recordResult(result);
           if (!result.ok) print(ui.red("[turn gagal]"));
         } finally {
           busy = false;
         }
       }
+    } catch (error) {
+      if (error instanceof ReplExit) return error.code;
+      throw error;
     } finally {
-      rl.close();
+      editor.close();
     }
     return 0;
   } finally {
@@ -1480,6 +1883,59 @@ async function configCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
   throw new RannError("E_INVALID_PARAMS", "Pakai: rann config get [kunci] | rann config set <kunci> <nilai>");
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const SEARCH_SKIP = new Set([".git", "node_modules", "dist", "build", ".next", "coverage", ".rann"]);
+
+function searchLocal(root: string, query: string, limit: number): Array<{ path: string; line: number; text: string }> {
+  const hits: Array<{ path: string; line: number; text: string }> = [];
+  const stack = [root];
+  const needle = query.toLowerCase();
+  while (stack.length > 0 && hits.length < limit) {
+    const directory = stack.pop();
+    if (!directory) break;
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (hits.length >= limit) break;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!SEARCH_SKIP.has(entry.name)) stack.push(path);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let info;
+      try {
+        info = statSync(path);
+      } catch {
+        continue;
+      }
+      if (info.size > 512 * 1024) continue;
+      let content: string;
+      try {
+        content = readFileSync(path, "utf8");
+      } catch {
+        continue;
+      }
+      if (content.includes("\u0000")) continue;
+      const lines = content.split("\n");
+      for (let index = 0; index < lines.length && hits.length < limit; index += 1) {
+        const text = lines[index] ?? "";
+        if (text.toLowerCase().includes(needle)) hits.push({ path: relative(root, path), line: index + 1, text: text.trim() });
+      }
+    }
+  }
+  return hits;
 }
 
 function initCommand(): number {

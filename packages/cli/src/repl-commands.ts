@@ -1,48 +1,197 @@
+export type CommandCategory =
+  | "umum"
+  | "sesi"
+  | "model"
+  | "agen"
+  | "memori"
+  | "skill"
+  | "tool"
+  | "proyek"
+  | "konfigurasi"
+  | "infra";
+
+export type CommandPermission = "read" | "write" | "exec" | "net" | "admin" | "secret";
+
 export interface ReplCommand {
   name: string;
   aliases?: string[];
   usage: string;
   description: string;
-  category: "sesi" | "model" | "rencana" | "berkas" | "memori" | "diagnosa";
+  category: CommandCategory;
+  permission?: CommandPermission;
+  output?: Array<"text" | "json" | "markdown">;
+  available?: boolean;
+  unavailableReason?: string;
+  hidden?: boolean;
+  source?: "builtin" | "project" | "plugin";
 }
 
-export const REPL_COMMANDS: ReplCommand[] = [
-  { name: "help", usage: "/help [kata]", description: "Daftar perintah atau cari perintah", category: "diagnosa" },
-  { name: "new", usage: "/new [judul]", description: "Mulai sesi baru", category: "sesi" },
-  { name: "status", usage: "/status", description: "Status sesi, model, izin, dan folder", category: "sesi" },
-  { name: "sessions", usage: "/sessions", description: "Daftar sesi di folder ini", category: "sesi" },
-  { name: "exit", aliases: ["quit", "q"], usage: "/exit", description: "Keluar dari REPL", category: "sesi" },
-  { name: "model", usage: "/model [nama]", description: "Lihat atau ganti model sesi", category: "model" },
-  { name: "models", usage: "/models", description: "Daftar model yang tersedia", category: "model" },
-  { name: "provider", usage: "/provider [nama]", description: "Lihat atau ganti provider", category: "model" },
-  { name: "permission", usage: "/permission [mode]", description: "Lihat atau ganti mode izin", category: "model" },
-  { name: "plan", usage: "/plan <tugas>", description: "Susun rencana tanpa menjalankan tool", category: "rencana" },
-  { name: "goal", usage: "/goal <teks> [| kriteria; ...]", description: "Pasang, cek, atau tutup goal sesi (status, check, done, cancel)", category: "rencana" },
-  { name: "execute", usage: "/execute <tugas>", description: "Susun rencana lalu jalankan", category: "rencana" },
-  { name: "tasks", usage: "/tasks", description: "Daftar rencana dan tugas", category: "rencana" },
-  { name: "cancel", usage: "/cancel", description: "Batalkan turn yang berjalan", category: "rencana" },
-  { name: "checkpoints", usage: "/checkpoints", description: "Daftar checkpoint berkas", category: "berkas" },
-  { name: "undo", usage: "/undo [id]", description: "Pulihkan checkpoint terakhir atau id tertentu", category: "berkas" },
-  { name: "review", usage: "/review [fokus]", description: "Minta agent meninjau perubahan yang belum di-commit", category: "berkas" },
-  { name: "memory", usage: "/memory [kata]", description: "Cari atau daftar memori", category: "memori" },
-  { name: "remember", usage: "/remember <teks>", description: "Simpan fakta ke memori project", category: "memori" },
-  { name: "forget", usage: "/forget <id>", description: "Hapus memori berdasarkan id", category: "memori" },
-  { name: "skills", usage: "/skills", description: "Daftar skill global dan project", category: "memori" },
-  { name: "skill", usage: "/skill <nama>", description: "Tampilkan isi skill", category: "memori" },
-  { name: "tools", usage: "/tools", description: "Daftar tool yang tersedia", category: "diagnosa" },
-  { name: "usage", usage: "/usage", description: "Token dan biaya sesi ini", category: "diagnosa" },
-  { name: "cost", usage: "/cost", description: "Rincian biaya per model", category: "diagnosa" },
-  { name: "budget", usage: "/budget", description: "Pemakaian budget hari ini", category: "diagnosa" }
+function cmd(
+  name: string,
+  aliases: string[],
+  usage: string,
+  description: string,
+  category: CommandCategory,
+  permission: CommandPermission = "read",
+  available = true,
+  unavailableReason?: string
+): ReplCommand {
+  return {
+    name,
+    aliases,
+    usage,
+    description,
+    category,
+    permission,
+    available,
+    ...(unavailableReason ? { unavailableReason } : {})
+  };
+}
+
+const NOT_YET = "backend belum tersedia di versi ini";
+
+export const BUILTIN_COMMANDS: ReplCommand[] = [
+  cmd("help", ["?"], "/help [command]", "Bantuan command dan daftar perintah", "umum"),
+  cmd("exit", ["quit", "q"], "/exit [--force]", "Keluar dari sesi interaktif", "umum"),
+  cmd("clear", ["cls"], "/clear", "Bersihkan transcript tanpa menghapus state", "umum", "write"),
+  cmd("compact", ["summarize"], "/compact", "Ringkas konteks percakapan", "umum", "write", false, NOT_YET),
+  cmd("status", ["st"], "/status [--json]", "Status sesi, model, dan antrean", "umum"),
+  cmd("improve", ["imp"], "/improve", "Tinjau proposal self-improvement", "umum", "admin", false, NOT_YET),
+  cmd("doctor", ["diag"], "/doctor", "Diagnosis instalasi dan perbaikan aman", "umum"),
+  cmd("version", ["v"], "/version [--json]", "Versi CLI, daemon, dan protokol", "umum"),
+  cmd("feedback", ["bug"], "/feedback", "Kirim masukan atau laporan bug", "umum", "net", false, NOT_YET),
+  cmd("update", ["upgrade"], "/update", "Periksa dan pasang pembaruan", "umum", "admin", false, NOT_YET),
+  cmd("whatsnew", ["changelog"], "/whatsnew", "Lihat perubahan versi", "umum", "read", false, NOT_YET),
+  cmd("model", ["m"], "/model [nama|auto|default]", "Pilih atau kunci model", "model", "write"),
+  cmd("models", ["ml"], "/models [filter]", "Daftar model dan capability", "model"),
+  cmd("permission", [], "/permission [mode]", "Lihat atau ganti mode izin", "model", "write"),
+  cmd("provider", ["pr"], "/provider <id|add|remove|test|login|logout>", "Kelola provider dan kredensial", "model", "admin"),
+  cmd("providers", ["prs"], "/providers", "Status semua provider", "model"),
+  cmd("cost", ["biaya"], "/cost", "Biaya sesi, task, atau hari ini", "model"),
+  cmd("usage", ["u"], "/usage", "Statistik token dan biaya", "model"),
+  cmd("budget", ["limit"], "/budget", "Atur batas biaya", "model", "admin"),
+  cmd("route", ["routing"], "/route explain <prompt>", "Jelaskan keputusan router", "model", "admin"),
+  cmd("login", [], "/login <provider>", "Simpan kredensial provider", "model", "secret", false, NOT_YET),
+  cmd("logout", [], "/logout <provider>", "Hapus kredensial provider", "model", "secret", false, NOT_YET),
+  cmd("agents", ["ag"], "/agents", "Daftar agen aktif dan profil", "agen", "read", false, NOT_YET),
+  cmd("agent", [], "/agent <spawn|show|stop|logs>", "Kelola satu instans agen", "agen", "write", false, NOT_YET),
+  cmd("delegate", ["del"], "/delegate \"<tugas>\"", "Delegasikan tugas ke subagent", "agen", "exec", false, NOT_YET),
+  cmd("tasks", ["t"], "/tasks", "Daftar task dan statusnya", "agen"),
+  cmd("task", [], "/task <show|logs|cancel|retry|resume> <id>", "Lihat atau kendalikan task", "agen", "write", false, NOT_YET),
+  cmd("plan", ["p"], "/plan <tugas>", "Buat, lihat, atau setujui rencana", "agen", "write"),
+  cmd("execute", ["run"], "/execute <tugas>", "Susun rencana lalu jalankan", "agen", "exec"),
+  cmd("cancel", ["stop"], "/cancel", "Batalkan task atau turn", "agen", "write"),
+  cmd("pause", [], "/pause [task-id]", "Jeda task yang berjalan", "agen", "write", false, NOT_YET),
+  cmd("resume-task", ["lanjut"], "/resume-task [task-id]", "Lanjutkan task yang dijeda", "agen", "write", false, NOT_YET),
+  cmd("retry", [], "/retry [task-id]", "Ulangi task atau langkah", "agen", "write", false, NOT_YET),
+  cmd("trace", ["why"], "/trace [task-id]", "Telusuri keputusan dan langkah task", "agen", "read", false, NOT_YET),
+  cmd("approve", ["yes"], "/approve [approval-id]", "Setujui permintaan izin", "agen", "write", false, NOT_YET),
+  cmd("deny", ["no"], "/deny [approval-id]", "Tolak permintaan izin", "agen", "write", false, NOT_YET),
+  cmd("goal", [], "/goal <teks> [| kriteria; ...]", "Pasang, cek, atau tutup goal sesi", "agen", "write"),
+  cmd("memory", ["mem"], "/memory [list|search|show|edit|rm|pin|unpin]", "Kelola entri memory", "memori", "write"),
+  cmd("remember", ["ingat"], "/remember \"<fakta>\"", "Simpan fakta ke memory", "memori", "write"),
+  cmd("recall", ["cari"], "/recall \"<query>\"", "Cari memory yang relevan", "memori"),
+  cmd("forget", ["lupakan"], "/forget <id|query>", "Hapus memory", "memori", "write"),
+  cmd("profile", ["profil"], "/profile", "Lihat atau ubah profil pengguna", "memori", "write", false, NOT_YET),
+  cmd("skills", ["sk"], "/skills", "Daftar skill terpasang", "skill"),
+  cmd("skill", [], "/skill <nama>", "Lihat detail satu skill", "skill"),
+  cmd("create-skill", ["skill-new"], "/create-skill \"<deskripsi>\"", "Buat skill baru dengan validasi", "skill", "write"),
+  cmd("install-skill", ["skill-add"], "/install-skill <nama|url>", "Pasang skill dari registry atau path", "skill", "net", false, NOT_YET),
+  cmd("update-skill", [], "/update-skill [nama]", "Perbarui skill", "skill", "net", false, NOT_YET),
+  cmd("tools", ["tool-list"], "/tools", "Daftar tool dan statusnya", "tool"),
+  cmd("tool", [], "/tool <run|info|enable|disable>", "Jalankan atau periksa satu tool", "tool", "exec", false, NOT_YET),
+  cmd("mcp", [], "/mcp <list|add|remove|enable|disable|test|auth|logs>", "Kelola server MCP", "tool", "admin", false, NOT_YET),
+  cmd("plugins", ["plug"], "/plugins", "Kelola plugin", "tool", "admin", false, NOT_YET),
+  cmd("hooks", [], "/hooks", "Kelola hook event", "tool", "admin", false, NOT_YET),
+  cmd("init", ["mulai"], "/init", "Inisialisasi project untuk Rann", "proyek", "write"),
+  cmd("project", ["proj"], "/project <show|add|remove|switch|trust|untrust>", "Kelola project terdaftar", "proyek", "write"),
+  cmd("context", ["ctx"], "/context", "Lihat isi konteks yang dikirim", "proyek", "write", false, NOT_YET),
+  cmd("files", ["ls"], "/files [path]", "Daftar file relevan", "proyek"),
+  cmd("review", ["rv"], "/review [fokus]", "Review perubahan kode", "proyek"),
+  cmd("test", [], "/test [pattern]", "Jalankan tes project", "proyek", "exec", false, NOT_YET),
+  cmd("debug", [], "/debug \"<gejala>\"", "Mulai sesi debugging", "proyek", "exec", false, NOT_YET),
+  cmd("git", [], "/git <status|diff|log|...>", "Operasi Git yang aman", "proyek", "write", false, NOT_YET),
+  cmd("diff", [], "/diff", "Lihat diff workspace", "proyek"),
+  cmd("commit", ["ci"], "/commit -m <pesan>", "Buat commit", "proyek", "write", false, NOT_YET),
+  cmd("branch", [], "/branch", "Kelola branch", "proyek", "write", false, NOT_YET),
+  cmd("worktree", ["wt"], "/worktree", "Kelola worktree", "proyek", "write", false, NOT_YET),
+  cmd("checkpoint", ["cp"], "/checkpoint [list|create|restore]", "Buat atau lihat checkpoint", "proyek", "write"),
+  cmd("checkpoints", [], "/checkpoints", "Daftar checkpoint berkas", "proyek"),
+  cmd("undo", ["rewind-code"], "/undo [id]", "Kembali ke checkpoint", "proyek", "write"),
+  cmd("index", [], "/index [build|status]", "Bangun indeks kode", "proyek", "write", false, NOT_YET),
+  cmd("search", ["grep"], "/search \"<query>\"", "Cari kode secara semantik", "proyek"),
+  cmd("sessions", ["ss"], "/sessions", "Daftar sesi", "sesi"),
+  cmd("resume", ["r"], "/resume <session-id>", "Lanjutkan sesi", "sesi", "write"),
+  cmd("fork", [], "/fork", "Duplikasi sesi", "sesi", "write", false, NOT_YET),
+  cmd("rename", [], "/rename \"<nama>\"", "Ganti nama sesi", "sesi", "write", false, NOT_YET),
+  cmd("history", ["hist"], "/history [--limit N] [--search Q]", "Riwayat pesan", "sesi"),
+  cmd("rewind", [], "/rewind", "Kembali ke pesan sebelumnya", "sesi", "write", false, NOT_YET),
+  cmd("new", [], "/new [--name <nama>]", "Mulai sesi baru", "sesi", "write"),
+  cmd("export", [], "/export", "Ekspor sesi atau data", "sesi"),
+  cmd("import", [], "/import <path>", "Impor sesi atau data", "sesi", "write", false, NOT_YET),
+  cmd("attach", [], "/attach <path>", "Lampirkan file ke konteks", "sesi"),
+  cmd("config", ["cfg"], "/config", "Lihat atau ubah config", "konfigurasi", "admin", false, NOT_YET),
+  cmd("permissions", ["perm"], "/permissions", "Kelola mode izin dan policy", "konfigurasi", "admin", false, NOT_YET),
+  cmd("settings", [], "/settings", "Pengaturan umum", "konfigurasi", "admin", false, NOT_YET),
+  cmd("theme", [], "/theme [list|set|preview]", "Pilih tema terminal", "konfigurasi", "write"),
+  cmd("secrets", ["keys"], "/secrets", "Kelola secret", "konfigurasi", "secret", false, NOT_YET),
+  cmd("env", [], "/env", "Lihat environment tool", "konfigurasi", "admin", false, NOT_YET),
+  cmd("sandbox", [], "/sandbox", "Status dan batas sandbox", "konfigurasi", "admin", false, NOT_YET),
+  cmd("gateway", ["gw"], "/gateway", "Kelola gateway", "infra", "admin", false, NOT_YET),
+  cmd("devices", [], "/devices", "Kelola perangkat terhubung", "infra", "admin", false, NOT_YET),
+  cmd("pair", [], "/pair", "Pasangkan perangkat baru", "infra", "admin", false, NOT_YET),
+  cmd("scheduler", ["cron"], "/scheduler", "Kelola job terjadwal", "infra", "admin", false, NOT_YET),
+  cmd("background", ["bg"], "/background", "Kelola task latar", "infra", "exec", false, NOT_YET),
+  cmd("queue", [], "/queue", "Kelola antrean job", "infra", "admin", false, NOT_YET),
+  cmd("integrations", ["int"], "/integrations", "Kelola integrasi eksternal", "infra", "admin", false, NOT_YET),
+  cmd("logs", [], "/logs", "Lihat log", "infra", "read"),
+  cmd("health", [], "/health", "Health check komponen", "infra"),
+  cmd("metrics", [], "/metrics", "Lihat metrik", "infra", "read", false, NOT_YET),
+  cmd("dashboard", ["web"], "/dashboard", "Buka dashboard web", "infra", "net", false, NOT_YET),
+  cmd("whoami", [], "/whoami", "Identitas dan scope saat ini", "infra"),
+  cmd("notify", [], "/notify", "Atur notifikasi", "infra", "write", false, NOT_YET)
 ];
 
+export let REPL_COMMANDS: ReplCommand[] = [...BUILTIN_COMMANDS];
+
 const BY_NAME = new Map<string, ReplCommand>();
-for (const command of REPL_COMMANDS) {
-  BY_NAME.set(command.name.toLowerCase(), command);
-  for (const alias of command.aliases ?? []) BY_NAME.set(alias.toLowerCase(), command);
+const CONFLICTS: string[] = [];
+
+function indexCommands(): void {
+  BY_NAME.clear();
+  for (const command of REPL_COMMANDS) {
+    BY_NAME.set(command.name.toLowerCase(), command);
+    for (const alias of command.aliases ?? []) BY_NAME.set(alias.toLowerCase(), command);
+  }
+}
+
+indexCommands();
+
+export function registerCommands(commands: ReplCommand[]): string[] {
+  const conflicts: string[] = [];
+  for (const command of commands) {
+    const existing = BY_NAME.get(command.name.toLowerCase());
+    if (existing) {
+      conflicts.push(`${command.name} dari ${command.source ?? "kustom"} menimpa ${existing.source ?? "bawaan"}`);
+      REPL_COMMANDS = REPL_COMMANDS.filter((item) => item !== existing);
+    }
+    REPL_COMMANDS = [...REPL_COMMANDS, command];
+  }
+  indexCommands();
+  CONFLICTS.push(...conflicts);
+  return conflicts;
+}
+
+export function commandConflicts(): string[] {
+  return [...CONFLICTS];
 }
 
 export function findReplCommand(name: string): ReplCommand | undefined {
   return BY_NAME.get(name.toLowerCase());
+}
+
+export function isAvailable(command: ReplCommand): boolean {
+  return command.available !== false;
 }
 
 export function commandName(line: string): string {
@@ -70,11 +219,44 @@ export function scoreCommand(command: ReplCommand, query: string): number {
   return -1;
 }
 
-export function matchReplCommands(query: string): ReplCommand[] {
-  return REPL_COMMANDS.map((command) => ({ command, score: scoreCommand(command, query) }))
+export function matchReplCommands(query: string, options: { includeUnavailable?: boolean; limit?: number } = {}): ReplCommand[] {
+  return REPL_COMMANDS.filter((command) => options.includeUnavailable === true || isAvailable(command))
+    .map((command) => ({ command, score: scoreCommand(command, query) }))
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score || a.command.name.localeCompare(b.command.name))
+    .slice(0, options.limit ?? 50)
     .map((entry) => entry.command);
+}
+
+export function nearestCommands(query: string, limit = 3): ReplCommand[] {
+  const needle = query.toLowerCase();
+  const scored = REPL_COMMANDS.map((command) => {
+    let best = Number.POSITIVE_INFINITY;
+    for (const candidate of [command.name, ...(command.aliases ?? [])]) {
+      best = Math.min(best, levenshtein(needle, candidate.toLowerCase()));
+    }
+    return { command, distance: best };
+  });
+  return scored
+    .sort((a, b) => a.distance - b.distance || a.command.name.localeCompare(b.command.name))
+    .slice(0, limit)
+    .map((entry) => entry.command);
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min((current[j - 1] ?? 0) + 1, (previous[j] ?? 0) + 1, (previous[j - 1] ?? 0) + cost);
+    }
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
 }
 
 export function completeReplLine(line: string): [string[], string] {

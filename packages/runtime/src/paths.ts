@@ -15,6 +15,7 @@ export interface Layout {
   checkpointsDir: string;
   secretsDir: string;
   backupsDir: string;
+  historyDir: string;
 }
 
 const PRIVATE_DIR_MODE = 0o700;
@@ -47,7 +48,8 @@ export function resolveLayout(home = resolveHome(), profile = process.env.RANN_P
     artifactsDir: join(profileDir, "artifacts"),
     checkpointsDir: join(profileDir, "checkpoints"),
     secretsDir: join(profileDir, "secrets"),
-    backupsDir: join(profileDir, "backups")
+    backupsDir: join(profileDir, "backups"),
+    historyDir: join(profileDir, "history")
   };
 }
 
@@ -62,6 +64,7 @@ export function ensureLayout(layout: Layout): void {
   ensureDir(layout.checkpointsDir);
   ensureDir(layout.secretsDir);
   ensureDir(layout.backupsDir);
+  ensureDir(layout.historyDir);
 }
 
 export function writePrivateFile(path: string, content: string): void {
