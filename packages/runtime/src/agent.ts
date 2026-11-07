@@ -72,6 +72,9 @@ export interface DelegateInput {
   goal: string;
   context?: string;
   label?: string;
+  profile?: string;
+  background?: boolean;
+  maxSteps?: number;
 }
 
 export interface AgentConfig {
@@ -81,6 +84,7 @@ export interface AgentConfig {
   deny: string[];
   maxSteps: number;
   maxRuntimeMs?: number;
+  tools?: string[];
   systemExtra: string;
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
@@ -502,6 +506,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const specs = options.modelCapabilities?.toolCalling === false
     ? []
     : toolSpecs().filter((spec) => {
+        if (config.tools && !config.tools.includes(spec.name) && !spec.name.startsWith("mcp_")) return false;
         if (spec.name === "memory") return options.memory !== undefined;
         if (spec.name === "skill") return options.skills !== undefined;
         if (spec.name === "task") return delegate !== undefined;

@@ -35,7 +35,7 @@ export interface ToolContext {
   shellTimeoutMs?: number;
   memory?: MemoryService;
   skills?: SkillStore;
-  delegate?: (input: { goal: string; context?: string; label?: string }) => Promise<unknown>;
+  delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number }) => Promise<unknown>;
   mcp?: {
     callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
   };
@@ -217,7 +217,10 @@ const skillSchema = z.object({
 const taskSchema = z.object({
   goal: z.string().min(5).max(8_000),
   context: z.string().max(20_000).optional(),
-  label: z.string().min(1).max(80).optional()
+  label: z.string().min(1).max(80).optional(),
+  profile: z.string().min(1).max(64).optional(),
+  background: z.boolean().optional(),
+  max_steps: z.number().int().min(1).max(30).optional()
 });
 
 const IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".rann", ".next", "target", "vendor"]);
@@ -1015,13 +1018,16 @@ export const tools: ToolDefinition[] = [
     spec: {
       name: "task",
       description:
-        "Jalankan subagent lokal dengan konteks terisolasi untuk satu tujuan. Subagent memakai provider yang sama, izin default read-only, dan hasilnya kembali sebagai ringkasan. Cocok untuk riset, pembacaan banyak berkas, atau verifikasi terpisah.",
+        "Jalankan subagent dengan konteks terisolasi untuk satu tujuan. Pilih profil sesuai tugas, atau biarkan dipilih otomatis. Hasil kembali sebagai ringkasan berisi bukti, langkah, biaya, dan berkas yang berubah. Mode background mengembalikan agent_id dan berjalan paralel.",
       parameters: {
         type: "object",
         properties: {
           goal: { type: "string", description: "Tujuan spesifik subagent" },
           context: { type: "string", description: "Konteks yang perlu diketahui subagent" },
-          label: { type: "string", description: "Label singkat untuk nama sesi" }
+          label: { type: "string", description: "Label singkat untuk nama sesi" },
+          profile: { type: "string", description: "Profil: explore, planner, coder, debugger, reviewer, tester, researcher, writer, security, atau profil kustom" },
+          background: { type: "boolean", description: "Jalankan di latar dan kembalikan agent_id" },
+          max_steps: { type: "number", description: "Batas langkah subagent, 1 sampai 30" }
         },
         required: ["goal"]
       }
@@ -1029,7 +1035,14 @@ export const tools: ToolDefinition[] = [
     async run(args, ctx) {
       const input = parse(taskSchema, args, "task");
       if (!ctx.delegate) throw new RannError("E_TOOL_FAILED", "Subagent tidak aktif di sesi ini");
-      const result = await ctx.delegate({ goal: input.goal, context: input.context, label: input.label });
+      const result = await ctx.delegate({
+        goal: input.goal,
+        context: input.context,
+        label: input.label,
+        profile: input.profile,
+        background: input.background,
+        maxSteps: input.max_steps
+      });
       return textResult(result);
     }
   }

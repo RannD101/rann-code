@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
@@ -52,6 +52,21 @@ import {
   updateGoalProgress,
   updateScheduler,
   SecretStore,
+  subagentForest,
+  cancelSubagentTree,
+  countSubagentChildren,
+  countSubagentsForTurn,
+  createSubagent,
+  finishSubagent,
+  getSubagent,
+  getSubagentByTurn,
+  heartbeatSubagent,
+  listSubagents,
+  listSubagentMessages,
+  markOrphanedSubagents,
+  recordSubagentMessage,
+  releaseAgentLeases,
+  updateSubagent,
   type Db,
   type JobRow,
   type SessionRow
@@ -73,7 +88,16 @@ import { BackgroundQueue, type JobContext } from "./background.js";
 import { SchedulerEngine, nextRunFor } from "./scheduler.js";
 import { GatewayServer } from "./gateway.js";
 import { MessagingService } from "./messaging.js";
+import { loadProfiles, pickProfile, type SubagentProfile } from "./subagent-profiles.js";
 import { dashboardData } from "./dashboard-data.js";
+
+function safeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
 
 export interface RpcServerOptions {
   layout: Layout;
@@ -110,6 +134,8 @@ export class RpcServer {
   private readonly server: Server;
   private readonly sockets = new Set<Socket>();
   private readonly activeTurns = new Map<string, AbortController>();
+  private readonly agentControllers = new Map<string, AbortController>();
+  private readonly backgroundAgents = new Set<Promise<unknown>>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sessionApprovals = new Map<string, Set<string>>();
   private readonly sessionApprovalPatterns = new Map<string, Set<string>>();
@@ -614,6 +640,61 @@ export class RpcServer {
           input.text as string,
           input.thread_id as number | undefined
         );
+      case "agent.list": {
+        markOrphanedSubagents(this.db);
+        if (input.tree === true) return subagentForest(this.db, (input.limit as number | undefined) ?? 200);
+        return listSubagents(this.db, {
+          ...(input.status ? { status: input.status as never } : {}),
+          ...(input.parent_id ? { parentId: input.parent_id as string } : {}),
+          limit: (input.limit as number | undefined) ?? 100
+        }).map((row) => {
+          const { result_json, ...rest } = row;
+          return { ...rest, ...(result_json ? { result: safeJson(result_json) } : {}) };
+        });
+      }
+      case "agent.get": {
+        const agent = getSubagent(this.db, input.id as string);
+        if (!agent) throw new RannError("E_NOT_FOUND", `Agent tidak ditemukan: ${String(input.id)}`);
+        const { result_json, ...rest } = agent;
+        return {
+          ...rest,
+          ...(result_json ? { result: safeJson(result_json) } : {}),
+          messages: listSubagentMessages(this.db, agent.id)
+        };
+      }
+      case "agent.cancel": {
+        const agent = getSubagent(this.db, input.id as string);
+        if (!agent) throw new RannError("E_NOT_FOUND", `Agent tidak ditemukan: ${String(input.id)}`);
+        const ids = cancelSubagentTree(this.db, agent.id);
+        for (const id of ids) this.agentControllers.get(id)?.abort();
+        return { cancelled: ids };
+      }
+      case "agent.message": {
+        if (!getSubagent(this.db, input.to as string)) {
+          throw new RannError("E_NOT_FOUND", `Agent tujuan tidak ditemukan: ${String(input.to)}`);
+        }
+        const id = recordSubagentMessage(this.db, {
+          from: input.from as string,
+          to: input.to as string,
+          type: (input.type as string | undefined) ?? "note",
+          subject: input.subject as string,
+          body: input.body as string,
+          priority: (input.priority as "low" | "normal" | "high" | undefined) ?? "normal",
+          ...(input.refs ? { refs: input.refs as string[] } : {})
+        });
+        return { id };
+      }
+      case "agent.profiles":
+        return loadProfiles(this.options.layout.home, this.options.config.projectPath ?? process.cwd()).map((profile) => ({
+          name: profile.name,
+          description: profile.description,
+          when: profile.when,
+          permission: profile.permission,
+          max_steps: profile.maxSteps,
+          tools: profile.tools,
+          source: profile.source,
+          ...(profile.model ? { model: profile.model } : {})
+        }));
       case "checkpoint.list": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) return [];
@@ -1155,6 +1236,43 @@ export class RpcServer {
             );
           }
           spawned += 1;
+          if (delegateInput.background) {
+            let startedResolve: (agentId: string) => void = () => {};
+            let startedReject: (error: unknown) => void = () => {};
+            const started = new Promise<string>((resolve, reject) => {
+              startedResolve = resolve;
+              startedReject = reject;
+            });
+            const task = this.runSubagent({
+              parent: session,
+              parentTurnId: turn.id,
+              projectPath: workspaceRoot,
+              model,
+              input: delegateInput,
+              signal: controller.signal,
+              onStarted: startedResolve
+            }).then(
+              () => undefined,
+              (error: unknown) => {
+                startedReject(error);
+                try {
+                  const event = appendEvent(this.db, {
+                    type: "error",
+                    sessionId: session.id,
+                    turnId: turn.id,
+                    data: { error_code: "E_JOB_FAILED", message: `Subagent latar gagal: ${error instanceof Error ? error.message : String(error)}` }
+                  });
+                  this.broadcast(event);
+                } catch {
+                  // pelaporan kegagalan subagent bersifat best effort
+                }
+              }
+            );
+            this.backgroundAgents.add(task);
+            void task.finally(() => this.backgroundAgents.delete(task));
+            const agentId = await started;
+            return { agent_id: agentId, status: "running", background: true };
+          }
           return this.runSubagent({
             parent: session,
             parentTurnId: turn.id,
@@ -1268,17 +1386,45 @@ export class RpcServer {
     model: string;
     input: DelegateInput;
     signal: AbortSignal;
+    onStarted?: (agentId: string) => void;
   }): Promise<unknown> {
     const config = this.options.config.config;
     if (!config.subagents.enabled) throw new RannError("E_PERMISSION", "Subagent tidak aktif di config");
     if (options.signal.aborted) throw new RannError("E_CANCELLED", "Subagent dibatalkan");
+    if (countSubagentsForTurn(this.db, options.parentTurnId) >= config.subagents.max_per_turn) {
+      throw new RannError("E_BUDGET_EXHAUSTED", `Subagent per turn maksimum ${config.subagents.max_per_turn} tercapai`);
+    }
+
+    const parentAgent = getSubagentByTurn(this.db, options.parentTurnId);
+    const depth = parentAgent ? parentAgent.depth + 1 : 0;
+    if (depth >= config.subagents.max_depth) {
+      throw new RannError("E_PERMISSION", `Kedalaman subagent maksimum ${config.subagents.max_depth} tercapai`);
+    }
+    if (parentAgent && countSubagentChildren(this.db, parentAgent.id) >= config.subagents.max_children) {
+      throw new RannError("E_BUDGET_EXHAUSTED", `Anak subagent maksimum ${config.subagents.max_children} tercapai`);
+    }
+
+    const profiles = loadProfiles(this.options.layout.home, options.projectPath);
+    let selected: SubagentProfile;
+    try {
+      selected = pickProfile(profiles, options.input.profile, options.input.goal);
+    } catch (error) {
+      throw new RannError("E_TOOL_INVALID_ARGS", error instanceof Error ? error.message : String(error));
+    }
+
+    const requestedModel = selected.model ?? config.subagents.model ?? options.model;
+    const target = this.resolveTarget(config, requestedModel);
+    const descriptor = resolveDescriptor(this.db, config, target.providerName, target.model);
+    const provider = createProvider(target.providerName, providerFor(config, target.providerName), process.env, this.secrets);
+    const permissionMode = config.subagents.permission_mode === "read-only" ? "read-only" : selected.permission;
+    const maxSteps = Math.max(1, Math.min(options.input.maxSteps ?? selected.maxSteps, config.subagents.max_steps, 30));
 
     const child = createSession(this.db, {
       projectPath: options.projectPath,
       parentId: options.parent.id,
-      title: `Subagent: ${(options.input.label ?? options.input.goal).trim().slice(0, 60)}`,
-      model: config.subagents.model ?? options.model,
-      permissionMode: config.subagents.permission_mode
+      title: `Subagent ${selected.name}: ${(options.input.label ?? options.input.goal).trim().slice(0, 50)}`,
+      model: `${target.providerName}/${target.model}`,
+      permissionMode
     });
     const created = appendEvent(this.db, {
       type: "session.updated",
@@ -1288,7 +1434,63 @@ export class RpcServer {
     this.broadcast(created);
 
     const turn = createTurn(this.db, { sessionId: child.id });
-    const provider = createProvider(config.provider, providerFor(config), process.env, this.secrets);
+    const agent = createSubagent(this.db, {
+      sessionId: child.id,
+      turnId: turn.id,
+      parentTurnId: options.parentTurnId,
+      profile: selected.name,
+      goal: options.input.goal,
+      depth,
+      path: parentAgent ? `${parentAgent.path}/${selected.name}` : selected.name,
+      model: `${target.providerName}/${target.model}`,
+      permissionMode,
+      ...(parentAgent ? { parentId: parentAgent.id } : {})
+    });
+    options.onStarted?.(agent.id);
+
+    const controller = new AbortController();
+    const relayAbort = (): void => controller.abort();
+    options.signal.addEventListener("abort", relayAbort, { once: true });
+    this.agentControllers.set(agent.id, controller);
+
+    const emitAgent = (): void => {
+      try {
+        const current = getSubagent(this.db, agent.id);
+        const event = appendEvent(this.db, {
+          type: "agent.update",
+          sessionId: options.parent.id,
+          turnId: options.parentTurnId,
+          data: {
+            agent_id: agent.id,
+            parent_id: parentAgent?.id ?? null,
+            profile: selected.name,
+            status: current?.status ?? "running",
+            depth,
+            steps: current?.steps ?? 0,
+            cost_usd: current?.cost_usd ?? 0
+          }
+        });
+        this.broadcast(event);
+      } catch {
+        // kegagalan event tidak boleh menghentikan subagent
+      }
+    };
+
+    updateSubagent(this.db, agent.id, { status: "running" });
+    emitAgent();
+    const heartbeat = setInterval(() => {
+      try {
+        heartbeatSubagent(this.db, agent.id);
+        emitAgent();
+      } catch {
+        // heartbeat bersifat best effort
+      }
+    }, config.subagents.heartbeat_ms);
+
+    const tools = selected.tools === "*" ? undefined : [...selected.tools];
+    if (tools && depth + 1 < config.subagents.max_depth && !tools.includes("task")) tools.push("task");
+
+    const before = this.gitChangedFiles(options.projectPath);
     const memory = config.memory.enabled
       ? new MemoryService(this.db, options.projectPath, {
           enabled: config.memory.enabled,
@@ -1300,21 +1502,22 @@ export class RpcServer {
     const mcp = config.mcp.enabled && Object.keys(config.mcp.servers).length > 0 ? this.mcp : undefined;
 
     const childConfig: AgentConfig = {
-      permissionMode: config.subagents.permission_mode,
+      permissionMode,
       workspaceOnly: config.permissions.workspace_only,
       allow: config.permissions.allow,
       deny: config.permissions.deny,
-      maxSteps: config.subagents.max_steps,
+      maxSteps,
+      ...(tools ? { tools } : {}),
       systemExtra: [
-        "Kamu subagent dengan konteks terpisah.",
+        selected.systemPrompt,
         `Tujuan: ${options.input.goal}`,
         options.input.context ? `Konteks dari agent induk: ${options.input.context}` : "",
-        "Fokus pada tujuan. Jangan bertanya balik. Akhiri dengan ringkasan hasil yang bisa dipakai agent induk."
+        "Kamu tidak bisa bertanya ke pengguna. Akhiri dengan ringkasan hasil yang bisa dipakai agent induk."
       ]
         .filter(Boolean)
         .join("\n"),
       requestApproval: (request) =>
-        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, options.signal)
+        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal)
     };
 
     try {
@@ -1324,7 +1527,7 @@ export class RpcServer {
         turnId: turn.id,
         userText: options.input.goal,
         provider,
-        model: child.model,
+        model: target.model,
         workspaceRoot: options.projectPath,
         ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
         config: childConfig,
@@ -1341,21 +1544,70 @@ export class RpcServer {
         memory,
         skills,
         mcp,
-        signal: options.signal,
+        modelCapabilities: descriptor.capabilities,
+        contextWindow: descriptor.contextWindow,
+        maxOutputTokens: descriptor.maxOutputTokens,
+        costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>
+          costFor(descriptor, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens),
+        signal: controller.signal,
         emit: (event) => this.broadcast(event)
       });
+      const after = this.gitChangedFiles(options.projectPath);
+      const filesChanged = [...after].filter((file) => !before.has(file));
+      const costUsd =
+        costFor(descriptor, result.usage.inputTokens, result.usage.outputTokens, result.usage.cacheReadTokens, result.usage.cacheWriteTokens) ?? 0;
       touchSession(this.db, child.id, { status: "closed" });
-      return {
+      updateSubagent(this.db, agent.id, { status: "done", steps: result.steps, cost_usd: costUsd });
+      const summary = {
+        agent_id: agent.id,
+        profile: selected.name,
         session_id: child.id,
         turn_id: turn.id,
+        status: "done" as const,
         text: result.text,
         steps: result.steps,
         usage: result.usage,
-        compacted: result.compacted
+        cost_usd: costUsd,
+        files_changed: filesChanged
       };
+      finishSubagent(this.db, agent.id, "done", summary);
+      emitAgent();
+      return summary;
     } catch (error) {
-      touchSession(this.db, child.id, { status: "error" });
+      const cancelled = controller.signal.aborted || (error instanceof RannError && error.code === "E_CANCELLED");
+      touchSession(this.db, child.id, { status: cancelled ? "closed" : "error" });
+      updateSubagent(this.db, agent.id, { status: cancelled ? "cancelled" : "failed" });
+      finishSubagent(this.db, agent.id, cancelled ? "cancelled" : "failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      emitAgent();
       throw error;
+    } finally {
+      clearInterval(heartbeat);
+      options.signal.removeEventListener("abort", relayAbort);
+      this.agentControllers.delete(agent.id);
+      releaseAgentLeases(this.db, agent.id);
+    }
+  }
+
+  private gitChangedFiles(root: string): Set<string> {
+    try {
+      const output = execFileSync("git", ["status", "--porcelain"], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5_000
+      });
+      const files = new Set<string>();
+      for (const line of output.split("\n")) {
+        if (line.trim().length < 4) continue;
+        const value = line.slice(3).trim();
+        const arrow = value.indexOf(" -> ");
+        files.add(arrow === -1 ? value : value.slice(arrow + 4));
+      }
+      return files;
+    } catch {
+      return new Set<string>();
     }
   }
 
@@ -1478,6 +1730,10 @@ export class RpcServer {
     await this.background.stop();
     for (const controller of this.activeTurns.values()) controller.abort();
     this.activeTurns.clear();
+    for (const controller of this.agentControllers.values()) controller.abort();
+    this.agentControllers.clear();
+    await Promise.allSettled([...this.backgroundAgents]);
+    this.backgroundAgents.clear();
     for (const entry of this.pendingApprovals.values()) entry.settle(false);
     this.pendingApprovals.clear();
     this.sessionApprovals.clear();

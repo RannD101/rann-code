@@ -33,7 +33,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | M7 | Memory dan instruction | sebagian besar |
 | M8 | Skill | sebagian besar |
 | M9 | MCP, plugin, hook | berjalan |
-| M10 | Subagent dan parallel orchestration | belum |
+| M10 | Subagent dan parallel orchestration | dasar selesai, perluas tes dan integrasi |
 | M11 | Background daemon, scheduler, recovery | selesai |
 | M12 | Context, compaction, budget | berjalan |
 | M13 | Gateway REST/WS, dashboard, dan messaging | gateway dan Telegram selesai; Discord/Slack belum |
@@ -119,6 +119,18 @@ Sisa M4: replan otomatis setelah turn gagal. Goal tracking sudah dikerjakan (`sc
 - `packages/runtime/src/gateway.ts`: penolakan otorisasi dicatat ke `audit_log` dengan scope yang kurang.
 - Tes: `messaging.test.ts` (6), `gateway-repos.test.ts` (5). `pnpm check` lulus 212 tes (42 berkas), `pnpm build` exit 0.
 - Belum: adapter Discord dan Slack (RC-FR-133), webhook publik, dan uji adapter Telegram dengan token nyata.
+
+### M10 subagent dan orkestrasi paralel
+
+- `packages/storage/src/schema-v10.ts`: kolom subagent pada tabel `agents` yang sudah ada (`session_id`, `turn_id`, `parent_turn_id`, `profile`, `goal`, `depth`, `path`, `steps`, `cost_usd`, `heartbeat_at`, `result_json`, `finished_at`) dan tabel `subagent_messages`; tidak membuat ulang tabel lama.
+- `packages/storage/src/agent-repos.ts`: repo khusus subagent dengan nama `Subagent*` agar tidak bentrok dengan repo agent lama, pohon parent-child, heartbeat, pembatalan pohon, penandaan orphan, pesan, dan pelepasan `path_leases`.
+- `packages/runtime/src/subagent-profiles.ts`: 9 profil bawaan (`explore`, `planner`, `coder`, `debugger`, `reviewer`, `tester`, `researcher`, `writer`, `security`), pemuatan profil user `<home>/agents` dan project `.rann/agents`, pemilihan profil eksplisit atau otomatis dari trigger.
+- `packages/runtime/src/agent.ts` dan `tools/index.ts`: tool `task` menerima `profile`, `background`, `max_steps`; tool subagent dibatasi daftar profil, `mcp_*` tetap boleh.
+- `packages/runtime/src/rpc.ts`: `runSubagent` membuat sesi anak, turn, baris agent, heartbeat, event `agent.update`, ringkasan hasil beserta `files_changed`, pembatasan `max_per_turn`, `max_depth`, `max_children`, dan pembatalan lewat `agent.cancel`.
+- `packages/shared/src/rpc.ts`: `agent.list`, `agent.get`, `agent.cancel`, `agent.message`, `agent.profiles`.
+- `packages/cli/src/main.ts`: `rann agent list|get|cancel|profiles|message` dan `/agents` di REPL.
+- Tes: `agent-repos.test.ts` (4), `subagent-profiles.test.ts` (3), `subagent-run.test.ts` (2, mock provider nyata lewat `runSubagent`). `pnpm check` lulus 221 tes (45 berkas), `pnpm build` exit 0.
+- Belum: tampilan subagent di dashboard, isolasi worktree per subagent, dan pengujian paralel beberapa subagent sekaligus di daemon nyata.
 
 ## Aturan
 

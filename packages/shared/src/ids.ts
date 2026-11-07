@@ -52,7 +52,8 @@ export type IdPrefix =
   | "goal"
   | "pair"
   | "gws"
-  | "msgx";
+  | "msgx"
+  | "amsg";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

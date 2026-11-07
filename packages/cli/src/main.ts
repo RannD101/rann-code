@@ -46,6 +46,7 @@ Pemakaian:
   rann daemon start|stop|status kelola daemon
   rann gateway status|start|stop|pair|devices  kelola gateway web
   rann messaging status|enable|disable|send  kelola adapter messaging
+  rann agent list|get|cancel|profiles|message  kelola subagent
   rann doctor [--json]          periksa instalasi
   rann init                     siapkan folder .rann di project
 
@@ -86,7 +87,8 @@ const KNOWN_COMMANDS = new Set([
   "memory",
   "skill",
   "gateway",
-  "messaging"
+  "messaging",
+  "agent"
 ]);
 
 async function main(argv: string[]): Promise<number> {
@@ -134,6 +136,8 @@ async function main(argv: string[]): Promise<number> {
       return await gatewayCommand(args);
     case "messaging":
       return await messagingCommand(args);
+    case "agent":
+      return await agentCommand(args);
     case "doctor":
       return await doctorCommand(args);
     case "sessions":
@@ -394,6 +398,127 @@ async function messagingCommand(args: ParsedArgs): Promise<number> {
       return 0;
     }
     throw new RannError("E_INVALID_PARAMS", "Pakai: rann messaging status|enable|disable|send");
+  });
+}
+
+interface AgentRow {
+  id: string;
+  profile: string;
+  goal: string;
+  status: string;
+  depth: number;
+  steps: number;
+  cost_usd: number;
+  model?: string | null;
+  children?: AgentRow[];
+  result?: { text?: string; files_changed?: string[]; error?: string } | string;
+}
+
+interface AgentProfileInfo {
+  name: string;
+  description: string;
+  permission: string;
+  max_steps: number;
+  source: string;
+  tools: string[] | "*";
+}
+
+function printAgentTree(rows: AgentRow[], indent = 0): void {
+  for (const row of rows) {
+    const pad = "  ".repeat(indent);
+    print(`${pad}${row.id}  ${row.profile.padEnd(10)} ${row.status.padEnd(9)} ${row.steps} langkah  $${row.cost_usd.toFixed(4)}  ${row.goal.slice(0, 60)}`);
+    if (row.children && row.children.length > 0) printAgentTree(row.children, indent + 1);
+  }
+}
+
+async function agentCommand(args: ParsedArgs): Promise<number> {
+  const sub = args.subcommand ?? "list";
+  return withClient(async (client) => {
+    if (sub === "list") {
+      const tree = flagBool(args, "tree");
+      const rows = await client.request<AgentRow[]>("agent.list", {
+        ...(tree ? { tree: true } : {}),
+        ...(typeof args.flags.status === "string" ? { status: args.flags.status } : {}),
+        ...(typeof args.flags.limit === "string" ? { limit: Number(args.flags.limit) } : {})
+      });
+      if (flagBool(args, "json")) {
+        print(JSON.stringify(rows, null, 2));
+        return 0;
+      }
+      if (rows.length === 0) {
+        print("Belum ada subagent.");
+        return 0;
+      }
+      if (tree) printAgentTree(rows);
+      else {
+        for (const row of rows) {
+          print(`${row.id}  ${row.profile.padEnd(10)} ${row.status.padEnd(9)} ${row.steps} langkah  $${row.cost_usd.toFixed(4)}  ${row.goal.slice(0, 60)}`);
+        }
+      }
+      return 0;
+    }
+    if (sub === "get") {
+      const id = args.positionals[0];
+      if (!id) throw new RannError("E_INVALID_PARAMS", "Pakai: rann agent get <agent_id>");
+      const row = await client.request<AgentRow & { messages: unknown[] }>("agent.get", { id });
+      if (flagBool(args, "json")) {
+        print(JSON.stringify(row, null, 2));
+        return 0;
+      }
+      print(`agent    ${row.id}`);
+      print(`profil   ${row.profile}`);
+      print(`status   ${row.status}`);
+      print(`model    ${row.model ?? "-"}`);
+      print(`langkah  ${row.steps}`);
+      print(`biaya    $${row.cost_usd.toFixed(4)}`);
+      print(`tujuan   ${row.goal}`);
+      if (row.result && typeof row.result === "object") {
+        if (row.result.text) print(`hasil    ${row.result.text.slice(0, 2_000)}`);
+        if (row.result.error) print(`error    ${row.result.error}`);
+        if (row.result.files_changed && row.result.files_changed.length > 0) {
+          print(`berkas   ${row.result.files_changed.join(", ")}`);
+        }
+      }
+      print(`pesan    ${row.messages.length}`);
+      return 0;
+    }
+    if (sub === "cancel") {
+      const id = args.positionals[0];
+      if (!id) throw new RannError("E_INVALID_PARAMS", "Pakai: rann agent cancel <agent_id>");
+      const result = await client.request<{ cancelled: string[] }>("agent.cancel", { id });
+      print(`Dibatalkan: ${result.cancelled.join(", ")}`);
+      return 0;
+    }
+    if (sub === "message") {
+      const [to, subject, ...rest] = args.positionals;
+      const body = rest.join(" ").trim();
+      if (!to || !subject || !body) {
+        throw new RannError("E_INVALID_PARAMS", "Pakai: rann agent message <agent_id> <subjek> <isi>");
+      }
+      const result = await client.request<{ id: string }>("agent.message", {
+        from: "cli",
+        to,
+        subject,
+        body,
+        type: "note",
+        priority: "normal"
+      });
+      print(`Pesan ${result.id} dikirim ke ${to}.`);
+      return 0;
+    }
+    if (sub === "profiles") {
+      const rows = await client.request<AgentProfileInfo[]>("agent.profiles", {});
+      if (flagBool(args, "json")) {
+        print(JSON.stringify(rows, null, 2));
+        return 0;
+      }
+      for (const row of rows) {
+        const tools = row.tools === "*" ? "semua" : `${row.tools.length} tool`;
+        print(`${row.name.padEnd(11)} ${row.permission.padEnd(12)} ${String(row.max_steps).padStart(2)} langkah  ${tools.padEnd(10)} ${row.source}  ${row.description}`);
+      }
+      return 0;
+    }
+    throw new RannError("E_INVALID_PARAMS", "Pakai: rann agent list|get|cancel|profiles|message");
   });
 }
 
@@ -1251,6 +1376,65 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             continue;
           }
           print("pakai: /messaging status|send <chat_id> <teks>");
+          continue;
+        }
+        if (line === "/agents" || line.startsWith("/agents ")) {
+          const argument = line.replace(/^\/agents\s*/, "").trim();
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "list").toLowerCase();
+          if (sub === "list") {
+            const rows = await client.request<AgentRow[]>("agent.list", { tree: true, limit: 100 });
+            if (rows.length === 0) print("belum ada subagent");
+            else printAgentTree(rows);
+            continue;
+          }
+          if (sub === "get") {
+            if (!tokens[1]) {
+              print("pakai: /agents get <agent_id>");
+              continue;
+            }
+            const row = await client.request<AgentRow & { messages: unknown[] }>("agent.get", { id: tokens[1] });
+            print(`${row.id}  ${row.profile}  ${row.status}  ${row.steps} langkah  $${row.cost_usd.toFixed(4)}`);
+            print(row.goal);
+            if (row.result && typeof row.result === "object" && row.result.text) print(row.result.text);
+            continue;
+          }
+          if (sub === "cancel") {
+            if (!tokens[1]) {
+              print("pakai: /agents cancel <agent_id>");
+              continue;
+            }
+            const result = await client.request<{ cancelled: string[] }>("agent.cancel", { id: tokens[1] });
+            print(`dibatalkan: ${result.cancelled.join(", ")}`);
+            continue;
+          }
+          if (sub === "profiles") {
+            const rows = await client.request<AgentProfileInfo[]>("agent.profiles", {});
+            for (const row of rows) {
+              print(`${row.name.padEnd(11)} ${row.permission.padEnd(12)} ${row.description}`);
+            }
+            continue;
+          }
+          if (sub === "message") {
+            const to = tokens[1];
+            const subject = tokens[2];
+            const body = tokens.slice(3).join(" ").trim();
+            if (!to || !subject || !body) {
+              print("pakai: /agents message <agent_id> <subjek> <isi>");
+              continue;
+            }
+            const result = await client.request<{ id: string }>("agent.message", {
+              from: "repl",
+              to,
+              subject,
+              body,
+              type: "note",
+              priority: "normal"
+            });
+            print(`pesan ${result.id} dikirim ke ${to}`);
+            continue;
+          }
+          print("pakai: /agents list|get|cancel|profiles|message");
           continue;
         }
         if (line === "/gateway" || line === "/gw" || line.startsWith("/gateway ") || line.startsWith("/gw ")) {

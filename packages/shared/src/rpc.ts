@@ -304,6 +304,27 @@ export const messagingSendParams = z.object({
   thread_id: z.number().int().optional()
 });
 
+export const agentListParams = z.object({
+  status: z.enum(["starting", "running", "waiting", "done", "failed", "cancelled", "orphaned"]).optional(),
+  parent_id: z.string().min(3).max(40).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+  tree: z.boolean().optional()
+});
+
+export const agentIdParams = z.object({
+  id: z.string().min(3).max(40)
+});
+
+export const agentMessageParams = z.object({
+  from: z.string().min(3).max(40),
+  to: z.string().min(3).max(40),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(8_000),
+  type: z.string().min(1).max(40).default("note"),
+  priority: z.enum(["low", "normal", "high"]).default("normal"),
+  refs: z.array(z.string().max(200)).max(20).optional()
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -368,7 +389,12 @@ export const methodParams = {
   "gateway.role": gatewayRoleParams,
   "gateway.stats": empty,
   "messaging.status": empty,
-  "messaging.send": messagingSendParams
+  "messaging.send": messagingSendParams,
+  "agent.list": agentListParams,
+  "agent.get": agentIdParams,
+  "agent.cancel": agentIdParams,
+  "agent.message": agentMessageParams,
+  "agent.profiles": empty
 } as const;
 
 export type MethodName = keyof typeof methodParams;

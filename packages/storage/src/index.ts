@@ -6,4 +6,5 @@ export * from "./goal-repos.js";
 export * from "./turn-runtime-repos.js";
 export * from "./job-repos.js";
 export * from "./gateway-repos.js";
+export * from "./agent-repos.js";
 export * from "./secrets.js";

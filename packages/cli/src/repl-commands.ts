@@ -167,6 +167,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("sandbox", [], "/sandbox", "Status dan batas sandbox", "konfigurasi", "admin", false, NOT_YET),
   cmd("gateway", ["gw"], "/gateway <status|start|stop|pair|devices|revoke|role>", "Kelola gateway web dan perangkat", "infra", "admin"),
   cmd("messaging", ["msg"], "/messaging <status|send>", "Kelola adapter messaging", "infra", "admin"),
+  cmd("agents", [], "/agents <list|get|cancel|profiles|message>", "Kelola subagent", "infra", "admin"),
   cmd("background", ["bg"], "/background <list|add|get|logs|cancel|retry>", "Kelola task latar", "infra", "exec"),
   cmd("queue", [], "/queue", "Kelola antrean job", "infra", "admin", false, NOT_YET),
   cmd("integrations", ["int"], "/integrations", "Kelola integrasi eksternal", "infra", "admin", false, NOT_YET),
