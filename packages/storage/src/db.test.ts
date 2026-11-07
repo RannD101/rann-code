@@ -25,6 +25,7 @@ import {
   openDatabase,
   recordUsage,
   removeMemory,
+  recoverInterruptedTurns,
   schemaVersion,
   searchMemories,
   summarizeUsage,
@@ -233,5 +234,28 @@ describe("database", () => {
     const cost = sumCostSince(db, 0);
     expect(cost.knownUsd).toBeCloseTo(0.25, 6);
     expect(cost.unknownCount).toBe(2);
+  });
+
+  it("memulihkan turn yang terputus setelah proses mati", () => {
+    const { db, dir } = freshDb();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "trusted" });
+    const running = createTurn(db, { sessionId: session.id });
+    markTurnRunning(db, running.id);
+    addMessage(db, { sessionId: session.id, turnId: running.id, role: "user", content: "kerjakan" });
+    const queued = createTurn(db, { sessionId: session.id });
+    const done = createTurn(db, { sessionId: session.id });
+    finishTurn(db, { id: done.id, status: "done" });
+
+    const recovered = recoverInterruptedTurns(db);
+    expect(recovered.map((turn) => turn.id).sort()).toEqual([running.id, queued.id].sort());
+    expect(getTurn(db, running.id)?.status).toBe("failed");
+    expect(getTurn(db, running.id)?.error_code).toBe("E_RECOVERY_FAILED");
+    expect(getTurn(db, queued.id)?.status).toBe("failed");
+    expect(getTurn(db, done.id)?.status).toBe("done");
+
+    const messages = listMessages(db, session.id, 10);
+    const recovery = messages.filter((message) => message.content.startsWith("[pemulihan]"));
+    expect(recovery).toHaveLength(2);
+    expect(recoverInterruptedTurns(db)).toHaveLength(0);
   });
 });

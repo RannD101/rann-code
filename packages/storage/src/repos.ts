@@ -206,6 +206,40 @@ export function finishTurn(db: Db, input: FinishTurnInput): void {
   );
 }
 
+export interface RecoveredTurn {
+  id: string;
+  sessionId: string;
+  status: string;
+}
+
+export function recoverInterruptedTurns(db: Db): RecoveredTurn[] {
+  const rows = db
+    .prepare("SELECT id, session_id, status FROM turns WHERE status IN ('queued','running') ORDER BY created_at")
+    .all() as Array<{ id: string; session_id: string; status: string }>;
+  const recovered: RecoveredTurn[] = [];
+  for (const row of rows) {
+    finishTurn(db, {
+      id: row.id,
+      status: "failed",
+      error: {
+        code: "E_RECOVERY_FAILED",
+        message: "Turn terputus karena proses berhenti sebelum selesai"
+      }
+    });
+    addMessage(db, {
+      sessionId: row.session_id,
+      turnId: row.id,
+      role: "assistant",
+      content:
+        "[pemulihan] Turn sebelumnya terputus karena proses berhenti. " +
+        "Periksa kondisi workspace dan checkpoint sebelum melanjutkan.",
+      contentJson: { kind: "recovery", previous_status: row.status }
+    });
+    recovered.push({ id: row.id, sessionId: row.session_id, status: row.status });
+  }
+  return recovered;
+}
+
 export interface AddMessageInput {
   sessionId: string;
   turnId?: string;

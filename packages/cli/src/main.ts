@@ -9,6 +9,7 @@ import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
 import { choose, chooseWith, print, printErr, relativeTime, table, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat } from "./stream.js";
+import { commandName, completeReplLine, findReplCommand, matchReplCommands, REPL_COMMANDS } from "./repl-commands.js";
 
 const HELP = `rann-code ${packageVersion()}
 
@@ -180,6 +181,8 @@ async function daemonCommand(args: ParsedArgs): Promise<number> {
     const health = await client.request<Record<string, unknown>>("health");
     client.close();
     print(`daemon jalan, pid ${health.pid}, socket ${health.socket}`);
+    const recovered = Array.isArray(health.recovered_turns) ? health.recovered_turns : [];
+    if (recovered.length > 0) print(`memulihkan ${recovered.length} turn yang terputus`);
     return 0;
   }
   if (args.subcommand === "stop") {
@@ -515,8 +518,18 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     }
 
     header();
+    const bootHealth = await client.request<Record<string, unknown>>("health");
+    const recoveredTurns = Array.isArray(bootHealth.recovered_turns) ? bootHealth.recovered_turns : [];
+    if (recoveredTurns.length > 0) {
+      print(ui.yellow(`${recoveredTurns.length} turn sebelumnya terputus, riwayat sudah ditandai. Kirim pesan untuk melanjutkan.`));
+    }
     const { createInterface } = await import("node:readline/promises");
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      completer: (line: string) => completeReplLine(line)
+    });
     onApproval = makeApprovalHandler(args, (question) => rl.question(question));
     let busy = false;
     rl.on("SIGINT", () => {
@@ -542,8 +555,28 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             (focus ? `Fokus tambahan: ${focus}. ` : "") +
             "Tulis temuan berurutan berdasarkan tingkat bahaya, sertakan path dan baris.";
         }
-        if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /checkpoints, /undo [id], /review, /memory [kata], /remember <teks>, /forget <id>, /skills, /skill <nama>, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
+        if (line === "/help" || line.startsWith("/help ")) {
+          const query = line.slice(5).trim();
+          const commands = query ? matchReplCommands(query) : REPL_COMMANDS;
+          if (commands.length === 0) {
+            print(`tidak ada perintah cocok "${query}"`);
+          } else {
+            const categories = ["sesi", "model", "rencana", "berkas", "memori", "diagnosa"] as const;
+            for (const category of categories) {
+              const items = commands.filter((command) => command.category === category);
+              if (items.length === 0) continue;
+              print(ui.bold(category));
+              for (const command of items) {
+                print(`  ${command.usage.padEnd(22)} ${command.description}`);
+              }
+            }
+          }
+          continue;
+        }
+        if (line.startsWith("/") && !findReplCommand(commandName(line))) {
+          const suggestions = matchReplCommands(commandName(line)).slice(0, 3);
+          print(`perintah tidak dikenal: ${commandName(line)}`);
+          if (suggestions.length > 0) print(`mungkin: ${suggestions.map((item) => `/${item.name}`).join(", ")}`);
           continue;
         }
         if (line === "/memory" || line.startsWith("/memory ")) {

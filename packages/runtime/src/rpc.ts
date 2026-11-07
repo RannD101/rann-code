@@ -16,6 +16,7 @@ import {
   listTasks,
   openDatabase,
   recordRoutingLog,
+  recoverInterruptedTurns,
   schemaVersion,
   setTurnModel,
   summarizeUsage,
@@ -70,6 +71,7 @@ export class RpcServer {
   private readonly secrets: SecretStore;
   private readonly mcp: McpManager;
   private readonly startedAt = Date.now();
+  recoveredTurns: ReturnType<typeof recoverInterruptedTurns> = [];
   private closing = false;
 
   constructor(private readonly options: RpcServerOptions) {
@@ -79,6 +81,7 @@ export class RpcServer {
       backupDir: options.layout.backupsDir
     });
     this.db = opened.db;
+    this.recoveredTurns = recoverInterruptedTurns(this.db);
     this.secrets = new SecretStore({
       dir: options.layout.secretsDir,
       ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
@@ -452,6 +455,7 @@ export class RpcServer {
       socket: this.options.layout.socketPath,
       database: { path: this.options.layout.dbPath, schema_version: schemaVersion(this.db) },
       providers: providerHealth.snapshot(),
+      recovered_turns: this.recoveredTurns.splice(0),
       active_turns: [...this.activeTurns.keys()]
     };
   }
