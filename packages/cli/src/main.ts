@@ -535,7 +535,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tools, /usage, /cost, /budget, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tasks, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -650,6 +650,24 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line === "/sessions") {
           const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 10, projectPath: process.cwd() });
           for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
+          continue;
+        }
+        if (line === "/tasks") {
+          const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 5 });
+          if (plans.length === 0) {
+            print(ui.dim("belum ada rencana di sesi ini"));
+            continue;
+          }
+          for (const plan of plans) {
+            print(`${String(plan.id)}  ${String(plan.status)}  ${String(plan.goal)}`);
+            const tasks = (plan.tasks as Array<Record<string, unknown>> | undefined) ?? [];
+            for (const task of tasks) print(`  - [${String(task.status)}] ${String(task.title)}`);
+          }
+          continue;
+        }
+        if (line === "/cancel") {
+          await client.request("session.cancel", { sessionId });
+          print(ui.dim("permintaan batal dikirim"));
           continue;
         }
         if (line.startsWith("/plan ")) {

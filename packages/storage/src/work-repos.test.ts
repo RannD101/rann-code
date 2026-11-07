@@ -17,6 +17,7 @@ import {
   findApproval,
   latestCheckpoint,
   listPlanNodes,
+  listPlans,
   listTaskSteps,
   openDatabase,
   recordApproval,
@@ -89,6 +90,15 @@ describe("work repositories", () => {
     expect(conflict.ok).toBe(false);
     expect(releasePathLease(db, join(dir, "a.txt"), agent.id)).toBe(true);
     expect(acquirePathLease(db, { path: join(dir, "a.txt"), ownerAgentId: other.id }).ok).toBe(true);
+  });
+
+  it("mengurutkan rencana per sesi dari yang terbaru", () => {
+    const { db, dir } = freshDb();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    createPlan(db, { sessionId: session.id, goal: "pertama" });
+    createPlan(db, { sessionId: session.id, goal: "kedua" });
+    expect(listPlans(db, session.id).map((plan) => plan.goal)).toEqual(["kedua", "pertama"]);
+    expect(listPlans(db, session.id, 1)).toHaveLength(1);
   });
 
   it("mencatat artifact dan job scheduler yang jatuh tempo", () => {

@@ -154,6 +154,13 @@ export const routeExplainParams = z.object({
   policy: z.string().min(1).max(64).optional()
 });
 
+export const planListParams = z.object({
+  sessionId: z.string().min(1),
+  limit: z.number().int().positive().max(100).default(20)
+});
+
+export const taskListParams = z.object({ sessionId: z.string().min(1) });
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -184,7 +191,9 @@ export const methodParams = {
   "secret.set": secretSetParams,
   "secret.remove": secretRemoveParams,
   "budget.status": empty,
-  "route.explain": routeExplainParams
+  "route.explain": routeExplainParams,
+  "plan.list": planListParams,
+  "task.list": taskListParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

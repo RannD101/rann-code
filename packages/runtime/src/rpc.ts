@@ -11,7 +11,9 @@ import {
   getSession,
   getTurn,
   listMessages,
+  listPlans,
   listSessions,
+  listTasks,
   openDatabase,
   recordRoutingLog,
   schemaVersion,
@@ -228,6 +230,15 @@ export class RpcServer {
           ...(config.routing.max_cost_per_task !== undefined ? { maxCostPerTask: config.routing.max_cost_per_task } : {}),
           strictBudget: config.routing.strict_budget
         });
+      }
+      case "task.list":
+        return listTasks(this.db, input.sessionId as string);
+      case "plan.list": {
+        const plans = listPlans(this.db, input.sessionId as string, (input.limit as number | undefined) ?? 20);
+        return plans.map((plan) => ({
+          ...plan,
+          tasks: listTasks(this.db, plan.session_id).filter((task) => task.plan_id === plan.id)
+        }));
       }
       case "budget.status": {
         const config = this.options.config.config;

@@ -27,7 +27,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | M1 | Storage, backup, restore, migrasi | selesai |
 | M2 | Provider, router, kapabilitas model | berjalan |
 | M3 | CLI, command registry, streaming | belum |
-| M4 | Agent core, planner, verifier, checkpoint | belum |
+| M4 | Agent core, planner, verifier, checkpoint | berjalan |
 | M5 | Coding tools, Git, project map | belum |
 | M6 | Tool broker, sandbox, approval | belum |
 | M7 | Memory dan instruction | belum |
@@ -76,6 +76,18 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 - Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `providers/mock.test.ts`, `secrets.test.ts`, `redact.test.ts`, `config-store.test.ts` lulus. `pnpm check` lulus 102 tes (21 berkas).
 
 Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan health probe periodik 60 detik.
+
+### M4 agent core
+
+- `packages/runtime/src/planner.ts`: skema rencana DAG, validasi siklus, kriteria selesai, dan estimasi.
+- `packages/runtime/src/plan-runtime.ts`: rencana disimpan ke `plans`, `plan_nodes`, dan `tasks`; status task dipublikasikan lewat `task.update`.
+- `packages/runtime/src/verifier.ts`: verifikasi bukti task sebelum turn ditutup; turn yang berhenti prematur dikirim ulang dengan daftar celah, maksimal dua kali.
+- `packages/runtime/src/agent.ts`: batas langkah, budget, checkpoint `pre_tool`, pembatalan, dan `turn.failed`.
+- `packages/runtime/src/rpc.ts`: `plan.list` dan `task.list` untuk membaca rencana serta task per sesi.
+- `packages/cli/src/main.ts`: `/tasks` menampilkan rencana dan status task, `/cancel` membatalkan turn aktif.
+- Tes: `planner.test.ts` lulus; `verifier` dan `plan-runtime` belum punya tes sendiri. Total 103 tes (21 berkas).
+
+Sisa M4: goal tracking eksplisit, failure analysis, `/execute`, dan pemulihan task setelah kill -9.
 
 ## Aturan
 

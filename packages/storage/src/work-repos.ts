@@ -170,6 +170,12 @@ export function getPlan(db: Db, id: string): PlanRow | undefined {
   return db.prepare("SELECT * FROM plans WHERE id = ?").get(id) as PlanRow | undefined;
 }
 
+export function listPlans(db: Db, sessionId: string, limit = 20): PlanRow[] {
+  return db
+    .prepare("SELECT * FROM plans WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
+    .all(sessionId, limit) as PlanRow[];
+}
+
 export function updatePlanStatus(db: Db, id: string, status: PlanStatus): PlanRow | undefined {
   db.prepare("UPDATE plans SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), id);
   return getPlan(db, id);
