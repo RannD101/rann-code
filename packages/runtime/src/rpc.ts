@@ -72,6 +72,7 @@ import { McpManager } from "./mcp.js";
 import { BackgroundQueue, type JobContext } from "./background.js";
 import { SchedulerEngine, nextRunFor } from "./scheduler.js";
 import { GatewayServer } from "./gateway.js";
+import { MessagingService } from "./messaging.js";
 import { dashboardData } from "./dashboard-data.js";
 
 export interface RpcServerOptions {
@@ -118,6 +119,7 @@ export class RpcServer {
   private readonly background: BackgroundQueue;
   private readonly scheduler: SchedulerEngine;
   private readonly gateway: GatewayServer;
+  private readonly messaging: MessagingService;
   private readonly eventListeners = new Set<(event: EventEnvelope) => void>();
   private readonly startedAt = Date.now();
   private watchdog?: NodeJS.Timeout;
@@ -171,6 +173,16 @@ export class RpcServer {
         return () => this.eventListeners.delete(listener);
       }
     });
+    this.messaging = new MessagingService({
+      db: this.db,
+      config: options.config.config,
+      invoke: (method, params) =>
+        this.handleRequest({ jsonrpc: "2.0", id: `msg-${Date.now()}`, method, params }),
+      subscribe: (listener) => {
+        this.eventListeners.add(listener);
+        return () => this.eventListeners.delete(listener);
+      }
+    });
   }
 
   get database(): Db {
@@ -209,6 +221,7 @@ export class RpcServer {
     if (this.options.config.config.gateway.enabled) {
       await this.gateway.start();
     }
+    await this.messaging.start();
   }
 
   private sweepStalledTurns(): void {
@@ -593,6 +606,14 @@ export class RpcServer {
         );
       case "gateway.stats":
         return this.gateway.stats();
+      case "messaging.status":
+        return this.messaging.status();
+      case "messaging.send":
+        return await this.messaging.send(
+          input.chat_id as number,
+          input.text as string,
+          input.thread_id as number | undefined
+        );
       case "checkpoint.list": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) return [];
@@ -1451,6 +1472,7 @@ export class RpcServer {
     if (this.closing) return;
     this.closing = true;
     if (this.watchdog) clearInterval(this.watchdog);
+    await this.messaging.stop();
     await this.gateway.stop();
     this.scheduler.stop();
     await this.background.stop();

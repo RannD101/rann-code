@@ -8,6 +8,7 @@ import { SCHEMA_V5 } from "./schema-v5.js";
 import { SCHEMA_V6 } from "./schema-v6.js";
 import { SCHEMA_V7 } from "./schema-v7.js";
 import { SCHEMA_V8 } from "./schema-v8.js";
+import { SCHEMA_V9 } from "./schema-v9.js";
 
 export type Db = Database.Database;
 
@@ -252,6 +253,11 @@ END;
     version: 8,
     name: "gateway",
     sql: SCHEMA_V8
+  },
+  {
+    version: 9,
+    name: "messaging",
+    sql: SCHEMA_V9
   }
 ];
 

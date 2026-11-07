@@ -45,6 +45,7 @@ Pemakaian:
   rann config set <kunci> <v>   tulis config global
   rann daemon start|stop|status kelola daemon
   rann gateway status|start|stop|pair|devices  kelola gateway web
+  rann messaging status|enable|disable|send  kelola adapter messaging
   rann doctor [--json]          periksa instalasi
   rann init                     siapkan folder .rann di project
 
@@ -84,7 +85,8 @@ const KNOWN_COMMANDS = new Set([
   "init",
   "memory",
   "skill",
-  "gateway"
+  "gateway",
+  "messaging"
 ]);
 
 async function main(argv: string[]): Promise<number> {
@@ -130,6 +132,8 @@ async function main(argv: string[]): Promise<number> {
       return await daemonCommand(args);
     case "gateway":
       return await gatewayCommand(args);
+    case "messaging":
+      return await messagingCommand(args);
     case "doctor":
       return await doctorCommand(args);
     case "sessions":
@@ -349,6 +353,47 @@ async function gatewayCommand(args: ParsedArgs): Promise<number> {
       "E_INVALID_PARAMS",
       "Pakai: rann gateway status|start|stop|pair|devices|revoke|role|stats|enable|disable"
     );
+  });
+}
+
+interface MessagingStatus {
+  telegram: { enabled: boolean; active: boolean; chats: number; pending: number };
+}
+
+async function messagingCommand(args: ParsedArgs): Promise<number> {
+  const sub = args.subcommand ?? "status";
+  if (sub === "enable" || sub === "disable") {
+    const home = resolveHome();
+    mkdirSync(join(home, "config"), { recursive: true });
+    setConfigValue(home, "messaging.telegram.enabled", sub === "enable" ? "true" : "false");
+    print(`messaging.telegram.enabled ${sub === "enable" ? "true" : "false"} ditulis ke config global.`);
+    print("Restart daemon agar perubahan berlaku.");
+    return 0;
+  }
+  return withClient(async (client) => {
+    if (sub === "status") {
+      const status = await client.request<MessagingStatus>("messaging.status", {});
+      const telegram = status.telegram;
+      print(`telegram  ${telegram.active ? "aktif" : telegram.enabled ? "gagal start" : "mati"}`);
+      print(`chat      ${telegram.chats} diizinkan`);
+      print(`approval  ${telegram.pending} menunggu`);
+      if (flagBool(args, "json")) print(JSON.stringify(status, null, 2));
+      return 0;
+    }
+    if (sub === "send") {
+      const chatId = Number(args.positionals[0]);
+      const text = args.positionals.slice(1).join(" ").trim();
+      if (!Number.isFinite(chatId) || !text) {
+        throw new RannError("E_INVALID_PARAMS", "Pakai: rann messaging send <chat_id> <teks>");
+      }
+      const result = await client.request<{ sent: boolean; chunks: number }>("messaging.send", {
+        chat_id: chatId,
+        text
+      });
+      print(`Terkirim ke ${chatId} dalam ${result.chunks} bagian.`);
+      return 0;
+    }
+    throw new RannError("E_INVALID_PARAMS", "Pakai: rann messaging status|enable|disable|send");
   });
 }
 
@@ -1178,6 +1223,34 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             createdBy: "user"
           });
           print(renderGoal(goal));
+          continue;
+        }
+        if (line === "/messaging" || line === "/msg" || line.startsWith("/messaging ") || line.startsWith("/msg ")) {
+          const argument = line.replace(/^\/(?:messaging|msg)\s*/, "").trim();
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "status").toLowerCase();
+          if (sub === "status") {
+            const status = await client.request<MessagingStatus>("messaging.status", {});
+            print(`telegram  ${status.telegram.active ? "aktif" : status.telegram.enabled ? "gagal start" : "mati"}`);
+            print(`chat      ${status.telegram.chats} diizinkan`);
+            print(`approval  ${status.telegram.pending} menunggu`);
+            continue;
+          }
+          if (sub === "send") {
+            const chatId = Number(tokens[1]);
+            const text = tokens.slice(2).join(" ").trim();
+            if (!Number.isFinite(chatId) || !text) {
+              print("pakai: /messaging send <chat_id> <teks>");
+              continue;
+            }
+            const result = await client.request<{ sent: boolean; chunks: number }>("messaging.send", {
+              chat_id: chatId,
+              text
+            });
+            print(`terkirim ke ${chatId} dalam ${result.chunks} bagian`);
+            continue;
+          }
+          print("pakai: /messaging status|send <chat_id> <teks>");
           continue;
         }
         if (line === "/gateway" || line === "/gw" || line.startsWith("/gateway ") || line.startsWith("/gw ")) {

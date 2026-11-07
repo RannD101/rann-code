@@ -36,7 +36,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | M10 | Subagent dan parallel orchestration | belum |
 | M11 | Background daemon, scheduler, recovery | selesai |
 | M12 | Context, compaction, budget | berjalan |
-| M13 | Gateway REST/WS dan dashboard | berjalan, messaging belum |
+| M13 | Gateway REST/WS, dashboard, dan messaging | gateway dan Telegram selesai; Discord/Slack belum |
 | M14 | Keamanan, secret, audit, RBAC | berjalan |
 | M15 | Distribusi, operability, rilis 1.0.0 | belum |
 
@@ -105,8 +105,20 @@ Sisa M4: replan otomatis setelah turn gagal. Goal tracking sudah dikerjakan (`sc
 - `packages/runtime/src/dashboard-data.ts`: perakitan data 18 halaman dari tabel nyata, `redactDeep`.
 - `packages/runtime/src/rpc.ts`: `gateway.*`, `dashboard.data`, event gateway, start/stop otomatis.
 - `packages/cli/src/main.ts`: `rann gateway status|start|stop|pair|devices|revoke|role|stats|enable|disable` dan `/gateway` di REPL.
-- Tes: `gateway-repos.test.ts` (5), `gateway.test.ts` (4), `job-repos.test.ts` (7), `scheduler.test.ts`, `background.test.ts`. `pnpm check` lulus 206 tes (41 berkas).
-- Belum: adapter messaging Telegram/Discord/Slack, audit otorisasi gateway ke `audit_log`, dan uji WebSocket reconnect lewat koneksi nyata.
+- Tes: `gateway-repos.test.ts` (5), `gateway.test.ts` (4), `job-repos.test.ts` (7), `scheduler.test.ts`, `background.test.ts`. `pnpm check` lulus 212 tes (42 berkas).
+- Belum: adapter Discord dan Slack, uji WebSocket reconnect lewat koneksi nyata.
+
+### M6 messaging
+
+- `packages/storage/src/schema-v9.ts`: tabel `messaging_state` untuk cursor polling per kanal.
+- `packages/storage/src/gateway-repos.ts`: `getChannelCursor`, `setChannelCursor`, `ensureChannelDevice` supaya perangkat kanal punya baris valid untuk pemetaan sesi.
+- `packages/runtime/src/messaging.ts`: adapter Telegram dengan polling `getUpdates`, allowlist chat, sesi per chat dan thread, teks/gambar/dokumen sampai 20 MB, tombol inline approval, perintah `/status`, `/cancel`, `/resume`, `/model`, `/cost`, `/approve`, `/deny`, pemecahan pesan 3.800 karakter dengan penanda bagian, dan pengiriman hasil turn ke kanal asal.
+- `packages/shared/src/rpc.ts`: `messaging.status` dan `messaging.send`.
+- `packages/runtime/src/rpc.ts`: `MessagingService` hidup bersama gateway, berlangganan event yang sama, start dan stop bersama daemon.
+- `packages/cli/src/main.ts`: `rann messaging status|enable|disable|send` dan `/messaging` di REPL.
+- `packages/runtime/src/gateway.ts`: penolakan otorisasi dicatat ke `audit_log` dengan scope yang kurang.
+- Tes: `messaging.test.ts` (6), `gateway-repos.test.ts` (5). `pnpm check` lulus 212 tes (42 berkas), `pnpm build` exit 0.
+- Belum: adapter Discord dan Slack (RC-FR-133), webhook publik, dan uji adapter Telegram dengan token nyata.
 
 ## Aturan
 

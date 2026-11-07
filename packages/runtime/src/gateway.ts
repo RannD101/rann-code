@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { RannError, toRannError, type EventEnvelope, type RannConfig } from "@rann/shared";
 import type { Db, GatewayDeviceView, GatewayRole, GatewayScope } from "@rann/storage";
 import {
+  appendAudit,
   authenticate,
   gatewayStats,
   getMappedSession,
@@ -593,7 +594,24 @@ export class GatewayServer {
       }
       throw new RannError("E_NOT_FOUND", `Endpoint tidak ditemukan: ${path}`);
     } catch (error) {
-      if (!response.headersSent) sendError(response, error);
+      const err = toRannError(error);
+      if (err.code === "E_PERMISSION") {
+        try {
+          appendAudit(this.db, {
+            actor: "gateway",
+            action: "authorize",
+            resource: url.pathname,
+            decision: "deny",
+            metadata: {
+              method: request.method ?? "GET",
+              required_scope: typeof err.data?.scope === "string" ? err.data.scope : undefined
+            }
+          });
+        } catch {
+          // Audit tidak boleh menggagalkan respons otorisasi.
+        }
+      }
+      if (!response.headersSent) sendError(response, err);
       else response.destroy();
     }
   }

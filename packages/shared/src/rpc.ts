@@ -298,6 +298,12 @@ export const gatewayRoleParams = z.object({
   role: z.enum(["owner", "operator", "viewer", "approver"])
 });
 
+export const messagingSendParams = z.object({
+  chat_id: z.number().int(),
+  text: z.string().min(1).max(12_000),
+  thread_id: z.number().int().optional()
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -360,7 +366,9 @@ export const methodParams = {
   "gateway.devices": empty,
   "gateway.revoke": gatewayDeviceParams,
   "gateway.role": gatewayRoleParams,
-  "gateway.stats": empty
+  "gateway.stats": empty,
+  "messaging.status": empty,
+  "messaging.send": messagingSendParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

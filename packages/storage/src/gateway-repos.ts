@@ -181,6 +181,27 @@ export function getMappedSession(
   return row?.session_id;
 }
 
+export function ensureChannelDevice(
+  db: Db,
+  input: { id: string; name: string; profile: string; role?: GatewayRole }
+): void {
+  const role = input.role ?? "operator";
+  const row = db.prepare("SELECT id FROM gateway_devices WHERE id = ?").get(input.id);
+  if (row) return;
+  db.prepare(
+    `INSERT INTO gateway_devices (id, name, profile, role, scopes, token_hash, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    input.id,
+    input.name,
+    input.profile,
+    role,
+    JSON.stringify(scopesForRole(role)),
+    hashToken(`channel:${input.id}:${String(Date.now())}:${Math.random().toString(36)}`),
+    Date.now()
+  );
+}
+
 export function mapSession(
   db: Db,
   input: { deviceId: string; sessionId: string; channel: string; channelKey: string }
@@ -216,6 +237,20 @@ export function recordGatewayMessage(
     input.externalId ?? null,
     Date.now()
   );
+}
+
+export function getChannelCursor(db: Db, channel: string): string | undefined {
+  const row = db.prepare("SELECT cursor FROM messaging_state WHERE channel = ?").get(channel) as
+    | { cursor: string | null }
+    | undefined;
+  return row?.cursor ?? undefined;
+}
+
+export function setChannelCursor(db: Db, channel: string, cursor: string | null): void {
+  db.prepare(
+    `INSERT INTO messaging_state (channel, cursor, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(channel) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`
+  ).run(channel, cursor, Date.now());
 }
 
 export function gatewayStats(db: Db): {
