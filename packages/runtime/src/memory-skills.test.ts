@@ -51,6 +51,23 @@ describe("MemoryService", () => {
       close();
     }
   });
+
+  it("mengekstrak preferensi eksplisit, melewati duplikat, dan menandai konflik", () => {
+    const { db, close } = database();
+    const project = mkdtempSync(join(tmpdir(), "rann-mem-extract-"));
+    try {
+      const service = new MemoryService(db, project, { enabled: true, promptChars: 2_000, retrieve: 10 });
+      const first = service.rememberFromTurn("Aku suka jawaban singkat. Jangan pakai emoji di output.");
+      expect(first.added.length).toBeGreaterThanOrEqual(2);
+      expect(first.added.some((entry) => entry.kind === "preference")).toBe(true);
+      const second = service.rememberFromTurn("Aku suka jawaban singkat.");
+      expect(second.duplicates).toBeGreaterThanOrEqual(1);
+      const conflict = service.rememberFromTurn("Aku tidak suka jawaban singkat.");
+      expect(conflict.conflicts.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      close();
+    }
+  });
 });
 
 describe("SkillStore", () => {

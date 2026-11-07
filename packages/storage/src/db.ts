@@ -383,22 +383,26 @@ export interface DatabaseInspection {
   ok: boolean;
   schemaVersion: number;
   problems: string[];
+  integrity?: string;
+  foreignKeyViolations?: number;
 }
 
 export function inspectDatabase(path: string): DatabaseInspection {
   if (!existsSync(path)) return { ok: false, schemaVersion: 0, problems: ["berkas database belum ada"] };
   const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
-    const quick = db.pragma("quick_check", { simple: true }) as string;
+    const integrity = db.pragma("integrity_check", { simple: true }) as string;
+    const foreign = db.pragma("foreign_key_check") as unknown[];
     const problems: string[] = [];
-    if (quick !== "ok") problems.push(`quick_check: ${quick}`);
+    if (integrity !== "ok") problems.push(`integrity_check: ${integrity}`);
+    if (foreign.length > 0) problems.push(`foreign_key_check: ${foreign.length} pelanggaran`);
     let version = 0;
     try {
       version = schemaVersion(db);
     } catch {
       problems.push("tabel schema_migrations tidak ditemukan");
     }
-    return { ok: problems.length === 0, schemaVersion: version, problems };
+    return { ok: problems.length === 0, schemaVersion: version, problems, integrity: String(integrity), foreignKeyViolations: foreign.length };
   } finally {
     db.close();
   }

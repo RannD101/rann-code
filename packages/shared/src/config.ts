@@ -127,12 +127,19 @@ export const configSchema = z.object({
       servers: z
         .record(
           z.object({
-            command: z.string().min(1),
+            transport: z.enum(["stdio", "http", "sse"]).optional(),
+            command: z.string().min(1).optional(),
             args: z.array(z.string()).default([]),
             env: z.record(z.string()).default({}),
             cwd: z.string().min(1).optional(),
+            url: z.string().url().optional(),
+            headers: z.record(z.string()).default({}),
             enabled: z.boolean().default(true),
             timeout_ms: z.number().int().positive().max(120_000).default(20_000)
+          }).superRefine((value, ctx) => {
+            const transport = value.transport ?? (value.url ? "http" : "stdio");
+            if (transport === "stdio" && !value.command) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "command wajib untuk transport stdio" });
+            if (transport !== "stdio" && !value.url) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "url wajib untuk transport http/sse" });
           })
         )
         .default({})
@@ -148,6 +155,7 @@ export const configSchema = z.object({
     .object({
       path: z.string().min(1).optional(),
       backup_before_migrate: z.boolean().default(true),
+      daily_backup: z.boolean().default(false),
       retention_days: z.number().int().positive().default(30)
     })
     .default({}),
@@ -229,7 +237,9 @@ export const configSchema = z.object({
           enabled: z.boolean().default(false),
           token_env: z.string().default("DISCORD_BOT_TOKEN"),
           public_key: z.string().optional(),
-          allowed_channels: z.array(z.string()).default([])
+          allowed_channels: z.array(z.string()).default([]),
+          allowed_roles: z.array(z.string()).default([]),
+          poll_ms: z.number().int().min(250).max(60_000).default(3_000)
         })
         .default({}),
       slack: z
@@ -237,7 +247,9 @@ export const configSchema = z.object({
           enabled: z.boolean().default(false),
           token_env: z.string().default("SLACK_BOT_TOKEN"),
           signing_secret_env: z.string().default("SLACK_SIGNING_SECRET"),
-          allowed_channels: z.array(z.string()).default([])
+          allowed_channels: z.array(z.string()).default([]),
+          allowed_users: z.array(z.string()).default([]),
+          poll_ms: z.number().int().min(250).max(60_000).default(3_000)
         })
         .default({})
     })

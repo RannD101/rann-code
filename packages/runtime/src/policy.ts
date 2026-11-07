@@ -23,6 +23,25 @@ export function isDangerousShell(command: string): boolean {
   return DANGEROUS_SHELL.some((pattern) => pattern.test(command));
 }
 
+const DESTRUCTIVE_REASONS: Array<[RegExp, string]> = [
+  [/\brm\s+-[a-z]*[rf][a-z]*/i, "menghapus berkas secara rekursif"],
+  [/\bgit\s+reset\s+--hard\b/i, "membuang perubahan lokal yang belum disimpan"],
+  [/\bgit\s+clean\s+-[a-z]*[fdx]/i, "menghapus berkas untracked"],
+  [/\bgit\s+push\b[^\n]*(--force\b|-f\b)/i, "menulis ulang riwayat remote"],
+  [/\bgit\s+branch\s+-D\b/i, "menghapus branch tanpa merge"],
+  [/\bdrop\s+(table|database|schema)\b/i, "menghapus objek database"],
+  [/\bmigrat(e|ion)\b[^\n]*\b(down|rollback|revert)\b/i, "menjalankan migrasi turun"],
+  [/\bmkfs(\.\w+)?\b/i, "memformat filesystem"],
+  [/\bdd\b[^\n]*\bof=\/dev\//i, "menulis mentah ke perangkat"],
+  [/\b(shutdown|reboot|halt|poweroff)\b/i, "mematikan mesin"],
+  [/\bchmod\s+(-R\s+)?777\s+\//i, "membuka izin seluruh filesystem"],
+  [/\bwipefs\b/i, "menghapus signature filesystem"]
+];
+
+export function destructiveReason(command: string): string | undefined {
+  return DESTRUCTIVE_REASONS.find(([pattern]) => pattern.test(command))?.[1];
+}
+
 export interface PolicyInput {
   mode: PermissionMode;
   tool: string;
@@ -51,6 +70,10 @@ function matchesRule(rule: string, tool: string, command?: string): boolean {
 
 export function decide(input: PolicyInput): PolicyDecision {
   if (input.risk === "exec" && input.command && isDangerousShell(input.command)) return "deny";
+  if (input.command && destructiveReason(input.command)) {
+    if (input.mode === "read-only") return "deny";
+    return input.approved ? "allow" : "ask";
+  }
 
   const deny = input.deny ?? [];
   const allow = input.allow ?? [];
@@ -73,8 +96,12 @@ export function assertAllowed(input: PolicyInput): void {
     });
   }
   if (decision === "ask") {
-    throw new RannError("E_APPROVAL_REQUIRED", `Tool ${input.tool} butuh persetujuan. Setujui lebih dulu atau ubah mode izin.`, {
-      data: { tool: input.tool, mode: input.mode }
+    const reason = input.command ? destructiveReason(input.command) : undefined;
+    const message = reason
+      ? `Operasi destruktif (${reason}) butuh persetujuan eksplisit. Target: ${input.command ?? ""}`
+      : `Tool ${input.tool} butuh persetujuan. Setujui lebih dulu atau ubah mode izin.`;
+    throw new RannError("E_APPROVAL_REQUIRED", message, {
+      data: { tool: input.tool, mode: input.mode, ...(reason ? { reason } : {}) }
     });
   }
 }

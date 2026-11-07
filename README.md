@@ -4,9 +4,9 @@ CLI agent coding lokal dengan daemon, sesi SQLite, memori jangka panjang, skill 
 
 Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
 
-Panduan lengkap dari instalasi sampai update ada di `tutorial.txt`.
+Panduan lengkap dari instalasi sampai update ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
 
-Versi teks yang bisa dibagikan: https://github.com/RannD101/rann-code/blob/main/tutorial.txt
+Versi publik: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.0.0.md
 
 ## Kebutuhan
 
@@ -19,10 +19,21 @@ pnpm dan Git hanya dibutuhkan kalau kamu mengembangkan source, bukan untuk memak
 
 Untuk pengguna:
 
+macOS atau Linux:
+
 ```bash
-npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
+curl -fsSL https://raw.githubusercontent.com/RannD101/rann-code/main/install.sh | sh
 rann --version
 ```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
+rann --version
+```
+
+Installer `install.sh` dan `install.ps1` memasang arsip dari GitHub Releases, bukan registry npm. Keduanya menerima `RANN_VERSION` untuk memasang versi tertentu. `install.sh --uninstall` menghapus aplikasi. Langkah lengkap untuk Windows 10/11, macOS, dan Linux ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
 
 Tidak perlu npx, tidak perlu clone repository, dan tidak perlu build dari source. Data disimpan di `~/.rann` (Windows: `%USERPROFILE%\.rann`).
 
@@ -49,7 +60,7 @@ rann chat
 Provider default `mock` tidak memanggil jaringan. Balasan mock berguna untuk menguji alur, tool call, dan izin. Untuk model sungguhan:
 
 ```bash
-export OPENAI_API_KEY="isi-key-di-sini"
+export OPENAI_API_KEY="sk-...kamu"
 rann provider add openai --base-url https://api.openai.com/v1 --key-env OPENAI_API_KEY --model gpt-4o-mini
 rann config set provider openai
 rann "halo"

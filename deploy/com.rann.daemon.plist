@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template LaunchAgent untuk Rann Code di macOS.
+
+  Sebelum dipakai:
+  1. Ganti GANTI_NAMA_KAMU dengan nama akun macOS kamu.
+  2. Pastikan path rannd benar. Cek dengan: npm config get prefix
+     Kalau prefix /opt/homebrew, path rannd biasanya /opt/homebrew/bin/rannd.
+     Kalau node tidak terbaca, ganti array ProgramArguments dengan path
+     node dan path daemon-main.js dari: npm root -g
+  3. Buat folder log: mkdir -p ~/Library/Logs/rann
+  4. Salin file ini ke ~/Library/LaunchAgents/com.rann.daemon.plist
+     lalu jalankan: chmod 644 ~/Library/LaunchAgents/com.rann.daemon.plist
+  5. Muat dengan:
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rann.daemon.plist
+
+  Hentikan dengan:
+     launchctl bootout gui/$(id -u)/com.rann.daemon
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rann.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/rannd</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/GANTI_NAMA_KAMU</string>
+    <key>RANN_HOME</key>
+    <string>/Users/GANTI_NAMA_KAMU/.rann</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/GANTI_NAMA_KAMU</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/GANTI_NAMA_KAMU/Library/Logs/rann/daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/GANTI_NAMA_KAMU/Library/Logs/rann/daemon.err.log</string>
+</dict>
+</plist>

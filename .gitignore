@@ -9,3 +9,5 @@ coverage/
 .DS_Store
 *.log
 dist-release/
+.rann/project-map.json
+.rann/state/

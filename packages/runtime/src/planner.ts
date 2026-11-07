@@ -73,8 +73,28 @@ export function classifyTask(text: string): TaskClass {
   return clean.length > 280 ? "inspect" : "answer";
 }
 
-export function needsPlan(taskClass: TaskClass): boolean {
-  return taskClass === "modify" || taskClass === "operate" || taskClass === "research" || taskClass === "incident";
+export interface PlanDecision {
+  needed: boolean;
+  reasons: string[];
+}
+
+export function planDecision(taskClass: TaskClass, prompt: string): PlanDecision {
+  const reasons: string[] = [];
+  const stepMarkers = prompt.match(/(^|\n)\s*(\d+[.)]|[-*])\s+/g)?.length ?? 0;
+  if (stepMarkers >= 3) reasons.push(`${stepMarkers} langkah eksplisit`);
+  const transitions = prompt.match(/\b(lalu|kemudian|setelah itu|selanjutnya|terakhir)\b/gi)?.length ?? 0;
+  if (transitions >= 2) reasons.push(`${transitions} penanda urutan`);
+  const paths = new Set(prompt.match(/[A-Za-z0-9_.@/-]+\.[A-Za-z0-9]{1,8}\b/g) ?? []);
+  if (paths.size >= 3) reasons.push(`${paths.size} file disebut`);
+  if (/\b(migrasi|migration|deploy|rilis|release|upgrade|refactor)\b/i.test(prompt)) reasons.push("operasi besar");
+  if (taskClass === "modify" || taskClass === "operate" || taskClass === "research" || taskClass === "incident") {
+    reasons.push(`task class ${taskClass}`);
+  }
+  return { needed: reasons.length > 0, reasons };
+}
+
+export function needsPlan(taskClass: TaskClass, prompt = ""): boolean {
+  return planDecision(taskClass, prompt).needed;
 }
 
 export function workspaceBrief(root: string, limit = 80): string {

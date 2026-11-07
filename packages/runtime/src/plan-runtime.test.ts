@@ -12,7 +12,7 @@ import {
   updateTaskStatus,
   type Db
 } from "@rann/storage";
-import { advancePlanTask, currentPlanTask, finishPlan, persistPlan, revisePlan, startFirstTask, verifyPlan, verifyPlanLive } from "./plan-runtime.js";
+import { advancePlanTask, currentPlanTask, finishPlan, parseTestFailures, persistPlan, revisePlan, startFirstTask, verifyPlan, verifyPlanLive } from "./plan-runtime.js";
 import type { PlanDraft, PlanValidation } from "./planner.js";
 
 const open: Db[] = [];
@@ -209,5 +209,15 @@ describe("plan runtime", () => {
       revisions?: { reason: string }[];
     };
     expect(metadata.revisions?.at(-1)?.reason).toBe("file target berubah");
+  });
+});
+
+
+describe("parseTestFailures", () => {
+  it("mengambil kegagalan dari keluaran Vitest, pytest, dan go test", () => {
+    const vitest = parseTestFailures(" FAIL  src/a.test.ts > menjumlah > hasil\nAssertionError: expected 3 but got 4");
+    expect(vitest[0]?.name).toContain("menjumlah");
+    expect(parseTestFailures("FAILED tests/test_api.py::test_login - assert 401 == 200")[0]?.name).toContain("test_login");
+    expect(parseTestFailures("--- FAIL: TestJumlah (0.00s)")[0]?.name).toBe("TestJumlah");
   });
 });

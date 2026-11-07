@@ -155,6 +155,7 @@ export const secretSetParams = z.object({
   provider: z.string().min(1).max(64).optional()
 });
 export const secretRemoveParams = z.object({ name: z.string().min(1).max(128) });
+export const secretExportParams = z.object({ path: z.string().min(1).max(4096) });
 
 export const routeExplainParams = z.object({
   prompt: z.string().min(1).max(200_000),
@@ -357,6 +358,8 @@ export const methodParams = {
   "secret.list": empty,
   "secret.set": secretSetParams,
   "secret.remove": secretRemoveParams,
+  "secret.export": secretExportParams,
+  "secret.rotate": empty,
   "budget.status": empty,
   "route.explain": routeExplainParams,
   "plan.list": planListParams,
@@ -381,6 +384,9 @@ export const methodParams = {
   "scheduler.remove": schedulerIdParams,
   "scheduler.history": schedulerHistoryParams,
   "dashboard.data": dashboardDataParams,
+  "mcp.list": empty,
+  "mcp.test": z.object({ name: z.string().min(1).optional() }),
+  "mcp.reload": empty,
   "gateway.status": empty,
   "gateway.start": empty,
   "gateway.stop": empty,

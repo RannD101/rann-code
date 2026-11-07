@@ -1,0 +1,12 @@
+node_modules
+.git
+.github
+dist-release
+docs
+tutorial.txt
+*.log
+*.tgz
+.env
+.env.*
+!.env.example
+.rann

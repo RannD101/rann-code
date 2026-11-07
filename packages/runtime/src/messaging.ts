@@ -12,6 +12,8 @@ import {
   type Db
 } from "@rann/storage";
 import { findTool } from "./tools/index.js";
+import { DiscordAdapter } from "./messaging-discord.js";
+import { SlackAdapter } from "./messaging-slack.js";
 
 export interface MessagingLogger {
   info: (message: string) => void;
@@ -26,6 +28,8 @@ export interface MessagingOptions {
   logger?: MessagingLogger;
   fetchImpl?: typeof fetch;
   apiBase?: string;
+  discordApiBase?: string;
+  slackApiBase?: string;
   autoPoll?: boolean;
 }
 
@@ -525,6 +529,8 @@ export class MessagingService {
   private readonly options: MessagingOptions;
   private readonly listeners = new Set<(event: EventEnvelope) => void>();
   private telegram?: TelegramAdapter;
+  private discord?: DiscordAdapter;
+  private slack?: SlackAdapter;
   private unsubscribe?: () => void;
 
   constructor(options: MessagingOptions) {
@@ -541,6 +547,26 @@ export class MessagingService {
       } catch (error) {
         this.options.logger?.warn(`telegram tidak aktif: ${toRannError(error).message}`);
         this.telegram = undefined;
+      }
+    }
+    if (config.discord?.enabled) {
+      try {
+        this.discord = new DiscordAdapter(this.options);
+        this.listeners.add((event) => this.discord?.onEvent(event));
+        await this.discord.start();
+      } catch (error) {
+        this.options.logger?.warn(`discord tidak aktif: ${toRannError(error).message}`);
+        this.discord = undefined;
+      }
+    }
+    if (config.slack?.enabled) {
+      try {
+        this.slack = new SlackAdapter(this.options);
+        this.listeners.add((event) => this.slack?.onEvent(event));
+        await this.slack.start();
+      } catch (error) {
+        this.options.logger?.warn(`slack tidak aktif: ${toRannError(error).message}`);
+        this.slack = undefined;
       }
     }
     if (this.listeners.size > 0) {
@@ -560,18 +586,40 @@ export class MessagingService {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     await this.telegram?.stop();
+    await this.discord?.stop();
+    await this.slack?.stop();
     this.telegram = undefined;
+    this.discord = undefined;
+    this.slack = undefined;
     this.listeners.clear();
   }
 
-  status(): { telegram: { enabled: boolean; active: boolean; chats: number; pending: number } } {
+  status(): {
+    telegram: { enabled: boolean; active: boolean; chats: number; pending: number };
+    discord: { enabled: boolean; active: boolean; channels: number; pending: number };
+    slack: { enabled: boolean; active: boolean; channels: number; pending: number };
+  } {
     const telegram = this.options.config.messaging.telegram;
+    const discord = this.options.config.messaging.discord;
+    const slack = this.options.config.messaging.slack;
     return {
       telegram: {
         enabled: telegram.enabled,
         active: this.telegram !== undefined,
         chats: telegram.allowed_chats.length,
         pending: this.telegram?.pendingCount() ?? 0
+      },
+      discord: {
+        enabled: discord?.enabled ?? false,
+        active: this.discord !== undefined,
+        channels: discord?.allowed_channels.length ?? 0,
+        pending: this.discord?.pendingCount() ?? 0
+      },
+      slack: {
+        enabled: slack?.enabled ?? false,
+        active: this.slack !== undefined,
+        channels: slack?.allowed_channels.length ?? 0,
+        pending: this.slack?.pendingCount() ?? 0
       }
     };
   }
@@ -585,5 +633,13 @@ export class MessagingService {
 
   telegramAdapter(): TelegramAdapter | undefined {
     return this.telegram;
+  }
+
+  discordAdapter(): DiscordAdapter | undefined {
+    return this.discord;
+  }
+
+  slackAdapter(): SlackAdapter | undefined {
+    return this.slack;
   }
 }

@@ -141,6 +141,39 @@ export function currentPlanTask(db: Db, plan: ActivePlan): PlanTaskView | undefi
   return undefined;
 }
 
+export function blockRunningTask(
+  db: Db,
+  plan: ActivePlan,
+  reason: string,
+  publish: (type: "task.update", data: Record<string, unknown>) => void
+): string | undefined {
+  const running = db.prepare("SELECT id, metadata_json FROM tasks WHERE plan_id = ? AND status = 'running'").get(plan.id) as
+    | { id: string; metadata_json: string }
+    | undefined;
+  if (!running) return undefined;
+  updateTaskStatus(db, running.id, "blocked");
+  let blockedPlanTaskId = "";
+  try {
+    blockedPlanTaskId = String((JSON.parse(running.metadata_json) as { planTaskId?: unknown }).planTaskId ?? "");
+  } catch {
+    // metadata rusak tetap ditandai blocked
+  }
+  publish("task.update", { task_id: running.id, plan_task_id: blockedPlanTaskId, status: "blocked", reason });
+  for (const row of db.prepare("SELECT id, metadata_json FROM tasks WHERE plan_id = ? AND status = 'queued'").all(plan.id) as { id: string; metadata_json: string }[]) {
+    let deps: string[] = [];
+    try {
+      const meta = JSON.parse(row.metadata_json) as { dependsOn?: unknown };
+      deps = Array.isArray(meta.dependsOn) ? (meta.dependsOn as string[]) : [];
+    } catch {
+      deps = [];
+    }
+    if (!deps.includes(blockedPlanTaskId)) continue;
+    updateTaskStatus(db, row.id, "blocked");
+    publish("task.update", { task_id: row.id, status: "blocked", reason: `menunggu task ${blockedPlanTaskId}` });
+  }
+  return blockedPlanTaskId;
+}
+
 export function advancePlanTask(
   db: Db,
   plan: ActivePlan,
@@ -449,6 +482,39 @@ function runVerificationCommand(command: string, cwd: string, options: LiveVerif
   });
 }
 
+export interface TestFailure {
+  name: string;
+  file?: string;
+  line?: number;
+  message?: string;
+}
+
+/** Ambil kegagalan dari keluaran Vitest/Jest, pytest, atau go test. */
+export function parseTestFailures(output: string): TestFailure[] {
+  const failures: TestFailure[] = [];
+  const seen = new Set<string>();
+  const add = (failure: TestFailure): void => {
+    const key = `${failure.file ?? ""}:${failure.line ?? ""}:${failure.name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    failures.push(failure);
+  };
+  for (const match of output.matchAll(/^\s*(?:FAIL|×|✗)\s+(.+?)(?:\s+>\s+(.+?):(\d+):\d+)?$/gm)) {
+    add({ name: match[1]?.trim() ?? "tes gagal", ...(match[2] ? { file: match[2] } : {}), ...(match[3] ? { line: Number(match[3]) } : {}) });
+  }
+  for (const match of output.matchAll(/^\s*(?:FAILED|ERROR)\s+([^\s:]+(?:::[^\s]+)?)\s*(?:-\s*(.*))?$/gm)) {
+    add({ name: match[1] ?? "tes gagal", ...(match[2] ? { message: match[2].trim().slice(0, 200) } : {}) });
+  }
+  for (const match of output.matchAll(/^--- FAIL: (\S+)(?:\s+\(([^)]+)\))?/gm)) {
+    add({ name: match[1] ?? "tes gagal", ...(match[2] ? { message: match[2] } : {}) });
+  }
+  for (const match of output.matchAll(/(?:AssertionError|Error):\s*([^\n]{5,200})/g)) {
+    if (failures.length >= 20) break;
+    add({ name: match[1]?.trim() ?? "assertion gagal" });
+  }
+  return failures.slice(0, 20);
+}
+
 export async function verifyPlanLive(
   db: Db,
   turnId: string,
@@ -492,7 +558,11 @@ export async function verifyPlanLive(
     const result = await runVerificationCommand(command, workspaceRoot, options);
     if (!result.ok) {
       const reason = result.timedOut ? `timeout ${options.timeoutMs ?? 120_000} ms` : `exit ${result.code}`;
-      gaps.push(`${criterion.id}: ${command} gagal (${reason}): ${result.output.replace(/\s+/g, " ").slice(0, 300)}`);
+      const failures = parseTestFailures(result.output);
+      const detail = failures.length > 0
+        ? failures.slice(0, 5).map((failure) => `${failure.name}${failure.file ? ` (${failure.file}${failure.line ? `:${failure.line}` : ""})` : ""}`).join("; ")
+        : result.output.replace(/\s+/g, " ").slice(0, 300);
+      gaps.push(`${criterion.id}: ${command} gagal (${reason}): ${detail}`);
     }
   }
   return { passed: gaps.length === 0, gaps, checked };

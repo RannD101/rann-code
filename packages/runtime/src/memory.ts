@@ -10,6 +10,7 @@ export interface MemoryServiceOptions {
   agentProfile?: string;
   sessionId?: string;
   ttlHours?: Record<string, number>;
+  autoExtract?: boolean;
 }
 
 export interface MemoryPrompt {
@@ -123,10 +124,85 @@ export class MemoryService {
   }
 
   search(query: string, limit = 20): MemoryEntry[] {
-    const hits = searchMemories(this.db, query, { scope: "all", projectPath: this.projectPath, limit: limit * 3 });
-    return hits
-      .filter((entry) => !isExpired(entry) && entry.status === "active" && belongsToAgent(entry, this.options.agentProfile))
-      .slice(0, limit);
+    const visible = this.visible();
+    const byId = new Map(visible.map((entry) => [entry.id, entry]));
+    const lexical = searchMemories(this.db, query, { scope: "all", projectPath: this.projectPath, limit: limit * 4 })
+      .filter((entry) => byId.has(entry.id));
+    const queryTags = new Set(query.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter((word) => word.length >= 3));
+    const tagged = visible.filter((entry) => entry.tags.some((tag) => queryTags.has(tag.toLowerCase().replace(/^[^:]+:/, ""))));
+    const recent = [...visible].sort((a, b) => b.updated_at - a.updated_at).slice(0, limit);
+    const scores = new Map<string, number>();
+    const fuse = (entries: MemoryEntry[], weight: number): void => {
+      entries.forEach((entry, index) => {
+        scores.set(entry.id, (scores.get(entry.id) ?? 0) + weight / (60 + index + 1));
+      });
+    };
+    fuse(lexical, 1);
+    fuse(tagged, 0.8);
+    fuse(recent, 0.3);
+    return [...scores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id]) => byId.get(id))
+      .filter((entry): entry is MemoryEntry => entry !== undefined);
+  }
+
+  /** Ambil kandidat memori eksplisit dari ucapan user. Deterministik, tanpa model. */
+  extract(text: string): Array<{ text: string; kind: string; scope: MemoryScope; tags: string[]; confidence: number }> {
+    const candidates: Array<{ text: string; kind: string; scope: MemoryScope; tags: string[]; confidence: number }> = [];
+    for (const raw of text.split(/(?<=[.!?])\s+|\n+/)) {
+      const line = raw.replace(/\s+/g, " ").trim();
+      if (line.length < 8 || line.length > 400) continue;
+      if (/^(apa|siapa|kapan|di mana|dimana|kenapa|mengapa|bagaimana|berapa|boleh|bisakah)\b/i.test(line)) continue;
+      const preference = /\b(aku|saya)\s+(suka|tidak suka|benci|mau|ingin|lebih pilih|pref(?:erensi)?)\b/i.test(line);
+      const rule = /\b(jangan|selalu|harus|wajib|pakai|gunakan|hindari)\b/i.test(line);
+      const project = /\b(proyek|project|repo|database|server|vps|aplikasi|app|website|web)\b/i.test(line) && /\b(ini|kita|aku|saya)\b/i.test(line);
+      const decision = /\b(kita|aku|saya)\s+(putuskan|pilih|setuju|akan pakai|pakai)\b/i.test(line);
+      if (!preference && !rule && !project && !decision) continue;
+      const kind = preference ? "preference" : decision ? "decision" : project ? "project" : "constraint";
+      candidates.push({
+        text: line.slice(0, 500),
+        kind,
+        scope: kind === "preference" ? "global" : "project",
+        tags: ["auto", kind],
+        confidence: preference ? 0.9 : 0.75
+      });
+    }
+    return candidates.slice(0, 8);
+  }
+
+  /** Simpan kandidat, lewati duplikat, tandai konflik dengan entri lama. */
+  rememberFromTurn(text: string, source = "auto-extract"): { added: MemoryEntry[]; duplicates: number; conflicts: string[] } {
+    const added: MemoryEntry[] = [];
+    const conflicts: string[] = [];
+    let duplicates = 0;
+    const tokens = (value: string): Set<string> => new Set(value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 3));
+    for (const candidate of this.extract(text)) {
+      const candidateTokens = tokens(candidate.text);
+      const existing = this.visible().filter((entry) => entry.kind === candidate.kind);
+      const negation = (value: string): boolean => /\b(jangan|tidak|bukan|hindari|never)\b/i.test(value);
+      const contradictory = existing.find((entry) => {
+        const other = tokens(entry.text);
+        const overlap = [...candidateTokens].filter((word) => other.has(word)).length;
+        return overlap >= Math.max(2, Math.floor(candidateTokens.size * 0.5)) && negation(entry.text) !== negation(candidate.text);
+      });
+      if (contradictory) {
+        conflicts.push(contradictory.id);
+      } else {
+        const duplicate = existing.find((entry) => {
+          const other = tokens(entry.text);
+          if (other.size === 0 || candidateTokens.size === 0) return false;
+          const overlap = [...candidateTokens].filter((word) => other.has(word)).length;
+          return overlap / new Set([...candidateTokens, ...other]).size >= 0.8;
+        });
+        if (duplicate) {
+          duplicates += 1;
+          continue;
+        }
+      }
+      added.push(this.add({ ...candidate, source }));
+    }
+    return { added, duplicates, conflicts };
   }
 
   update(id: string, patch: { text?: string; tags?: string[]; kind?: string }): MemoryEntry | undefined {
@@ -135,6 +211,10 @@ export class MemoryService {
 
   remove(idOrText: string): number {
     return removeMemory(this.db, idOrText);
+  }
+
+  autoExtractEnabled(): boolean {
+    return this.options.autoExtract !== false;
   }
 
   count(): number {

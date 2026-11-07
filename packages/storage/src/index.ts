@@ -8,3 +8,5 @@ export * from "./job-repos.js";
 export * from "./gateway-repos.js";
 export * from "./agent-repos.js";
 export * from "./secrets.js";
+export * from "./backup.js";
+export * from "./gc.js";

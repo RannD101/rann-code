@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { newId, type ErrorCode, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
@@ -664,6 +665,23 @@ export function appendAudit(db: Db, input: AuditInput): void {
   db.prepare(
     "INSERT INTO audit_log (id, actor, action, resource, decision, metadata_json, prev_hash, hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(newId("evt"), input.actor, input.action, input.resource, input.decision, metadata, prevHash, hash, at);
+}
+
+export function exportAuditJsonl(db: Db, destination: string): { entries: number; path: string } {
+  const rows = db.prepare("SELECT id, actor, action, resource, decision, metadata_json, prev_hash, hash, created_at FROM audit_log ORDER BY rowid ASC").all() as Array<Record<string, unknown>>;
+  const lines = rows.map((row) => JSON.stringify({
+    id: row.id,
+    actor: row.actor,
+    action: row.action,
+    resource: row.resource,
+    decision: row.decision,
+    metadata: JSON.parse(String(row.metadata_json ?? "{}")) as unknown,
+    prev_hash: row.prev_hash,
+    hash: row.hash,
+    created_at: row.created_at
+  }));
+  writeFileSync(destination, `${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`, { mode: 0o600 });
+  return { entries: rows.length, path: destination };
 }
 
 export function verifyAuditChain(db: Db): { ok: boolean; brokenAt?: string } {

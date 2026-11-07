@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, loadConfig, providerFor, toRannError } from "@rann/shared";
+import { destructiveReason } from "@rann/runtime";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
-import { inspectDatabase, renderGoal, type GoalView } from "@rann/storage";
+import { createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
@@ -14,6 +15,7 @@ import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplC
 import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
+import { previewEdit } from "./edit-preview.js";
 
 const HELP = `rann-code ${packageVersion()}
 
@@ -38,6 +40,8 @@ Pemakaian:
   rann secret list               daftar secret terenkripsi (tanpa nilai)
   rann secret set <nama> --env ENV  simpan secret dari environment
   rann secret remove <nama>      hapus secret
+  rann secret export <path>      ekspor vault terenkripsi
+  rann secret rotate             rotasi master key vault
   rann memory list|search|add|update|remove  kelola memori lokal
   rann skill list|view|create|remove         kelola skill lokal
   rann config get [kunci]       lihat config efektif atau satu kunci
@@ -88,7 +92,12 @@ const KNOWN_COMMANDS = new Set([
   "skill",
   "gateway",
   "messaging",
-  "agent"
+  "agent",
+  "backup",
+  "plugin",
+  "plugins",
+  "hooks",
+  "audit"
 ]);
 
 async function main(argv: string[]): Promise<number> {
@@ -140,6 +149,10 @@ async function main(argv: string[]): Promise<number> {
       return await agentCommand(args);
     case "doctor":
       return await doctorCommand(args);
+    case "backup":
+      return await backupCommand(args);
+    case "audit":
+      return await auditCommand(args);
     case "sessions":
       return await sessionsCommand(args);
     case "new":
@@ -542,6 +555,73 @@ interface Check {
   level: "ok" | "warn" | "fail";
 }
 
+async function auditCommand(args: ParsedArgs): Promise<number> {
+  const layout = homeLayout();
+  ensureLayout(layout);
+  if (!existsSync(layout.dbPath)) throw new RannError("E_NOT_FOUND", "Database belum ada. Jalankan daemon dulu.");
+  const opened = openDatabase({ path: layout.dbPath, backupBeforeMigrate: true });
+  try {
+    const sub = args.positionals[0] ?? "verify";
+    if (sub === "verify") {
+      const result = verifyAuditChain(opened.db);
+      print(result.ok ? "rantai audit valid" : `rantai audit rusak di ${result.brokenAt ?? "entri tidak diketahui"}`);
+      return result.ok ? 0 : 1;
+    }
+    if (sub === "export") {
+      const target = args.positionals[1];
+      if (!target) throw new RannError("E_INVALID_PARAMS", "Pakai: rann audit export <file>");
+      const result = exportAuditJsonl(opened.db, isAbsolute(target) ? target : resolve(process.cwd(), target));
+      print(`${result.entries} entri audit diekspor ke ${result.path}`);
+      return 0;
+    }
+    throw new RannError("E_INVALID_PARAMS", "Pakai: rann audit verify|export <file>");
+  } finally {
+    opened.db.close();
+  }
+}
+
+async function backupCommand(args: ParsedArgs): Promise<number> {
+  const layout = homeLayout();
+  ensureLayout(layout);
+  const backupDir = join(dirname(layout.dbPath), "backups");
+  if (!existsSync(layout.dbPath)) {
+    const created = openDatabase({ path: layout.dbPath, backupBeforeMigrate: false });
+    created.db.close();
+  }
+  const sub = args.positionals[0] ?? "create";
+  const file = args.positionals[1];
+  if (sub === "create") {
+    const result = createBackup(layout.dbPath, backupDir);
+    print(`backup dibuat: ${result.path} (${(result.size / 1_048_576).toFixed(2)} MB)`);
+    return 0;
+  }
+  if (sub === "list") {
+    const rows = listBackups(backupDir);
+    if (rows.length === 0) {
+      print("belum ada backup");
+      return 0;
+    }
+    for (const row of rows) print(`${row.created_at}  ${(row.size / 1_048_576).toFixed(2)} MB  ${row.path}`);
+    return 0;
+  }
+  if (sub === "verify") {
+    if (!file) throw new RannError("E_INVALID_PARAMS", "Pakai: rann backup verify <file>");
+    const result = verifyBackup(isAbsolute(file) ? file : resolve(process.cwd(), file));
+    print(`integrity: ${result.integrity}; foreign_key_violations: ${result.foreign_keys}`);
+    return result.ok ? 0 : 1;
+  }
+  if (sub === "restore") {
+    if (!file) throw new RannError("E_INVALID_PARAMS", "Pakai: rann backup restore <file>");
+    if (existsSync(layout.socketPath)) {
+      throw new RannError("E_CONFLICT", "Daemon masih berjalan. Hentikan dulu (rann daemon stop) lalu ulangi restore.");
+    }
+    const result = restoreBackup(isAbsolute(file) ? file : resolve(process.cwd(), file), layout.dbPath);
+    print(`database dipulihkan dari ${result.restored}; salinan sebelum restore: ${result.safety_copy}`);
+    return 0;
+  }
+  throw new RannError("E_INVALID_PARAMS", "Pakai: rann backup create|list|verify <file>|restore <file>");
+}
+
 async function doctorCommand(args: ParsedArgs): Promise<number> {
   const layout = homeLayout();
   ensureLayout(layout);
@@ -577,7 +657,7 @@ async function doctorCommand(args: ParsedArgs): Promise<number> {
     ok: inspection.ok,
     level: inspection.ok ? "ok" : dbExists ? "fail" : "warn",
     detail: inspection.ok
-      ? `skema ${inspection.schemaVersion}, quick_check ok`
+      ? `skema ${inspection.schemaVersion}, integrity ${inspection.integrity ?? "ok"}, foreign key ${inspection.foreignKeyViolations ?? 0}`
       : dbExists
         ? inspection.problems.join("; ")
         : "belum dibuat, akan dibuat saat daemon start"
@@ -742,7 +822,7 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
       model: flagString(args, "model"),
       permissionMode: flagString(args, "permission"),
       output,
-      planOnly: flagBool(args, "plan") || args.command === "plan",
+      planOnly: flagBool(args, "plan") || flagBool(args, "plan-only") || args.command === "plan",
       onApproval: makeApprovalHandler(args)
     });
     if (output === "json") {
@@ -762,6 +842,7 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens
         },
+        ...(result.plan ? { plan: result.plan } : {}),
         error: result.error ?? null
       };
       process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -781,7 +862,10 @@ function makeApprovalHandler(
   return async (request) => {
     const args = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
     const detail = "command" in args ? String(args.command) : JSON.stringify(request.args ?? {});
-    const impact = request.tool === "shell_run"
+    const dangerous = request.reason ?? (request.tool === "shell_run" && typeof args.command === "string" ? destructiveReason(args.command) : undefined);
+    const impact = dangerous
+      ? `DESTRUKTIF: ${dangerous}. Operasi ini bisa menghilangkan data dan tidak selalu bisa dibatalkan.`
+      : request.tool === "shell_run"
       ? "menjalankan perintah shell di folder project"
       : request.tool === "git_write"
         ? "mengubah riwayat git atau mendorong commit ke remote"
@@ -792,7 +876,11 @@ function makeApprovalHandler(
             : "menjalankan tool dengan izin tulis di workspace";
     const targetValue = args.path ?? args.file ?? args.cwd ?? args.url ?? args.domain ?? args.target;
     const target = typeof targetValue === "string" ? `\n  target: ${targetValue}` : "";
-    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.slice(0, 2_000)}\n  dampak: ${impact}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
+    const preview = previewEdit(request.tool, request.args, process.cwd());
+    const diff = preview
+      ? `\n  diff ${preview.path} (+${preview.added} -${preview.removed}):\n${preview.lines.map((line) => `    ${line}`).join("\n")}`
+      : "";
+    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.slice(0, 2_000)}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
     const choices = [
       { key: "once", label: "Izinkan sekali" },
       { key: "always", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
@@ -854,12 +942,16 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const layout = homeLayout();
     loadCustomThemeIfPresent(resolveHome());
     const history = new HistoryStore(layout.historyDir, process.cwd());
-    const custom = loadCustomCommands({
-      homeDir: join(resolveHome(), "commands"),
-      projectDir: join(process.cwd(), ".rann", "commands"),
-      coreNames: REPL_COMMANDS.map((command) => command.name)
-    });
-    for (const error of custom.errors) printErr(ui.dim(`[command] ${error}`));
+    const reloadCustomCommands = (): CustomCommand[] => {
+      const loaded = loadCustomCommands({
+        homeDir: join(resolveHome(), "commands"),
+        projectDir: join(process.cwd(), ".rann", "commands"),
+        coreNames: REPL_COMMANDS.map((command) => command.name)
+      });
+      for (const message of loaded.errors) printErr(ui.yellow(`perintah kustom: ${message}`));
+      return loaded.commands;
+    };
+    const custom = { commands: reloadCustomCommands() };
     const findCustom = (name: string): CustomCommand | undefined =>
       custom.commands.find((command) => command.name === name || command.aliases.includes(name));
     let branch = "";
@@ -875,6 +967,9 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     let lastInputTokens = 0;
     let lastOutputTokens = 0;
     let contextLimit = 24_000;
+    let providerName = "";
+    let providerStatus = "unknown";
+    let lastTurnMs = 0;
     let lastTurnId: string | undefined;
     let lastCancelled = false;
     let lastResponse = "";
@@ -895,6 +990,9 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
       const parts = [model ?? "default"];
+      if (providerName) parts.push(`${providerName}:${providerStatus}`);
+      if (branch) parts.push(branch);
+      if (lastTurnMs > 0) parts.push(`${(lastTurnMs / 1000).toFixed(1)}s`);
       if (totalTokens > 0) parts.push(`${(totalTokens / 1000).toFixed(1)}k tok`);
       if (lastInputTokens > 0 || lastOutputTokens > 0) parts.push(`in ${lastInputTokens} out ${lastOutputTokens}`);
       if (contextLimit > 0) {
@@ -915,6 +1013,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     try {
       const configReply = await client.request<Record<string, unknown>>("config.get", {});
       const configValue = (configReply.config as Record<string, unknown> | undefined) ?? configReply;
+      if (typeof configValue.provider === "string") providerName = configValue.provider;
+      try {
+        const listed = await client.request<Array<Record<string, unknown>>>("provider.list");
+        const active = listed.find((item) => item.name === providerName) ?? listed[0];
+        if (active && typeof active.health === "string") providerStatus = active.health;
+      } catch {
+        // status provider tidak menghalangi sesi
+      }
       const contextValue = configValue.context as Record<string, unknown> | undefined;
       if (typeof contextValue?.max_tokens === "number" && contextValue.max_tokens > 0) contextLimit = contextValue.max_tokens;
       const uiValue = configValue.ui as Record<string, unknown> | undefined;
@@ -1053,6 +1159,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       lastResponse = result.text;
       lastTurnId = result.turnId;
       lastCancelled = !result.ok && result.error?.code === "E_CANCELLED";
+      lastTurnMs = result.durationMs;
+      try {
+        const listed = await client.request<Array<Record<string, unknown>>>("provider.list");
+        const active = listed.find((item) => item.name === providerName);
+        if (active && typeof active.health === "string") providerStatus = active.health;
+      } catch {
+        // abaikan kegagalan pembacaan status
+      }
       lastTurnCost = result.costUsd;
       try {
         const budget = await client.request<Record<string, unknown>>("budget.status", {});
@@ -2023,6 +2137,93 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           continue;
         }
+        if (line === "/git" || line.startsWith("/git ")) {
+          const tokens = tokenizeInline(line.slice(4).trim());
+          const sub = tokens[0] ?? "status";
+          const allowed = new Set(["status", "diff", "log", "add", "commit", "branch", "worktree", "push", "pull"]);
+          if (!allowed.has(sub)) {
+            print(ui.red("Subcommand git tidak diizinkan. Pakai status, diff, log, add, commit, branch, worktree, push, pull."));
+            continue;
+          }
+          const args = tokens.slice(1);
+          if (args.some((arg) => arg === "--force" || arg === "-f" || arg === "--hard" || arg === "--force-with-lease")) {
+            print(ui.red("Operasi force ditolak."));
+            continue;
+          }
+          if (sub === "commit" && !args.includes("-m")) {
+            print(ui.red('Pakai: /git commit -m "pesan" atau /commit -m "pesan"'));
+            continue;
+          }
+          try {
+            const output = execFileSync("git", [sub, ...args], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+            print(output.trim() || ui.dim("selesai"));
+          } catch (error) {
+            const err = error as { stderr?: string; stdout?: string };
+            printErr((err.stderr ?? err.stdout ?? "git gagal").trim());
+          }
+          continue;
+        }
+        if (line === "/commit" || line.startsWith("/commit ") || line === "/branch" || line.startsWith("/branch ") || line === "/worktree" || line.startsWith("/worktree ")) {
+          const command = line.split(/\s+/, 1)[0] ?? "/git";
+          const rest = line.slice(command.length).trim();
+          if (command === "/commit") {
+            if (!rest.startsWith("-m ")) {
+              print(ui.red('Pakai: /commit -m "pesan"'));
+              continue;
+            }
+            try {
+              execFileSync("git", ["add", "-A"], { cwd: process.cwd(), stdio: "ignore" });
+              const output = execFileSync("git", ["commit", ...tokenizeInline(rest)], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+              print(output.trim().split("\n")[0] ?? "commit dibuat");
+            } catch (error) {
+              const err = error as { stderr?: string; stdout?: string };
+              printErr((err.stderr ?? err.stdout ?? "commit gagal").trim());
+            }
+            continue;
+          }
+          if (command === "/branch") {
+            const tokens = tokenizeInline(rest);
+            const sub = tokens[0] ?? "list";
+            if (sub === "list") {
+              try { print(execFileSync("git", ["branch", "--list"], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch { printErr("git gagal"); }
+              continue;
+            }
+            if (sub === "create" && tokens[1]) {
+              try { print(execFileSync("git", ["switch", "-c", tokens[1]], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "git gagal"); }
+              continue;
+            }
+            if (sub === "switch" && tokens[1]) {
+              try { print(execFileSync("git", ["switch", tokens[1]], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "git gagal"); }
+              continue;
+            }
+            print("Pakai: /branch list|create <nama>|switch <nama>");
+            continue;
+          }
+          const tokens = tokenizeInline(rest);
+          const sub = tokens[0] ?? "list";
+          if (sub === "list") {
+            try { print(execFileSync("git", ["worktree", "list"], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch { printErr("git gagal"); }
+            continue;
+          }
+          if (sub === "create" && tokens[1]) {
+            const name = tokens[1];
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) { printErr("nama worktree tidak valid"); continue; }
+            try { print(execFileSync("git", ["worktree", "add", "-b", `rann/${name}`, `.rann/worktrees/${name}`], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "git gagal"); }
+            continue;
+          }
+          if (sub === "remove" && tokens[1]) {
+            const name = tokens[1];
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) { printErr("nama worktree tidak valid"); continue; }
+            try { print(execFileSync("git", ["worktree", "remove", `.rann/worktrees/${name}`], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "git gagal"); }
+            continue;
+          }
+          if (sub === "merge" && tokens[1]) {
+            try { print(execFileSync("git", ["merge", "--no-ff", "--no-edit", tokens[1]], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "merge gagal"); }
+            continue;
+          }
+          print("Pakai: /worktree list|create <nama>|remove <nama>|merge <branch>");
+          continue;
+        }
         if (line === "/diff" || line.startsWith("/diff ")) {
           try {
             const stat = execFileSync("git", ["diff", "--no-color", "--stat"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
@@ -2059,8 +2260,20 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line === "/resume" || line.startsWith("/resume ")) {
           const target = line.slice(7).trim();
           if (target.length === 0 && lastTurnId && lastCancelled) {
-            const continuation = `Lanjutkan turn ${lastTurnId} dari langkah terakhir. Jangan ulangi tool yang sudah berhasil; periksa riwayat tool di konteks, selesaikan sisa pekerjaan, lalu laporkan hasil dan bukti verifikasi.`;
-            print(ui.dim(`melanjutkan turn ${lastTurnId} dari checkpoint terakhir`));
+            let resumeDetail = "langkah terakhir";
+            try {
+              const checkpoint = await client.request<Record<string, unknown> | null>("checkpoint.latest", { sessionId });
+              if (checkpoint) {
+                const state = (checkpoint.state as Record<string, unknown> | undefined) ?? {};
+                const step = Number(state.step ?? 0);
+                const tool = typeof state.tool === "string" ? state.tool : undefined;
+                resumeDetail = `${checkpoint.id}${step > 0 ? ` langkah ${step}` : ""}${tool ? ` (${tool})` : ""}`;
+                print(ui.dim(`checkpoint ${resumeDetail}, label ${String(checkpoint.label)}`));
+              }
+            } catch {
+              // checkpoint opsional; turn tetap dilanjutkan dari riwayat
+            }
+            const continuation = `Lanjutkan turn ${lastTurnId} dari ${resumeDetail}. Jangan ulangi tool yang sudah berhasil; periksa riwayat tool di konteks, selesaikan sisa pekerjaan, lalu laporkan hasil dan bukti verifikasi.`;
             busy = true;
             try {
               const result = await runStreaming(client, sessionId, continuation, {
@@ -2126,6 +2339,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const session = await client.request<Record<string, unknown>>("session.create", { projectPath: target, model, permissionMode });
           process.chdir(target);
           history.switchTo(target);
+          custom.commands = reloadCustomCommands();
+          loadCustomThemeIfPresent(resolveHome());
           sessionId = String(session.id);
           model = String(session.model ?? model ?? "default");
           permissionMode = String(session.permission_mode ?? permissionMode ?? "ask");
@@ -2200,8 +2415,63 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(ui.green(`skill ${String(skill.name)} dibuat di ${String(skill.path)}`));
           continue;
         }
-        if (line === "/mcp" || line.startsWith("/mcp ")) {
-          print(ui.yellow("backend MCP belum tersedia di versi ini"));
+        if (line === "/mcp" || line === "/mcp list" || line.startsWith("/mcp ")) {
+          const parts = line.split(/\s+/).slice(1);
+          const action = parts[0] ?? "list";
+          if (action === "list" || parts.length === 0) {
+            const servers = await client.request<Array<Record<string, unknown>>>("mcp.list", {});
+            if (servers.length === 0) print(ui.dim("belum ada server MCP"));
+            for (const server of servers) {
+              print(`${server.enabled ? "*" : " "} ${String(server.name)}  ${String(server.transport)}  ${String(server.target)}`);
+            }
+            continue;
+          }
+          if (action === "test") {
+            const tools = await client.request<Array<Record<string, unknown>>>("mcp.test", parts[1] ? { name: parts[1] } : {});
+            if (tools.length === 0) print(ui.dim("tidak ada tool MCP yang ditemukan"));
+            for (const tool of tools) print(`${String(tool.name)}  ${String(tool.description ?? "")}`);
+            continue;
+          }
+          if (action === "reload") {
+            await client.request("mcp.reload", {});
+            print(ui.green("server MCP ditutup, akan disambung ulang saat dipakai"));
+            continue;
+          }
+          if (action === "add") {
+            const name = parts[1];
+            if (!name) {
+              print(ui.yellow("Pakai: /mcp add <nama> <command> [argumen...] atau /mcp add <nama> --url <url>"));
+              continue;
+            }
+            const layout = homeLayout();
+            const urlIndex = parts.indexOf("--url");
+            if (urlIndex > 0 && parts[urlIndex + 1]) {
+              setConfigValue(layout.home, `mcp.servers.${name}.url`, parts[urlIndex + 1]!);
+              setConfigValue(layout.home, `mcp.servers.${name}.transport`, "http");
+            } else {
+              const command = parts[2];
+              if (!command) {
+                print(ui.yellow("Pakai: /mcp add <nama> <command> [argumen...]"));
+                continue;
+              }
+              setConfigValue(layout.home, `mcp.servers.${name}.command`, command);
+              const args = parts.slice(3);
+              if (args.length > 0) setConfigValue(layout.home, `mcp.servers.${name}.args`, JSON.stringify(args));
+            }
+            print(ui.green(`MCP ${name} disimpan. Jalankan rann daemon restart, lalu /mcp test ${name}.`));
+            continue;
+          }
+          if (action === "remove") {
+            const name = parts[1];
+            if (!name) {
+              print(ui.yellow("Pakai: /mcp remove <nama>"));
+              continue;
+            }
+            setConfigValue(homeLayout().home, `mcp.servers.${name}.enabled`, "false");
+            print(ui.green(`MCP ${name} dinonaktifkan. Jalankan rann daemon restart untuk menerapkan.`));
+            continue;
+          }
+          print(ui.yellow("Pakai: /mcp list|add|remove|test|reload"));
           continue;
         }
         if (line === "/sessions") {

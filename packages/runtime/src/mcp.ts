@@ -4,10 +4,13 @@ import { RannError } from "@rann/shared";
 import type { ToolSpec } from "./providers/types.js";
 
 export interface McpServerConfig {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
+  transport?: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
   cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
   enabled: boolean;
   timeout_ms: number;
 }
@@ -22,7 +25,8 @@ interface PendingRequest {
 interface ServerState {
   name: string;
   config: McpServerConfig;
-  process: ChildProcessWithoutNullStreams;
+  process?: ChildProcessWithoutNullStreams;
+  sessionId?: string;
   buffer: string;
   nextId: number;
   pending: Map<number, PendingRequest>;
@@ -117,7 +121,7 @@ export class McpManager {
       } catch (error) {
         const state = this.states.get(name);
         const detail = state?.stderr.trim().slice(-800);
-        this.states.get(name)?.process.kill("SIGKILL");
+        this.states.get(name)?.process?.kill("SIGKILL");
         this.states.delete(name);
         throw new RannError(
           "E_TOOL_FAILED",
@@ -132,9 +136,23 @@ export class McpManager {
   private async start(name: string, config: McpServerConfig): Promise<ServerState> {
     const existing = this.states.get(name);
     if (existing) return existing;
-    const child = spawn(config.command, config.args, {
+    const transport = config.transport ?? (config.url ? "http" : "stdio");
+    if (transport !== "stdio") return this.startHttp(name, config, transport);
+    if (!config.command) throw new Error(`MCP ${name}: command wajib untuk transport stdio`);
+    const baseEnv: Record<string, string> = {};
+    for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"]) {
+      const value = process.env[key];
+      if (value !== undefined) baseEnv[key] = value;
+    }
+    const extraEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config.env ?? {})) {
+      const name = value.startsWith("env:") ? value.slice(4) : "";
+      const resolved = name ? process.env[name] : value;
+      if (resolved !== undefined) extraEnv[key] = resolved;
+    }
+    const child = spawn(config.command, config.args ?? [], {
       cwd: resolve(config.cwd ?? process.cwd()),
-      env: { ...process.env, ...config.env },
+      env: { ...baseEnv, ...extraEnv },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
@@ -167,11 +185,109 @@ export class McpManager {
     return state;
   }
 
+  private async startHttp(name: string, config: McpServerConfig, transport: "http" | "sse"): Promise<ServerState> {
+    if (!config.url || !/^https?:\/\//i.test(config.url)) throw new Error(`MCP ${name}: URL http(s) wajib untuk transport ${transport}`);
+    const state: ServerState = {
+      name,
+      config: { ...config, transport },
+      buffer: "",
+      nextId: 1,
+      pending: new Map(),
+      stderr: "",
+      initialized: false
+    };
+    this.states.set(name, state);
+    await this.initializeHttp(state);
+    return state;
+  }
+
+  private httpHeaders(state: ServerState): Record<string, string> {
+    return {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...Object.fromEntries(Object.entries(state.config.headers ?? {}).map(([key, value]) => {
+        const name = value.startsWith("env:") ? value.slice(4) : "";
+        return [key, name ? (process.env[name] ?? "") : value];
+      })),
+      ...(state.sessionId ? { "mcp-session-id": state.sessionId } : {})
+    };
+  }
+
+  private async parseHttpResponse(response: Response, method: string): Promise<Record<string, unknown>> {
+    const type = response.headers.get("content-type") ?? "";
+    if (!response.ok) throw new Error(`HTTP ${response.status} untuk ${method}`);
+    if (type.includes("text/event-stream")) {
+      const text = await response.text();
+      for (const block of text.split(/\n\n/)) {
+        const data = block.split(/\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
+        if (!data) continue;
+        const parsed = parseJsonLine(data);
+        if (parsed && ("result" in parsed || "error" in parsed)) return parsed;
+      }
+      throw new Error(`respons SSE ${method} tidak memuat hasil`);
+    }
+    const parsed = (await response.json()) as unknown;
+    const envelope = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (typeof envelope !== "object" || envelope === null) throw new Error(`respons ${method} bukan objek JSON`);
+    return envelope as Record<string, unknown>;
+  }
+
+  private async httpRequest(state: ServerState, method: string, params: Record<string, unknown>): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), state.config.timeout_ms);
+    try {
+      const response = await fetch(state.config.url as string, {
+        method: "POST",
+        headers: this.httpHeaders(state),
+        body: JSON.stringify({ jsonrpc: "2.0", id: state.nextId++, method, params }),
+        signal: controller.signal
+      });
+      const session = response.headers.get("mcp-session-id");
+      if (session) state.sessionId = session;
+      const message = await this.parseHttpResponse(response, method);
+      if (message.error) throw new Error(String((message.error as Record<string, unknown>).message ?? "MCP error"));
+      return message.result;
+    } catch (error) {
+      if ((error as Error).name === "AbortError") throw new Error(`MCP ${state.name} timeout ${state.config.timeout_ms} ms untuk ${method}`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async notifyHttp(state: ServerState, method: string): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), state.config.timeout_ms);
+    try {
+      await fetch(state.config.url as string, {
+        method: "POST",
+        headers: this.httpHeaders(state),
+        body: JSON.stringify({ jsonrpc: "2.0", method, params: {} }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async initializeHttp(state: ServerState): Promise<void> {
+    if (state.initialized) return;
+    const result = (await this.httpRequest(state, "initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "rann-code", version: this.version }
+    })) as Record<string, unknown> | undefined;
+    const session = (result as Record<string, unknown> | undefined)?.sessionId;
+    if (typeof session === "string") state.sessionId = session;
+    await this.notifyHttp(state, "notifications/initialized");
+    state.initialized = true;
+  }
+
   private onData(state: ServerState, chunk: string): void {
     state.buffer += chunk;
     if (state.buffer.length > MAX_BUFFER) {
       this.failState(state, new Error("output MCP melebihi 8 MB"));
-      state.process.kill("SIGKILL");
+      state.process?.kill("SIGKILL");
       return;
     }
     let index = state.buffer.indexOf("\n");
@@ -189,7 +305,7 @@ export class McpManager {
     const id = typeof message.id === "number" ? message.id : undefined;
     if (id === undefined) return;
     if (message.method && !("result" in message) && !("error" in message)) {
-      state.process.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }) + "\n");
+      state.process?.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }) + "\n");
       return;
     }
     const pending = state.pending.get(id);
@@ -214,6 +330,7 @@ export class McpManager {
   }
 
   private request(state: ServerState, method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (!state.process) return this.httpRequest(state, method, params);
     const id = state.nextId++;
     return new Promise<unknown>((resolvePromise, rejectPromise) => {
       const timer = setTimeout(() => {
@@ -221,7 +338,7 @@ export class McpManager {
         rejectPromise(new Error(`MCP ${state.name} timeout ${state.config.timeout_ms} ms untuk ${method}`));
       }, state.config.timeout_ms);
       state.pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
-      state.process.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      state.process?.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
 
@@ -232,7 +349,7 @@ export class McpManager {
       capabilities: {},
       clientInfo: { name: "rann-code", version: this.version }
     });
-    state.process.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n");
+    state.process?.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n");
     state.initialized = true;
   }
 
@@ -263,7 +380,7 @@ export class McpManager {
   async close(): Promise<void> {
     for (const state of this.states.values()) {
       this.failState(state, new Error("MCP ditutup"));
-      state.process.kill("SIGKILL");
+      state.process?.kill("SIGKILL");
     }
     this.states.clear();
     this.routes.clear();

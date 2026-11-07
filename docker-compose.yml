@@ -1,0 +1,25 @@
+services:
+  rann:
+    build:
+      context: .
+      args:
+        RANN_VERSION: latest
+    image: rann-code:local
+    container_name: rann-code
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      RANN_HOME: /data
+      NODE_ENV: production
+      # Isi lewat shell atau file .env, jangan tulis key asli di file ini.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - rann-data:/data
+    ports:
+      # Hanya perlu kalau gateway diaktifkan.
+      - "127.0.0.1:8787:8787"
+
+volumes:
+  rann-data:

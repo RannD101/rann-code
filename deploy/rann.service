@@ -1,0 +1,36 @@
+[Unit]
+Description=Rann Code daemon
+Documentation=https://github.com/RannD101/rann-code
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Service sistem dengan akun khusus. Workspace default ada di /var/lib/rann.
+# Untuk proyek milik user biasa, pakai rann@.service.
+# Ganti User dan Group kalau memakai akun lain.
+User=rann
+Group=rann
+# Ganti path ExecStart sesuai hasil: npm config get prefix
+# Contoh lain: /usr/bin/rannd atau /opt/homebrew/bin/rannd
+# Kalau Node dipasang lewat nvm, ganti ExecStart dengan path node dan
+# daemon-main.js dari: npm root -g
+ExecStart=/usr/local/bin/rannd
+Environment=HOME=/var/lib/rann
+Environment=RANN_HOME=/var/lib/rann
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/var/lib/rann
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+StateDirectory=rann
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=no
+
+[Install]
+WantedBy=multi-user.target

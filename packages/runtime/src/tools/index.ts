@@ -261,11 +261,13 @@ const gitReadSchema = z.object({
 });
 
 const gitWriteSchema = z.object({
-  action: z.enum(["stage", "unstage", "commit", "branch_create"]),
+  action: z.enum(["stage", "unstage", "commit", "branch_create", "worktree_create", "worktree_remove", "worktree_merge", "push", "pull"]),
   paths: z.array(z.string().min(1)).max(200).optional(),
   all: z.boolean().optional(),
   message: z.string().min(1).max(5_000).optional(),
-  name: z.string().min(1).max(200).optional()
+  name: z.string().min(1).max(200).optional(),
+  remote: z.string().min(1).max(120).optional(),
+  branch: z.string().min(1).max(200).optional()
 });
 
 const checkpointCreateSchema = z.object({
@@ -824,15 +826,17 @@ export const tools: ToolDefinition[] = [
     risk: "write",
     spec: {
       name: "git_write",
-      description: "Operasi Git yang mengubah state: stage, unstage, commit dengan trailer Rann-Code-Session, atau buat branch. Commit ditolak saat masih ada konflik.",
+      description: "Operasi Git yang mengubah state: stage, unstage, commit, branch, worktree per task, merge dengan deteksi konflik, pull fast-forward, push tanpa force. Commit ditolak saat masih ada konflik.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["stage", "unstage", "commit", "branch_create"] },
+          action: { type: "string", enum: ["stage", "unstage", "commit", "branch_create", "worktree_create", "worktree_remove", "worktree_merge", "push", "pull"] },
           paths: { type: "array", items: { type: "string" } },
           all: { type: "boolean" },
           message: { type: "string" },
-          name: { type: "string" }
+          name: { type: "string" },
+          remote: { type: "string" },
+          branch: { type: "string" }
         },
         required: ["action"]
       }
@@ -859,6 +863,61 @@ export const tools: ToolDefinition[] = [
           throw new RannError("E_TOOL_INVALID_ARGS", "Nama branch tidak valid");
         }
         const result = await runGit(cwd, ["switch", "-c", input.name], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code };
+      }
+      if (input.action === "worktree_create") {
+        if (!input.name || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(input.name)) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "Nama worktree tidak valid");
+        }
+        const branch = input.branch ?? `rann/${input.name}`;
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch)) throw new RannError("E_TOOL_INVALID_ARGS", "Nama branch worktree tidak valid");
+        const existing = await runGit(cwd, ["worktree", "list", "--porcelain"], { signal: ctx.signal });
+        if (existing.code !== 0) throw new RannError("E_TOOL_FAILED", existing.stderr || "Gagal membaca worktree");
+        const path = `.rann/worktrees/${input.name}`;
+        if (existing.stdout.includes(`worktree ${resolveInsideWorkspace(path, ctx)}`)) {
+          throw new RannError("E_CONFLICT", `Worktree sudah ada: ${path}`);
+        }
+        const result = await runGit(cwd, ["worktree", "add", "-b", branch, path], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code, worktree: path, branch };
+      }
+      if (input.action === "worktree_remove") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "worktree_remove butuh name");
+        const path = `.rann/worktrees/${input.name}`;
+        const status = await runGit(resolveInsideWorkspace(path, ctx), ["status", "--porcelain"], { signal: ctx.signal });
+        if (status.code !== 0) throw new RannError("E_NOT_FOUND", `Worktree tidak ditemukan atau bukan repo: ${path}`);
+        if (status.stdout.trim().length > 0) throw new RannError("E_CONFLICT", `Worktree ${path} masih kotor; commit atau buang perubahan dulu`);
+        const result = await runGit(cwd, ["worktree", "remove", path], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code, removed: path };
+      }
+      if (input.action === "worktree_merge") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "worktree_merge butuh name");
+        const branch = input.branch ?? `rann/${input.name}`;
+        const status = await runGit(cwd, ["status", "--porcelain"], { signal: ctx.signal });
+        if (status.stdout.trim().length > 0) throw new RannError("E_CONFLICT", "Workspace utama kotor; commit atau stash dulu sebelum merge");
+        const result = await runGit(cwd, ["merge", "--no-ff", "--no-edit", branch], { signal: ctx.signal });
+        const conflicts = await runGit(cwd, ["diff", "--name-only", "--diff-filter=U"], { signal: ctx.signal });
+        const files = conflicts.stdout.trim().split("\n").filter(Boolean);
+        if (result.code !== 0 && files.length > 0) {
+          return { ok: false, output: result, exitCode: result.code, conflicts: files, merge_in_progress: true, hint: "Selesaikan konflik manual lalu commit, atau jalankan git merge --abort." };
+        }
+        return { ok: result.code === 0, output: result, exitCode: result.code, conflicts: files };
+      }
+      if (input.action === "pull") {
+        const remote = input.remote ?? "origin";
+        const branch = input.branch ?? (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], { signal: ctx.signal })).stdout.trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(remote) || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch)) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "remote atau branch tidak valid");
+        }
+        const result = await runGit(cwd, ["pull", "--ff-only", remote, branch], { signal: ctx.signal });
+        return { ok: result.code === 0, output: result, exitCode: result.code };
+      }
+      if (input.action === "push") {
+        const remote = input.remote ?? "origin";
+        const branch = input.branch ?? (await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], { signal: ctx.signal })).stdout.trim();
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(remote) || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch)) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "remote atau branch tidak valid");
+        }
+        const result = await runGit(cwd, ["push", remote, branch], { signal: ctx.signal });
         return { ok: result.code === 0, output: result, exitCode: result.code };
       }
       if (!input.message) throw new RannError("E_TOOL_INVALID_ARGS", "commit butuh message");

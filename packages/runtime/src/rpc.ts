@@ -70,7 +70,11 @@ import {
   updateSubagent,
   type Db,
   type JobRow,
-  type SessionRow
+  type SessionRow,
+  latestCheckpoint,
+  createBackup,
+  gcStorage,
+  listBackups
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
@@ -155,6 +159,8 @@ export class RpcServer {
   private readonly eventListeners = new Set<(event: EventEnvelope) => void>();
   private readonly startedAt = Date.now();
   private watchdog?: NodeJS.Timeout;
+  private healthTimer?: NodeJS.Timeout;
+  private dailyBackupTimer?: NodeJS.Timeout;
   recoveredTurns: ReturnType<typeof recoverInterruptedTurns> = [];
   private closing = false;
 
@@ -209,6 +215,8 @@ export class RpcServer {
         return () => this.eventListeners.delete(listener);
       }
     });
+    this.startHealthProbes();
+    this.startDailyBackup();
     this.messaging = new MessagingService({
       db: this.db,
       config: options.config.config,
@@ -223,6 +231,64 @@ export class RpcServer {
 
   get database(): Db {
     return this.db;
+  }
+
+  private startDailyBackup(): void {
+    if (!this.options.config.config.storage.daily_backup) return;
+    const run = (): void => {
+      const latest = listBackups(this.options.layout.backupsDir)[0];
+      if (latest && Date.now() - Date.parse(latest.created_at) < 20 * 60 * 60 * 1_000) return;
+      try {
+        const info = createBackup(this.options.layout.dbPath, this.options.layout.backupsDir, this.options.config.config.storage.retention_days);
+        const gc = gcStorage(this.db, this.options.config.config.storage.retention_days, this.options.layout.artifactsDir);
+        appendAudit(this.db, { actor: "system", action: "backup.daily", resource: info.path, decision: "allow", metadata: { size: info.size, gc } });
+      } catch (error) {
+        process.stderr.write(`backup harian gagal: ${(error as Error).message}\n`);
+      }
+    };
+    run();
+    this.dailyBackupTimer = setInterval(run, 60 * 60 * 1_000);
+    this.dailyBackupTimer.unref();
+  }
+
+  private startHealthProbes(): void {
+    const tick = async (): Promise<void> => {
+      const config = this.options.config.config;
+      const names = Object.keys(config.providers).filter((name) => name !== "mock");
+      await Promise.allSettled(names.map(async (name) => {
+        const providerConfig = config.providers[name];
+        if (!providerConfig) return;
+        const hasKey = Boolean(
+          providerConfig.api_key_ref ||
+          (providerConfig.api_key_env && process.env[providerConfig.api_key_env]) ||
+          (providerConfig.api_key_file && existsSync(providerConfig.api_key_file))
+        );
+        if (!hasKey) {
+          providerHealth.recordProbe(name, false, 0, new RannError("E_PROVIDER_AUTH", "Kredensial belum tersedia"));
+          return;
+        }
+        const started = Date.now();
+        try {
+          const provider = createProvider(name, providerConfig, process.env, this.secrets);
+          for await (const _chunk of provider.chat({
+            model: resolveModel(providerConfig),
+            messages: [{ role: "user", content: "OK" }],
+            maxTokens: 4,
+            signal: AbortSignal.timeout(15_000)
+          })) {
+            // cukup satu probe; stream ditutup setelah chunk pertama oleh provider
+            break;
+          }
+          providerHealth.recordProbe(name, true, Date.now() - started);
+        } catch (error) {
+          const err = error instanceof RannError ? error : new RannError("E_PROVIDER_UNAVAILABLE", (error as Error).message);
+          providerHealth.recordProbe(name, false, Date.now() - started, err);
+        }
+      }));
+    };
+    this.healthTimer = setInterval(() => { void tick(); }, 60_000);
+    this.healthTimer.unref();
+    void tick();
   }
 
   async listen(): Promise<void> {
@@ -620,6 +686,24 @@ export class RpcServer {
         });
         return input.page === "gateway" ? { ...result, status: this.gateway.status() } : result;
       }
+      case "mcp.list":
+        return Object.entries(this.options.config.config.mcp.servers).map(([name, server]) => ({
+          name,
+          transport: server.transport ?? (server.url ? "http" : "stdio"),
+          target: server.url ?? [server.command, ...(server.args ?? [])].join(" "),
+          enabled: server.enabled,
+          timeout_ms: server.timeout_ms
+        }));
+      case "mcp.test": {
+        const tools = await this.mcp.listTools();
+        const name = typeof input.name === "string" ? input.name : undefined;
+        return tools
+          .filter((tool) => !name || tool.name.startsWith(`mcp__${name}__`))
+          .map((tool) => ({ name: tool.name, description: tool.description }));
+      }
+      case "mcp.reload":
+        await this.mcp.close();
+        return { reloaded: true };
       case "gateway.status":
         return this.gateway.status();
       case "gateway.start":
@@ -716,6 +800,18 @@ export class RpcServer {
           bytes: item.bytes
         }));
       }
+      case "checkpoint.latest": {
+        const checkpoint = latestCheckpoint(this.db, input.sessionId as string);
+        if (!checkpoint) return null;
+        return {
+          id: checkpoint.id,
+          turn_id: checkpoint.turn_id,
+          label: checkpoint.label,
+          kind: checkpoint.kind,
+          created_at: checkpoint.created_at,
+          state: safeJson(checkpoint.state_json)
+        };
+      }
       case "checkpoint.restore": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) throw new RannError("E_TOOL_FAILED", "Direktori checkpoint tidak tersedia");
@@ -764,6 +860,16 @@ export class RpcServer {
           metadata: { provider: meta.provider ?? null }
         });
         return meta;
+      }
+      case "secret.export": {
+        const target = this.secrets.exportEncrypted(input.path as string);
+        appendAudit(this.db, { actor: "user", action: "secret.export", resource: target, decision: "allow", metadata: {} });
+        return { path: target };
+      }
+      case "secret.rotate": {
+        this.secrets.rotateMasterKey();
+        appendAudit(this.db, { actor: "user", action: "secret.rotate", resource: "vault", decision: "allow", metadata: {} });
+        return { rotated: true };
       }
       case "secret.remove": {
         const removed = this.secrets.remove(input.name as string);
@@ -1135,14 +1241,15 @@ export class RpcServer {
     turnId: string,
     tool: string,
     args: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    reason?: string
   ): Promise<ApprovalDecision> {
     const requestId = newId("req");
     const event = appendEvent(this.db, {
       type: "approval.request",
       sessionId,
       turnId,
-      data: { request_id: requestId, tool, args: redactSecrets(args) }
+      data: { request_id: requestId, tool, args: redactSecrets(args), ...(reason ? { reason } : {}) }
     });
     this.broadcast(event);
 
@@ -1346,7 +1453,7 @@ export class RpcServer {
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
       preApprovedPatterns: approvalPatterns,
-      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal),
+      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal, request.reason),
       ...(config.hooks.length > 0
         ? {
             hooks: new HookRunner(config.hooks, {
@@ -1728,7 +1835,7 @@ export class RpcServer {
         .filter(Boolean)
         .join("\n"),
       requestApproval: (request) =>
-        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal),
+        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal, request.reason),
       ...(config.hooks.length > 0
         ? {
             hooks: new HookRunner(config.hooks, {
@@ -1948,6 +2055,8 @@ export class RpcServer {
     if (this.closing) return;
     this.closing = true;
     if (this.watchdog) clearInterval(this.watchdog);
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    if (this.dailyBackupTimer) clearInterval(this.dailyBackupTimer);
     await this.messaging.stop();
     await this.gateway.stop();
     this.scheduler.stop();

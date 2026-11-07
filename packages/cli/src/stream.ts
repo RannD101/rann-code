@@ -26,6 +26,8 @@ export interface StreamResult {
   steps: number;
   usage: StreamUsage;
   costUsd?: number | null;
+  durationMs: number;
+  plan?: Record<string, unknown>;
   error?: StreamError;
 }
 
@@ -33,6 +35,7 @@ export interface ApprovalRequest {
   requestId: string;
   tool: string;
   args: unknown;
+  reason?: string;
 }
 
 export interface ApprovalDecision {
@@ -98,10 +101,12 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
   const turnId = sent.turnId;
 
   return await new Promise<StreamResult>((resolve, reject) => {
+    const startedAt = Date.now();
     const markdown = format === "text" ? new MarkdownStream() : undefined;
     let pendingApproval = false;
     let pendingError: StreamError | undefined;
     let collected = "";
+    let planDraft: Record<string, unknown> | undefined;
     let costUsd: number | null | undefined;
     let pendingText = "";
     let flushTimer: NodeJS.Timeout | undefined;
@@ -169,6 +174,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         text: collected,
         steps: 0,
         usage: { inputTokens: 0, outputTokens: 0 },
+        durationMs: Date.now() - startedAt,
         error: { code: "E_STREAM_TRUNCATED", message: "Koneksi ke daemon terputus sebelum turn selesai" }
       });
     });
@@ -177,7 +183,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       const requestId = String(event.data.request_id ?? "");
       const tool = String(event.data.tool ?? "tool");
       const args = event.data.args;
-      emit({ type: "approval.request", turn_id: turnId, request_id: requestId, tool, args });
+      const reason = typeof event.data.reason === "string" ? event.data.reason : undefined;
+      emit({ type: "approval.request", turn_id: turnId, request_id: requestId, tool, args, ...(reason ? { reason } : {}) });
       if (!requestId || !options.onApproval) {
         if (requestId) {
           await client.request("permission.respond", { requestId, approved: false }).catch(() => undefined);
@@ -281,6 +288,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "plan.update") {
+        if (event.data.draft && typeof event.data.draft === "object") planDraft = event.data.draft as Record<string, unknown>;
         if (typeof event.data.tasks === "number") planTotal = event.data.tasks;
         if (format === "text" && typeof event.data.status === "string") {
           const total = planTotal > 0 ? ` ${planTotal} langkah` : "";
@@ -342,6 +350,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           steps,
           usage,
           costUsd,
+          durationMs: Date.now() - startedAt,
+          ...(planDraft ? { plan: planDraft } : {}),
           error: ok ? undefined : pendingError
         });
         return;
@@ -356,7 +366,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         const finalText = typeof event.data.text === "string" ? event.data.text : collected;
         emit({ type: "turn.end", turn_id: turnId, ok: true, steps, usage, text: finalText });
         cleanup();
-        resolve({ ok: true, turnId, text: finalText, steps, usage, costUsd });
+        resolve({ ok: true, turnId, text: finalText, steps, usage, costUsd, durationMs: Date.now() - startedAt, ...(planDraft ? { plan: planDraft } : {}) });
         return;
       }
       if (event.type === "turn.failed") {
@@ -377,6 +387,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           text: collected,
           steps: 0,
           usage: { inputTokens: 0, outputTokens: 0 },
+          durationMs: Date.now() - startedAt,
+          ...(planDraft ? { plan: planDraft } : {}),
           error: { code, message, ...(typeof analysis.category === "string" ? { category: analysis.category } : {}), ...(action ? { action } : {}) }
         });
       }

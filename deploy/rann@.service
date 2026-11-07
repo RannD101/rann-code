@@ -1,0 +1,33 @@
+[Unit]
+Description=Rann Code daemon untuk user %i
+Documentation=https://github.com/RannD101/rann-code
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Unit template system-level. Aktifkan dengan:
+#   sudo systemctl enable --now rann@namauser
+# User dan home harus sudah ada.
+# Kalau Node dipasang lewat nvm, ganti ExecStart dengan path node dan
+# daemon-main.js dari: npm root -g
+User=%i
+Group=%i
+ExecStart=/usr/local/bin/rannd
+Environment=HOME=/home/%i
+Environment=RANN_HOME=/home/%i/.rann
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/%i
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=no
+
+[Install]
+WantedBy=multi-user.target

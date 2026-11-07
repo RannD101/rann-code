@@ -9,6 +9,7 @@ export interface ProviderHealth {
   lastCheckedAt: number;
   retryAfterMs?: number;
   openUntil?: number;
+  latencyMs?: number;
 }
 
 const FAILURE_WINDOW_MS = 60_000;
@@ -31,8 +32,34 @@ export class HealthRegistry {
     return state.openUntil !== undefined && state.openUntil > Date.now();
   }
 
-  recordSuccess(name: string): void {
-    this.states.set(name, { status: "healthy", failures: 0, lastCheckedAt: Date.now() });
+  retryAfter(name: string): number {
+    const state = this.get(name);
+    if (state.retryAfterMs === undefined) return 0;
+    return Math.max(0, state.lastCheckedAt + state.retryAfterMs - Date.now());
+  }
+
+  isCoolingDown(name: string): boolean {
+    return this.isOpen(name) || this.retryAfter(name) > 0;
+  }
+
+  recordSuccess(name: string, latencyMs?: number): void {
+    this.states.set(name, {
+      status: "healthy",
+      failures: 0,
+      lastCheckedAt: Date.now(),
+      ...(latencyMs !== undefined ? { latencyMs } : {})
+    });
+  }
+
+  recordProbe(name: string, ok: boolean, latencyMs: number, error?: RannError): void {
+    if (ok) {
+      this.recordSuccess(name, latencyMs);
+      return;
+    }
+    const failed = error ?? new RannError("E_PROVIDER_UNAVAILABLE", "Health probe gagal");
+    this.recordFailure(name, failed);
+    const current = this.get(name);
+    this.states.set(name, { ...current, latencyMs });
   }
 
   recordFailure(name: string, error: RannError): void {

@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { randomBytes, scryptSync } from "node:crypto";
 import { join } from "node:path";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
@@ -26,6 +27,41 @@ interface VaultFile {
 export interface SecretStoreOptions {
   dir: string;
   passphrase?: string;
+  keychain?: boolean;
+  account?: string;
+}
+
+function keychainRead(account: string): Uint8Array | null {
+  try {
+    if (process.platform === "darwin") {
+      const value = execFileSync("security", ["find-generic-password", "-s", "rann-code", "-a", account, "-w"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      return value ? new Uint8Array(Buffer.from(value, "base64")) : null;
+    }
+    if (process.platform === "linux") {
+      const value = execFileSync("secret-tool", ["lookup", "service", "rann-code", "account", account], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      return value ? new Uint8Array(Buffer.from(value, "base64")) : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function keychainWrite(account: string, key: Uint8Array): boolean {
+  const encoded = Buffer.from(key).toString("base64");
+  try {
+    if (process.platform === "darwin") {
+      execFileSync("security", ["add-generic-password", "-U", "-s", "rann-code", "-a", account, "-w", encoded], { stdio: "ignore" });
+      return true;
+    }
+    if (process.platform === "linux") {
+      execFileSync("secret-tool", ["store", "--label", "Rann Code master key", "service", "rann-code", "account", account], { input: encoded, stdio: ["pipe", "ignore", "ignore"] });
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 /**
@@ -35,13 +71,39 @@ export interface SecretStoreOptions {
 export class SecretStore {
   private readonly dir: string;
   private readonly vaultPath: string;
-  private readonly key: Uint8Array;
+  private key: Uint8Array;
 
   constructor(options: SecretStoreOptions) {
     this.dir = options.dir;
     this.vaultPath = join(this.dir, "vault.enc");
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    this.key = options.passphrase ? this.keyFromPassphrase(options.passphrase) : this.keyFromFile();
+    this.key = options.passphrase ? this.keyFromPassphrase(options.passphrase) : this.keyFromKeychainOrFile(options.keychain !== false, options.account ?? "default");
+  }
+
+  private keyFromKeychainOrFile(useKeychain: boolean, account: string): Uint8Array {
+    const filePath = join(this.dir, "master.key");
+    const vaultExists = existsSync(this.vaultPath);
+    if (vaultExists && existsSync(filePath)) return this.keyFromFile();
+    if (vaultExists && !existsSync(filePath)) {
+      const fromKeychainOnly = useKeychain ? keychainRead(account) : null;
+      if (fromKeychainOnly) {
+        if (fromKeychainOnly.length !== 32) throw new RannError("E_CONFIG_INVALID", "Master key dari keychain OS bukan 32 byte");
+        return fromKeychainOnly;
+      }
+      throw new RannError("E_PROVIDER_AUTH", "Vault ada tetapi master key hilang. Pulihkan master.key dari backup, atau set RANN_SECRET_PASSPHRASE bila memakai passphrase. Jangan membuat master.key baru karena isi vault tidak bisa didekripsi.");
+    }
+    if (useKeychain) {
+      const fromKeychain = keychainRead(account);
+      if (fromKeychain) {
+        if (fromKeychain.length !== 32) throw new RannError("E_CONFIG_INVALID", "Master key dari keychain OS bukan 32 byte");
+        return fromKeychain;
+      }
+      if (!vaultExists && !existsSync(filePath)) {
+        const generated = new Uint8Array(randomBytes(32));
+        if (keychainWrite(account, generated)) return generated;
+      }
+    }
+    return this.keyFromFile();
   }
 
   private keyFromFile(): Uint8Array {
@@ -141,6 +203,38 @@ export class SecretStore {
 
   list(): SecretMeta[] {
     return this.read().entries.map((entry) => this.meta(entry));
+  }
+
+  exportEncrypted(destination: string): string {
+    if (!existsSync(this.vaultPath)) throw new RannError("E_NOT_FOUND", "Vault belum berisi secret");
+    copyFileSync(this.vaultPath, destination);
+    chmodSync(destination, 0o600);
+    return destination;
+  }
+
+  rotateMasterKey(): void {
+    const vault = this.read();
+    const oldKey = this.key;
+    const next = new Uint8Array(randomBytes(32));
+    const plain: Array<{ entry: VaultEntry; value: string }> = [];
+    for (const entry of vault.entries) {
+      const cipher = xchacha20poly1305(oldKey, Buffer.from(entry.nonce, "base64"));
+      plain.push({ entry, value: new TextDecoder().decode(cipher.decrypt(Buffer.from(entry.ciphertext, "base64"))) });
+    }
+    const temp = join(this.dir, "master.key.next");
+    writeFileSync(temp, next, { mode: 0o600 });
+    const previousKey = join(this.dir, "master.key.bak");
+    const currentKey = join(this.dir, "master.key");
+    if (existsSync(currentKey)) copyFileSync(currentKey, previousKey);
+    renameSync(temp, currentKey);
+    this.key = next;
+    for (const item of plain) {
+      const encrypted = this.encrypt(item.value);
+      item.entry.nonce = encrypted.nonce;
+      item.entry.ciphertext = encrypted.ciphertext;
+      item.entry.rotated = new Date().toISOString();
+    }
+    this.write(vault);
   }
 
   remove(name: string): boolean {
