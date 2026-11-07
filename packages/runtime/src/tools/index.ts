@@ -12,6 +12,8 @@ import {
   listFileCheckpoints,
   restoreFileCheckpoint
 } from "../checkpoint-files.js";
+import { applyFileTransaction, searchCode } from "../code-tools.js";
+import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
 import type { SkillStore } from "../skills.js";
@@ -144,6 +146,38 @@ const checkpointCreateSchema = z.object({
 const checkpointRestoreSchema = z.object({
   id: z.string().min(1).max(120),
   force: z.boolean().optional()
+});
+
+const repoMapSchema = z.object({
+  refresh: z.boolean().optional(),
+  max_age_ms: z.number().int().min(0).optional()
+});
+
+const searchCodeSchema = z.object({
+  query: z.string().min(1).max(2_000),
+  regex: z.boolean().optional(),
+  case_sensitive: z.boolean().optional(),
+  glob: z.string().min(1).max(500).optional(),
+  max_results: z.number().int().min(1).max(500).optional()
+});
+
+const transactionSchema = z.object({
+  changes: z
+    .array(
+      z.object({
+        path: z.string().min(1).max(4_000),
+        content: z.string().max(5_000_000),
+        expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
+      })
+    )
+    .min(1)
+    .max(100),
+  dry_run: z.boolean().optional()
+});
+
+const projectCheckSchema = z.object({
+  action: z.enum(["test", "lint", "build", "typecheck"]),
+  timeout_ms: z.number().int().min(1_000).max(600_000).optional()
 });
 
 const memorySchema = z.object({
@@ -613,6 +647,127 @@ export const tools: ToolDefinition[] = [
     }
   },
   {
+    risk: "read",
+    spec: {
+      name: "repo_map",
+      description: "Pindai struktur project: bahasa, package manager, framework, entry point, dan perintah build/test/lint. Simpan ke .rann/project-map.json.",
+      parameters: {
+        type: "object",
+        properties: {
+          refresh: { type: "boolean" },
+          max_age_ms: { type: "integer", minimum: 0 }
+        }
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(repoMapSchema, args, "repo_map");
+      const map = ensureProjectMap(ctx.workspaceRoot, {
+        refresh: input.refresh === true,
+        ...(input.max_age_ms !== undefined ? { maxAgeMs: input.max_age_ms } : {})
+      });
+      return textResult({ summary: projectMapSummary(map), map });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "search_code",
+      description: "Cari teks atau regex di seluruh workspace. Menghormati folder build, node_modules, dan .git.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          regex: { type: "boolean" },
+          case_sensitive: { type: "boolean" },
+          glob: { type: "string" },
+          max_results: { type: "integer", minimum: 1, maximum: 500 }
+        },
+        required: ["query"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(searchCodeSchema, args, "search_code");
+      return textResult(
+        searchCode(ctx.workspaceRoot, input.query, {
+          ...(input.regex !== undefined ? { regex: input.regex } : {}),
+          ...(input.case_sensitive !== undefined ? { caseSensitive: input.case_sensitive } : {}),
+          ...(input.glob ? { glob: input.glob } : {}),
+          ...(input.max_results ? { maxResults: input.max_results } : {})
+        })
+      );
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "apply_patch",
+      description: "Ubah beberapa berkas dalam satu transaksi. Semua berkas diverifikasi hash-nya sebelum ditulis; gagal berarti tidak ada perubahan.",
+      parameters: {
+        type: "object",
+        properties: {
+          changes: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+                expected_sha256: { type: "string" }
+              },
+              required: ["path", "content"]
+            }
+          },
+          dry_run: { type: "boolean" }
+        },
+        required: ["changes"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(transactionSchema, args, "apply_patch");
+      assertAllowed({ mode: ctx.permissionMode, tool: "apply_patch", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const result = applyFileTransaction(ctx.workspaceRoot, input.changes, {
+        workspaceOnly: ctx.workspaceOnly,
+        ...(input.dry_run !== undefined ? { dryRun: input.dry_run } : {})
+      });
+      return textResult(result);
+    }
+  },
+  {
+    risk: "exec",
+    spec: {
+      name: "project_check",
+      description: "Jalankan test, lint, build, atau typecheck memakai perintah yang terdeteksi dari project.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["test", "lint", "build", "typecheck"] },
+          timeout_ms: { type: "integer", minimum: 1000, maximum: 600000 }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(projectCheckSchema, args, "project_check");
+      const map = ensureProjectMap(ctx.workspaceRoot);
+      const command = map.commands[input.action];
+      if (!command) {
+        throw new RannError("E_TOOL_FAILED", `Perintah ${input.action} tidak terdeteksi`, {
+          data: { assumptions: map.assumptions, scripts: map.scripts }
+        });
+      }
+      assertAllowed({ mode: ctx.permissionMode, tool: "project_check", risk: "exec", command, approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const result = await executeTool(
+        "shell_run",
+        {
+          command,
+          ...(input.timeout_ms !== undefined ? { timeout_ms: input.timeout_ms } : {})
+        },
+        { ...ctx, approved: true }
+      );
+      return textResult({ action: input.action, command, ...result });
+    }
+  },
+  {
     risk: "exec",
     spec: {
       name: "shell_run",
@@ -817,12 +972,31 @@ export const tools: ToolDefinition[] = [
   }
 ];
 
+function aliasTool(name: string, target: string, description: string): ToolDefinition {
+  const base = tools.find((tool) => tool.spec.name === target);
+  if (!base) throw new Error(`Alias target tidak ada: ${target}`);
+  return {
+    risk: base.risk,
+    spec: { name, description, parameters: base.spec.parameters },
+    run: (args, ctx) => executeTool(target, args, ctx)
+  };
+}
+
+const aliasTools: ToolDefinition[] = [
+  aliasTool("read_file", "fs_read", "Baca berkas dengan nomor baris dan hash."),
+  aliasTool("write_file", "fs_write", "Tulis berkas dengan guard hash opsional."),
+  aliasTool("edit_file", "fs_edit", "Edit berkas dengan old_string dan new_string."),
+  aliasTool("delete_file", "fs_delete", "Pindahkan berkas ke trash internal."),
+  aliasTool("list_dir", "fs_list", "Daftar isi direktori."),
+  aliasTool("stat_file", "fs_stat", "Metadata dan hash berkas.")
+];
+
 export function toolSpecs(): ToolSpec[] {
-  return tools.map((tool) => tool.spec);
+  return [...tools, ...aliasTools].map((tool) => tool.spec);
 }
 
 export function findTool(name: string): ToolDefinition | undefined {
-  return tools.find((tool) => tool.spec.name === name);
+  return [...tools, ...aliasTools].find((tool) => tool.spec.name === name);
 }
 
 export async function executeTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {

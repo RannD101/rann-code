@@ -108,6 +108,44 @@ describe("tools", () => {
     expect(readFileSync(join(root, "catatan.txt"), "utf8")).toBe("versi awal");
   });
 
+  it("memetakan repo, mencari kode, dan menerapkan patch transaksi", async () => {
+    const root = workspace();
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "package-lock.json"), "{}", "utf8");
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "uji", main: "src/index.js", scripts: { test: "node -e \"console.log('ok')\"" } }),
+      "utf8"
+    );
+    writeFileSync(join(root, "src", "index.js"), "const hitung = 1;\n", "utf8");
+
+    const map = await executeTool("repo_map", { refresh: true }, context(root));
+    const mapOutput = map.output as { map: { package_manager: string; entry_points: string[]; commands: { test: string | null } } };
+    expect(mapOutput.map.package_manager).toBe("npm");
+    expect(mapOutput.map.entry_points).toContain("src/index.js");
+    expect(mapOutput.map.commands.test).toBe("npm run test");
+
+    const search = await executeTool("search_code", { query: "hitung" }, context(root));
+    expect((search.output as { matches: Array<{ path: string }> }).matches[0]?.path).toBe("src/index.js");
+
+    const patch = await executeTool(
+      "apply_patch",
+      {
+        changes: [
+          { path: "src/index.js", content: "const hitung = 2;\n" },
+          { path: "src/baru.js", content: "export const baru = true;\n" }
+        ]
+      },
+      context(root)
+    );
+    expect(patch.ok).toBe(true);
+    expect(readFileSync(join(root, "src", "index.js"), "utf8")).toContain("= 2");
+
+    const alias = await executeTool("read_file", { path: "src/baru.js" }, context(root));
+    expect(alias.ok).toBe(true);
+    expect((alias.output as { content: string }).content).toContain("baru = true");
+  });
+
   it("mengekspos spesifikasi tool untuk provider", () => {
     const names = toolSpecs().map((spec) => spec.name);
     expect(names).toEqual([
@@ -123,10 +161,20 @@ describe("tools", () => {
       "checkpoint_create",
       "checkpoint_list",
       "checkpoint_restore",
+      "repo_map",
+      "search_code",
+      "apply_patch",
+      "project_check",
       "shell_run",
       "memory",
       "skill",
-      "task"
+      "task",
+      "read_file",
+      "write_file",
+      "edit_file",
+      "delete_file",
+      "list_dir",
+      "stat_file"
     ]);
   });
 
