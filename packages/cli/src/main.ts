@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RannError, toRannError } from "@rann/shared";
-import { ensureLayout, resolveHome, resolveLayout, type RpcClient } from "@rann/runtime";
+import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
 import { inspectDatabase } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
@@ -531,11 +531,84 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
 
     try {
       for (;;) {
-        const line = (await rl.question(ui.cyan("› "))).trim();
+        let line = (await rl.question(ui.cyan("› "))).trim();
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
+        if (line === "/review" || line.startsWith("/review ")) {
+          const focus = line.slice(7).trim();
+          line =
+            "Lakukan code review pada perubahan yang belum di-commit di workspace ini. " +
+            "Baca diff dengan git_read, cari bug, risiko keamanan, dan pelanggaran gaya. " +
+            (focus ? `Fokus tambahan: ${focus}. ` : "") +
+            "Tulis temuan berurutan berdasarkan tingkat bahaya, sertakan path dan baris.";
+        }
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /checkpoints, /undo [id], /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /checkpoints, /undo [id], /review, /memory [kata], /remember <teks>, /forget <id>, /skills, /skill <nama>, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
+          continue;
+        }
+        if (line === "/memory" || line.startsWith("/memory ")) {
+          const query = line.slice(7).trim();
+          const entries = await client.request<MemoryView[]>(query ? "memory.search" : "memory.list", {
+            projectPath: process.cwd(),
+            ...(query ? { query, limit: 20 } : { scope: "all", limit: 30 })
+          });
+          if (entries.length === 0) print(query ? `tidak ada memori cocok "${query}"` : "belum ada memori");
+          else for (const entry of entries) print(`${entry.id}  [${entry.scope}] ${entry.text}`);
+          continue;
+        }
+        if (line.startsWith("/remember ")) {
+          const text = line.slice(10).trim();
+          if (text.length === 0) {
+            print("Pakai: /remember <teks>");
+            continue;
+          }
+          const entry = await client.request<MemoryView>("memory.add", {
+            projectPath: process.cwd(),
+            text,
+            scope: "project",
+            kind: "fact",
+            tags: []
+          });
+          print(`memori ${entry.id} disimpan`);
+          continue;
+        }
+        if (line.startsWith("/forget ")) {
+          const target = line.slice(8).trim();
+          if (target.length === 0) {
+            print("Pakai: /forget <id>");
+            continue;
+          }
+          const result = await client.request<{ removed: number }>("memory.remove", {
+            projectPath: process.cwd(),
+            id: target
+          });
+          print(result.removed > 0 ? `memori ${target} dihapus` : `memori ${target} tidak ditemukan`);
+          continue;
+        }
+        if (line === "/skills") {
+          const skills = await client.request<Array<Record<string, unknown>>>("skill.list", {
+            projectPath: process.cwd(),
+            limit: 40
+          });
+          if (skills.length === 0) print("belum ada skill");
+          else {
+            for (const skill of skills) {
+              print(`${String(skill.name)}  [${String(skill.scope)}] ${String(skill.description).slice(0, 70)}`);
+            }
+          }
+          continue;
+        }
+        if (line.startsWith("/skill ")) {
+          const name = line.slice(7).trim();
+          if (name.length === 0) {
+            print("Pakai: /skill <nama>");
+            continue;
+          }
+          const skill = await client.request<Record<string, unknown>>("skill.view", {
+            projectPath: process.cwd(),
+            name
+          });
+          print(String(skill.body ?? ""));
           continue;
         }
         if (line === "/status") {
@@ -548,7 +621,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line === "/tools") {
-          print("tool: fs_read, fs_write, fs_edit, fs_list, shell_run, memory, skill, task, mcp__<server>__<tool>");
+          print("tool: repo_map, search_code, read_file, write_file, edit_file, delete_file, list_dir, stat_file, apply_patch, project_check, shell_run, git_read, git_write, checkpoint_create, checkpoint_list, checkpoint_restore, memory, skill, task, mcp__<server>__<tool>");
           continue;
         }
         if (line === "/usage") {
@@ -1324,7 +1397,10 @@ function initCommand(): number {
   if (!existsSync(instructions)) {
     writeFileSync(instructions, "# Instruksi proyek\n\nTulis aturan yang harus diikuti agent di repo ini.\n", "utf8");
   }
+  const map = buildProjectMap(process.cwd());
+  saveProjectMap(process.cwd(), map);
   print(`project disiapkan: ${dir}`);
+  print(projectMapSummary(map));
   return 0;
 }
 
