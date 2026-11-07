@@ -34,9 +34,9 @@ describe("retry dan health", () => {
   it("membedakan error yang layak diulang", () => {
     expect(isRetryable(new RannError("E_PROVIDER_RATE_LIMIT", "429"))).toBe(true);
     expect(isRetryable(new RannError("E_PROVIDER_AUTH", "401"))).toBe(false);
-    expect(retryDelayMs(1)).toBeGreaterThanOrEqual(500);
-    expect(retryDelayMs(1)).toBeLessThanOrEqual(750);
-    expect(retryDelayMs(2)).toBeGreaterThanOrEqual(1000);
+    expect(retryDelayMs(1)).toBeGreaterThanOrEqual(1_000);
+    expect(retryDelayMs(1)).toBeLessThanOrEqual(1_250);
+    expect(retryDelayMs(2)).toBeGreaterThanOrEqual(2_000);
     expect(retryDelayMs(1, 12_000)).toBe(12_000);
   });
 

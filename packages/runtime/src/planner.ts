@@ -222,7 +222,7 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
   };
 }
 
-const HIGH_RISK = /\b(migrasi|migration|schema|drop table|hapus data|delete data|auth|kredensial|credential|secret|deploy|rilis|release|force push|production|produksi)\b/i;
+const HIGH_RISK = /\b(migrasi|migration|schema|drop|truncate|hapus data|hapus file|delete data|delete file|rm -rf|auth|kredensial|credential|secret|deploy|rilis|release|force push|production|produksi)\b/i;
 const MEDIUM_RISK = /\b(ubah|refactor|hapus|rename|ganti|install|pasang|dependensi|dependency|konfigurasi|config)\b/i;
 
 export function detectRisk(text: string): { level: RiskLevel; reason?: string } {
@@ -245,6 +245,7 @@ export function validatePlan(plan: PlanDraft): PlanValidation {
     ids.add(task.id);
     if (task.acceptance.trim().length === 0) errors.push(`task ${task.id} tanpa acceptance`);
     if ((task.description ?? "").trim().length === 0) errors.push(`task ${task.id} tanpa deskripsi`);
+    if (task.files.length === 0) errors.push(`task ${task.id} tanpa file area`);
     if (task.title.trim().length === 0) errors.push(`task ${task.id} tanpa judul`);
     const files = task.files.length;
     if (files > 20) errors.push(`task ${task.id} menyentuh ${files} file, melebihi batas 20`);

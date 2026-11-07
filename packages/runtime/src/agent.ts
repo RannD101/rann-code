@@ -1094,7 +1094,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           } catch {
             // audit tidak boleh menggagalkan tool
           }
-          const content = labelToolOutput(call.name, result.output);
+          const baseContent = labelToolOutput(call.name, result.output);
+          const content = evaluation.ok
+            ? baseContent
+            : `[EVALUASI: ${evaluation.reason}]\n${baseContent}`;
           addMessage(db, {
             sessionId: session.id,
             turnId,
@@ -1113,6 +1116,32 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             duration_ms: result.durationMs,
             summary: summary.replace(/\s+/g, " ").slice(0, 240)
           });
+          if (result.ok && (call.name === "project_check" || (call.name === "shell_run" && /\b(test|pytest|vitest|jest|go test|cargo test|npm test|pnpm test)\b/i.test(String((call.args as Record<string, unknown>).command ?? ""))))) {
+            try {
+              createCheckpoint(db, {
+                sessionId: session.id,
+                turnId,
+                label: "setelah test lulus",
+                kind: "post_tool",
+                state: {
+                  step: steps,
+                  plan_id: activePlan?.id ?? null,
+                  task_state: activePlan ? currentPlanTask(db, activePlan) ?? null : null,
+                  git_ref: initialGitRef ?? null,
+                  file_checkpoint_id: fileCheckpointId ?? null,
+                  tool: call.name
+                }
+              });
+              if (options.checkpointsDir) {
+                createFileCheckpoint(workspaceRoot, options.checkpointsDir, {
+                  label: "setelah test lulus",
+                  ...(initialGitRef ? { gitRef: initialGitRef } : {})
+                });
+              }
+            } catch {
+              // checkpoint setelah test tidak boleh menggagalkan turn
+            }
+          }
           trackGoal(result.ok ? "ok" : "error");
         };
 

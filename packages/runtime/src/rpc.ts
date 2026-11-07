@@ -1714,11 +1714,15 @@ export class RpcServer {
       costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>
         costFor(descriptor, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens),
       approvePlan: async (plan) => {
-        const decision = await this.requestApproval(sessionId, turn.id, "plan", {
-          goal: plan.goal,
-          high_risk: plan.highRisk,
-          text: plan.text
-        });
+        const decision = await this.requestApproval(
+          sessionId,
+          turn.id,
+          "plan",
+          { goal: plan.goal, high_risk: plan.highRisk, text: plan.text },
+          controller.signal,
+          plan.highRisk ? "rencana berisiko tinggi" : "persetujuan rencana",
+          plan.highRisk ? "high" : undefined
+        );
         return decision.approved;
       },
       signal: controller.signal,
