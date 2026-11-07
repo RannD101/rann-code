@@ -123,7 +123,7 @@ export class OpenAiCompatibleProvider implements Provider {
           // biarkan teks mentah
         }
         throw new RannError(statusToCode(response.status), `Provider ${this.name} membalas ${response.status}: ${detail}`, {
-          data: { status: response.status }
+          data: { status: response.status, retryAfterMs: parseRetryAfter(response.headers.get("retry-after")) }
         });
       }
 
@@ -157,6 +157,8 @@ export class OpenAiCompatibleProvider implements Provider {
       let finishReason = "stop";
       let usage: { inputTokens: number; outputTokens: number } | undefined;
       const pending = new Map<number, { id: string; name: string; args: string }>();
+      let sawDone = false;
+      let sawFinish = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -168,7 +170,10 @@ export class OpenAiCompatibleProvider implements Provider {
           const line = rawLine.trim();
           if (!line.startsWith("data:")) continue;
           const payload = line.slice(5).trim();
-          if (payload === "[DONE]") continue;
+          if (payload === "[DONE]") {
+            sawDone = true;
+            continue;
+          }
           let chunk: OpenAiStreamChunk;
           try {
             chunk = JSON.parse(payload) as OpenAiStreamChunk;
@@ -189,11 +194,18 @@ export class OpenAiCompatibleProvider implements Provider {
             if (delta.function?.arguments) current.args += delta.function.arguments;
             pending.set(index, current);
           }
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+            sawFinish = true;
+          }
           if (chunk.usage) {
             usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 };
           }
         }
+      }
+
+      if (!sawDone && !sawFinish) {
+        throw new RannError("E_STREAM_TRUNCATED", `Stream dari ${this.name} berakhir tanpa penanda selesai`);
       }
 
       for (const call of [...pending.values()]) {
@@ -210,6 +222,15 @@ export class OpenAiCompatibleProvider implements Provider {
       request.signal?.removeEventListener("abort", onAbort);
     }
   }
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  return undefined;
 }
 
 function safeJson(raw: string | undefined): unknown {

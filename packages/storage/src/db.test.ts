@@ -153,6 +153,7 @@ describe("database", () => {
       "routing_logs",
       "scheduler_jobs",
       "job_runs",
+      "jobs",
       "checkpoints",
       "artifacts",
       "path_leases",

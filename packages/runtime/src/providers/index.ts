@@ -2,23 +2,29 @@ import { readFileSync } from "node:fs";
 import { RannError, type ProviderConfig } from "@rann/shared";
 import { MockProvider } from "./mock.js";
 import { OpenAiCompatibleProvider } from "./openai.js";
+import { AnthropicProvider } from "./anthropic.js";
+import { GeminiProvider } from "./gemini.js";
+import { OpenAiResponsesProvider } from "./openai-responses.js";
 import type { Provider } from "./types.js";
+import type { SecretStore } from "@rann/storage";
 
 export * from "./types.js";
-export { MockProvider, OpenAiCompatibleProvider };
+export { MockProvider, OpenAiCompatibleProvider, AnthropicProvider, GeminiProvider, OpenAiResponsesProvider };
 
-export function createProvider(name: string, config: ProviderConfig, env: NodeJS.ProcessEnv = process.env): Provider {
+export function createProvider(
+  name: string,
+  config: ProviderConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  secrets?: SecretStore
+): Provider {
   if (config.kind === "mock") return new MockProvider();
-
-  if (config.kind === "anthropic") {
-    throw new RannError("E_UNSUPPORTED", "Adapter anthropic belum tersedia di M0. Pakai provider openai-compatible.");
-  }
 
   if (!config.base_url) {
     throw new RannError("E_CONFIG_INVALID", `Provider ${name} butuh base_url`, { data: { provider: name } });
   }
 
   let apiKey = "";
+  if (config.api_key_ref && secrets) apiKey = secrets.get(config.api_key_ref) ?? "";
   if (config.api_key_env) apiKey = env[config.api_key_env] ?? "";
   if (!apiKey && config.api_key_file) {
     try {
@@ -30,6 +36,36 @@ export function createProvider(name: string, config: ProviderConfig, env: NodeJS
   if (!apiKey) {
     throw new RannError("E_PROVIDER_AUTH", `API key provider ${name} belum diset. Isi env ${config.api_key_env ?? "<kosong>"} atau api_key_file.`, {
       data: { provider: name }
+    });
+  }
+
+  if (config.kind === "anthropic") {
+    return new AnthropicProvider({
+      name,
+      baseUrl: config.base_url,
+      apiKey,
+      headers: config.headers,
+      timeoutMs: config.timeout_ms
+    });
+  }
+
+  if (config.kind === "gemini") {
+    return new GeminiProvider({
+      name,
+      baseUrl: config.base_url,
+      apiKey,
+      headers: config.headers,
+      timeoutMs: config.timeout_ms
+    });
+  }
+
+  if (config.kind === "openai-responses") {
+    return new OpenAiResponsesProvider({
+      name,
+      baseUrl: config.base_url,
+      apiKey,
+      headers: config.headers,
+      timeoutMs: config.timeout_ms
     });
   }
 

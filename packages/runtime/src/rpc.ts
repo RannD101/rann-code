@@ -2,6 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
+  appendAudit,
   appendEvent,
   createSession,
   createTurn,
@@ -11,16 +12,21 @@ import {
   listMessages,
   listSessions,
   openDatabase,
+  recordRoutingLog,
   schemaVersion,
+  setTurnModel,
   summarizeUsage,
   touchSession,
+  SecretStore,
   type Db,
   type SessionRow
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
-import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput } from "./agent.js";
+import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
 import { createProvider, resolveModel } from "./providers/index.js";
+import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
+import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
 import { SkillStore } from "./skills.js";
 import { McpManager } from "./mcp.js";
@@ -49,6 +55,7 @@ export class RpcServer {
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sessionApprovals = new Map<string, Set<string>>();
   private readonly db: Db;
+  private readonly secrets: SecretStore;
   private readonly mcp: McpManager;
   private readonly startedAt = Date.now();
   private closing = false;
@@ -60,6 +67,10 @@ export class RpcServer {
       backupDir: options.layout.backupsDir
     });
     this.db = opened.db;
+    this.secrets = new SecretStore({
+      dir: options.layout.secretsDir,
+      ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
+    });
     this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
     this.server = createServer((socket) => this.attach(socket));
   }
@@ -192,6 +203,30 @@ export class RpcServer {
         return this.providerList();
       case "provider.test":
         return await this.providerTest(input);
+      case "secret.list":
+        return this.secrets.list();
+      case "secret.set": {
+        const meta = this.secrets.set(input.name as string, input.value as string, input.provider as string | undefined);
+        appendAudit(this.db, {
+          actor: "user",
+          action: "secret.set",
+          resource: `secret:${meta.name}`,
+          decision: "allow",
+          metadata: { provider: meta.provider ?? null }
+        });
+        return meta;
+      }
+      case "secret.remove": {
+        const removed = this.secrets.remove(input.name as string);
+        appendAudit(this.db, {
+          actor: "user",
+          action: "secret.remove",
+          resource: `secret:${input.name as string}`,
+          decision: removed ? "allow" : "not_found",
+          metadata: {}
+        });
+        return { removed };
+      }
       case "usage.summary":
         return summarizeUsage(this.db, input.sessionId as string | undefined);
       case "config.explain": {
@@ -319,6 +354,7 @@ export class RpcServer {
       profile: this.options.layout.profile,
       socket: this.options.layout.socketPath,
       database: { path: this.options.layout.dbPath, schema_version: schemaVersion(this.db) },
+      providers: providerHealth.snapshot(),
       active_turns: [...this.activeTurns.keys()]
     };
   }
@@ -354,9 +390,38 @@ export class RpcServer {
 
     const config = this.options.config.config;
     const providerConfig = providerFor(config);
-    const provider = createProvider(config.provider, providerConfig);
-    const model = (input.model as string | undefined) ?? session.model;
+    const provider = createProvider(config.provider, providerConfig, process.env, this.secrets);
+    seedRegistry(this.db, config);
+    const descriptor = resolveDescriptor(this.db, config, config.provider, (input.model as string | undefined) ?? session.model);
+    const model = descriptor.model;
+    const fallbacks: NonNullable<RunTurnOptions["fallbacks"]> = [];
+    for (const id of config.model.fallback) {
+      if (id === descriptor.id) continue;
+      const slash = id.indexOf("/");
+      const providerName = slash > 0 ? id.slice(0, slash) : config.provider;
+      const providerEntry = config.providers[providerName];
+      if (!providerEntry) continue;
+      try {
+        const candidate = resolveDescriptor(this.db, config, providerName, id);
+        fallbacks.push({
+          provider: createProvider(providerName, providerEntry, process.env, this.secrets),
+          model: candidate.model,
+          contextWindow: candidate.contextWindow,
+          maxOutputTokens: candidate.maxOutputTokens
+        });
+      } catch {
+        // provider fallback tanpa kredensial valid dilewati
+      }
+    }
     const turn = createTurn(this.db, { sessionId, idempotencyKey: input.idempotencyKey as string | undefined });
+    setTurnModel(this.db, turn.id, model);
+    recordRoutingLog(this.db, {
+      sessionId,
+      turnId: turn.id,
+      requestedModel: (input.model as string | undefined) ?? session.model,
+      selectedModel: descriptor.id,
+      reason: input.model ? "override request" : "model sesi"
+    });
 
     const controller = new AbortController();
     this.activeTurns.set(sessionId, controller);
@@ -433,6 +498,11 @@ export class RpcServer {
       mcp,
       delegate,
       planOnly: input.planOnly === true,
+      modelCapabilities: descriptor.capabilities,
+      contextWindow: descriptor.contextWindow,
+      maxOutputTokens: descriptor.maxOutputTokens,
+      fallbacks,
+      costUsd: (inputTokens, outputTokens) => costFor(descriptor, inputTokens, outputTokens),
       approvePlan: async (plan) => {
         const decision = await this.requestApproval(sessionId, turn.id, "plan", {
           goal: plan.goal,
@@ -479,7 +549,7 @@ export class RpcServer {
     this.broadcast(created);
 
     const turn = createTurn(this.db, { sessionId: child.id });
-    const provider = createProvider(config.provider, providerFor(config));
+    const provider = createProvider(config.provider, providerFor(config), process.env, this.secrets);
     const memory = config.memory.enabled
       ? new MemoryService(this.db, options.projectPath, {
           enabled: config.memory.enabled,
@@ -567,13 +637,16 @@ export class RpcServer {
   private modelList(): unknown {
     const config = this.options.config.config;
     const current = config.providers[config.provider];
+    seedRegistry(this.db, config);
     const defaultModel = resolveModel(current ?? ({ kind: "mock", models: [] } as never));
+    const descriptors = registrySnapshot(this.db, config);
     const models = new Set<string>(current?.models ?? []);
     if (defaultModel) models.add(defaultModel);
     return {
       provider: config.provider,
       default: defaultModel,
-      models: [...models]
+      models: [...models],
+      descriptors
     };
   }
 
@@ -596,7 +669,7 @@ export class RpcServer {
     const config = this.options.config.config;
     const name = (input.name as string | undefined) ?? config.provider;
     const providerConfig = providerFor(config, name);
-    const provider = createProvider(name, providerConfig);
+    const provider = createProvider(name, providerConfig, process.env, this.secrets);
     const model = (input.model as string | undefined) ?? resolveModel(providerConfig);
     const started = Date.now();
     let reply = "";

@@ -27,6 +27,9 @@ Pemakaian:
   rann providers                daftar provider dan status key
   rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
   rann provider test [nama]       uji koneksi provider dan model default
+  rann secret list               daftar secret terenkripsi (tanpa nilai)
+  rann secret set <nama> --env ENV  simpan secret dari environment
+  rann secret remove <nama>      hapus secret
   rann memory list|search|add|update|remove  kelola memori lokal
   rann skill list|view|create|remove         kelola skill lokal
   rann config get [kunci]       lihat config efektif atau satu kunci
@@ -62,6 +65,7 @@ const KNOWN_COMMANDS = new Set([
   "models",
   "providers",
   "provider",
+  "secret",
   "usage",
   "turn",
   "config",
@@ -128,6 +132,8 @@ async function main(argv: string[]): Promise<number> {
       return await configCommand(args);
     case "memory":
       return await memoryCommand(args);
+    case "secret":
+      return await secretCommand(args);
     case "skill":
       return await skillCommand(args);
     case "init":
@@ -640,6 +646,20 @@ async function modelsCommand(args: ParsedArgs): Promise<number> {
   }
   print(`provider ${data.provider}`);
   print(`default  ${data.default}`);
+  const descriptors = (data.descriptors as Array<Record<string, unknown>> | undefined) ?? [];
+  if (descriptors.length > 0) {
+    for (const descriptor of descriptors) {
+      const capabilities = Object.entries((descriptor.capabilities as Record<string, boolean>) ?? {})
+        .filter(([, enabled]) => enabled)
+        .map(([name]) => name)
+        .join(",");
+      const pricing = descriptor.pricing as Record<string, number> | undefined;
+      const price = pricing ? ` $${pricing.inputPerMTok}/${pricing.outputPerMTok} per Mtok` : " harga belum diketahui";
+      print(`- ${descriptor.id}  ctx ${descriptor.contextWindow}  out ${descriptor.maxOutputTokens}${price}`);
+      print(`  ${capabilities}`);
+    }
+    return 0;
+  }
   const models = data.models as string[];
   if (models.length === 0) print("belum ada daftar model");
   else for (const model of models) print(`- ${model}`);
@@ -830,6 +850,49 @@ function renderMemories(entries: MemoryView[]): string {
       relativeTime(entry.updated_at)
     ])
   );
+}
+
+async function secretCommand(args: ParsedArgs): Promise<number> {
+  const sub = args.subcommand ?? "list";
+  const asJson = flagBool(args, "json");
+  if (sub === "list") {
+    const secrets = await withClient((client) => client.request<Array<Record<string, unknown>>>("secret.list"));
+    if (asJson) {
+      print(JSON.stringify(secrets, null, 2));
+      return 0;
+    }
+    if (secrets.length === 0) print("belum ada secret");
+    for (const secret of secrets) {
+      print(`${secret.name}  provider=${secret.provider ?? "-"}  dibuat=${secret.created}  dipakai=${secret.lastUsed ?? "-"}`);
+    }
+    return 0;
+  }
+  if (sub === "set") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "Pakai: rann secret set <nama> --env ENV_VAR");
+    const envName = flagString(args, "env");
+    const value = envName ? process.env[envName] : await readPipedStdin();
+    if (!value) {
+      throw new RannError("E_INVALID_PARAMS", "Nilai secret kosong. Pakai --env ENV_VAR atau pipe lewat stdin.");
+    }
+    const meta = await withClient((client) =>
+      client.request<Record<string, unknown>>("secret.set", {
+        name,
+        value,
+        ...(flagString(args, "provider") ? { provider: flagString(args, "provider") } : {})
+      })
+    );
+    print(`secret ${meta.name} tersimpan (${meta.id})`);
+    return 0;
+  }
+  if (sub === "remove" || sub === "rm") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "Pakai: rann secret remove <nama>");
+    const result = await withClient((client) => client.request<{ removed: boolean }>("secret.remove", { name }));
+    print(result.removed ? `secret ${name} dihapus` : `secret ${name} tidak ditemukan`);
+    return result.removed ? 0 : 6;
+  }
+  throw new RannError("E_INVALID_PARAMS", `Subcommand secret tidak dikenal: ${sub}`);
 }
 
 async function memoryCommand(args: ParsedArgs): Promise<number> {

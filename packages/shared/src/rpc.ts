@@ -142,6 +142,13 @@ export const skillRemoveParams = z.object({
   scope: z.enum(["global", "project"]).default("project")
 });
 
+export const secretSetParams = z.object({
+  name: z.string().min(1).max(128),
+  value: z.string().min(1).max(20_000),
+  provider: z.string().min(1).max(64).optional()
+});
+export const secretRemoveParams = z.object({ name: z.string().min(1).max(128) });
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -167,7 +174,10 @@ export const methodParams = {
   "skill.list": skillListParams,
   "skill.view": skillViewParams,
   "skill.create": skillCreateParams,
-  "skill.remove": skillRemoveParams
+  "skill.remove": skillRemoveParams,
+  "secret.list": empty,
+  "secret.set": secretSetParams,
+  "secret.remove": secretRemoveParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

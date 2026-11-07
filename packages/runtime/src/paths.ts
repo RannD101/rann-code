@@ -13,6 +13,7 @@ export interface Layout {
   runDir: string;
   artifactsDir: string;
   checkpointsDir: string;
+  secretsDir: string;
   backupsDir: string;
 }
 
@@ -45,6 +46,7 @@ export function resolveLayout(home = resolveHome(), profile = process.env.RANN_P
     runDir,
     artifactsDir: join(profileDir, "artifacts"),
     checkpointsDir: join(profileDir, "checkpoints"),
+    secretsDir: join(profileDir, "secrets"),
     backupsDir: join(profileDir, "backups")
   };
 }
@@ -58,6 +60,7 @@ export function ensureLayout(layout: Layout): void {
   ensureDir(layout.logsDir);
   ensureDir(layout.artifactsDir);
   ensureDir(layout.checkpointsDir);
+  ensureDir(layout.secretsDir);
   ensureDir(layout.backupsDir);
 }
 

@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { SCHEMA_V3 } from "./schema-v3.js";
+import { SCHEMA_V4 } from "./schema-v4.js";
 
 export type Db = Database.Database;
 
@@ -222,6 +223,11 @@ END;
     version: 3,
     name: "v1-schema",
     sql: SCHEMA_V3
+  },
+  {
+    version: 4,
+    name: "model-and-jobs",
+    sql: SCHEMA_V4
   }
 ];
 

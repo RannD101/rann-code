@@ -282,12 +282,15 @@ export interface UsageInput {
   turnId?: string;
   inputTokens: number;
   outputTokens: number;
-  costUsd?: number;
+  costUsd?: number | null;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  providerRequestId?: string;
 }
 
 export function recordUsage(db: Db, input: UsageInput): void {
   db.prepare(
-    "INSERT INTO usage_events (id, provider, model, session_id, turn_id, input_tokens, output_tokens, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO usage_events (id, provider, model, session_id, turn_id, input_tokens, output_tokens, cost_usd, cache_read_tokens, cache_write_tokens, provider_request_id, cost_source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     newId("evt"),
     input.provider,
@@ -297,6 +300,10 @@ export function recordUsage(db: Db, input: UsageInput): void {
     input.inputTokens,
     input.outputTokens,
     input.costUsd ?? 0,
+    input.cacheReadTokens ?? 0,
+    input.cacheWriteTokens ?? 0,
+    input.providerRequestId ?? null,
+    input.costUsd === null || input.costUsd === undefined ? "unknown" : "known",
     now()
   );
 }

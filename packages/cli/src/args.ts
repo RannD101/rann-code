@@ -5,7 +5,7 @@ export interface ParsedArgs {
   flags: Record<string, string | boolean | string[]>;
 }
 
-const SUBCOMMAND_COMMANDS = new Set(["daemon", "config", "provider", "db", "memory", "skill"]);
+const SUBCOMMAND_COMMANDS = new Set(["daemon", "config", "provider", "db", "memory", "skill", "secret"]);
 
 const VALUE_FLAGS = new Set([
   "prompt",
@@ -31,7 +31,8 @@ const VALUE_FLAGS = new Set([
   "description",
   "body-file",
   "body",
-  "project"
+  "project",
+  "env"
 ]);
 
 function setFlag(flags: ParsedArgs["flags"], key: string, value: string | boolean): void {

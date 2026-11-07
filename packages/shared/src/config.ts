@@ -5,10 +5,11 @@ import { z } from "zod";
 import { RannError } from "./errors.js";
 
 export const providerConfigSchema = z.object({
-  kind: z.enum(["openai-compatible", "anthropic", "mock"]).default("openai-compatible"),
+  kind: z.enum(["openai-compatible", "openai-chat", "openai-responses", "anthropic", "gemini", "mock"]).default("openai-compatible"),
   base_url: z.string().url().optional(),
   api_key_env: z.string().min(1).optional(),
   api_key_file: z.string().min(1).optional(),
+  api_key_ref: z.string().min(1).optional(),
   default_model: z.string().min(1).optional(),
   models: z.array(z.string().min(1)).default([]),
   timeout_ms: z.number().int().positive().max(600_000).default(120_000),
@@ -33,6 +34,18 @@ export const configSchema = z.object({
     .default({}),
   provider: z.string().min(1).default("mock"),
   providers: z.record(providerConfigSchema).default({}),
+  models: z
+    .record(
+      z.object({
+        context_window: z.number().int().positive().max(10_000_000).optional(),
+        max_output_tokens: z.number().int().positive().max(1_000_000).optional(),
+        capabilities: z.record(z.boolean()).default({}),
+        input_price: z.number().nonnegative().optional(),
+        output_price: z.number().nonnegative().optional(),
+        aliases: z.array(z.string()).default([])
+      })
+    )
+    .default({}),
   permissions: permissionsSchema.default({}),
   agent: z
     .object({

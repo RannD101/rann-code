@@ -24,8 +24,8 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 
 | Milestone | Isi | Status |
 | --- | --- | --- |
-| M1 | Storage, backup, restore, migrasi | berjalan |
-| M2 | Provider, router, kapabilitas model | belum |
+| M1 | Storage, backup, restore, migrasi | selesai |
+| M2 | Provider, router, kapabilitas model | berjalan |
 | M3 | CLI, command registry, streaming | belum |
 | M4 | Agent core, planner, verifier, checkpoint | belum |
 | M5 | Coding tools, Git, project map | belum |
@@ -50,6 +50,18 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 - `packages/storage/src/repos.ts`: `memory_entries` dengan `profile_id`, `project_id`, `session_id`, `confidence`, `importance`, `status`, `expires_at`, `last_used_at`, `version`.
 - `packages/shared/src/config.ts`: lapisan config `global` lalu `profile` lalu `project` lalu env lalu flag. Profil aktif dibaca dari `RANN_PROFILE` atau `config.profile`.
 - Tes: `db.test.ts` (6), `work-repos.test.ts` (4), `config.test.ts` lulus. `pnpm typecheck` lulus.
+
+### M2 provider, model, dan secret
+
+- `packages/runtime/src/models.ts`: registry descriptor model dengan 11 capability, batas context/output, harga input/output, alias, seed dari config ke DB.
+- `packages/shared/src/config.ts`: bagian `models` untuk override capability/harga per model, dan `api_key_ref` pada provider.
+- `packages/storage/src/schema-v4.ts`: migrasi 4 `model-and-jobs`, kolom model/biaya pada turn dan usage, tabel `jobs`.
+- `packages/runtime/src/agent.ts`: capability gate, cek context window, fallback provider, retry sebelum chunk pertama, health provider, biaya per usage.
+- `packages/runtime/src/providers/`: adapter `anthropic`, `gemini`, `openai-responses`, parser SSE bersama, factory 5 jenis provider, skenario mock.
+- `packages/storage/src/secrets.ts`: vault XChaCha20-Poly1305, kunci 0600 atau passphrase scrypt, audit untuk set/remove, CLI `rann secret`.
+- Tes: `models.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 83 tes.
+
+Sisa M2: budget/quota provider dan pemakaian proxy pool per koneksi.
 
 ## Aturan
 

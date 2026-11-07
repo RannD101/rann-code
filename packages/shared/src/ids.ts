@@ -42,7 +42,11 @@ export type IdPrefix =
   | "art"
   | "txn"
   | "fc"
-  | "ag";
+  | "ag"
+  | "prov"
+  | "mdl"
+  | "route"
+  | "jbr";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

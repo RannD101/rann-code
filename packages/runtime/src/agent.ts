@@ -14,6 +14,8 @@ import {
 } from "@rann/storage";
 import { RannError, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
+import type { ModelCapabilities } from "./models.js";
+import { providerHealth, retryStream } from "./providers/retry.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
 import { loadInstructions } from "./instructions.js";
@@ -88,6 +90,11 @@ export interface RunTurnOptions {
   taskClass?: TaskClass;
   planOnly?: boolean;
   approvePlan?: (plan: { goal: string; highRisk: boolean; text: string }) => Promise<boolean>;
+  modelCapabilities?: ModelCapabilities;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  fallbacks?: Array<{ provider: Provider; model: string; contextWindow: number; maxOutputTokens: number }>;
+  costUsd?: (inputTokens: number, outputTokens: number) => number | null;
   emit?: (event: EventEnvelope) => void;
 }
 
@@ -264,6 +271,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let compactedAny = false;
   let lastCompactionKey = "";
   let prematureCount = 0;
+  let usedProviderName = provider.name;
+  let usedModel = model;
 
   const finalize = (status: "done" | "failed" | "cancelled", error?: { code: RannError["code"]; message: string }): void => {
     if (finished) return;
@@ -345,8 +354,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         addMessage(db, { sessionId: session.id, turnId, role: "assistant", content: markdown });
         publish("message.end", { chars: markdown.length, plan_only: true });
         recordUsage(db, {
-          provider: provider.name,
-          model,
+          provider: usedProviderName,
+          model: usedModel,
           sessionId: session.id,
           turnId,
           inputTokens: usage.inputTokens,
@@ -380,7 +389,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     memoryPrompt.text,
     skillCatalog,
     planText
-  );
+  ) + (options.modelCapabilities?.toolCalling === false
+    ? "\n\nCatatan: model ini tidak mendukung tool calling. Jangan mengaku sudah menjalankan tool; jawab dengan pengetahuan dan minta user menjalankan perintah manual bila perlu."
+    : "");
 
   const delegate = options.delegate
     ? async (input: DelegateInput): Promise<unknown> => {
@@ -410,12 +421,14 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
   }
 
-  const specs = toolSpecs().filter((spec) => {
-    if (spec.name === "memory") return options.memory !== undefined;
-    if (spec.name === "skill") return options.skills !== undefined;
-    if (spec.name === "task") return delegate !== undefined;
-    return true;
-  });
+  const specs = options.modelCapabilities?.toolCalling === false
+    ? []
+    : toolSpecs().filter((spec) => {
+        if (spec.name === "memory") return options.memory !== undefined;
+        if (spec.name === "skill") return options.skills !== undefined;
+        if (spec.name === "task") return delegate !== undefined;
+        return true;
+      });
   const availableSpecs: ToolSpec[] = [...specs, ...mcpSpecs];
 
   try {
@@ -436,35 +449,95 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         }
       }
       const messages = built.messages;
+      const promptTokens = estimateTokens(messages.map((message) => message.content).join("\n"));
 
       let text = "";
       const calls: ToolCallPart[] = [];
       let finishReason = "stop";
 
-      for await (const chunk of provider.chat({
-        model,
-        messages,
-        tools: availableSpecs,
-        signal
-      })) {
-        if (chunk.type === "text") {
-          text += chunk.text;
-          publish("message.delta", { text: chunk.text });
-        } else if (chunk.type === "tool_call") {
-          calls.push({ id: chunk.id, name: chunk.name, args: chunk.args });
-        } else if (chunk.type === "usage") {
-          usage.inputTokens += chunk.inputTokens;
-          usage.outputTokens += chunk.outputTokens;
-          if (budget.maxTokensPerTurn > 0 && usage.inputTokens + usage.outputTokens > budget.maxTokensPerTurn) {
-            throw new RannError(
-              "E_BUDGET_EXHAUSTED",
-              `Budget turn habis: ${usage.inputTokens + usage.outputTokens} dari ${budget.maxTokensPerTurn} token`
-            );
+      const candidates = [
+        {
+          provider,
+          model,
+          contextWindow: options.contextWindow ?? 0,
+          maxOutputTokens: options.maxOutputTokens ?? 0
+        },
+        ...(options.fallbacks ?? [])
+      ];
+      let lastProviderError: unknown;
+      let completed = false;
+      for (const [index, candidate] of candidates.entries()) {
+        const reserve = Math.min(candidate.maxOutputTokens || 4096, 8192);
+        if (candidate.contextWindow > 0 && promptTokens + reserve > candidate.contextWindow) {
+          throw new RannError(
+            "E_CONTEXT_OVERFLOW",
+            `Konteks ${promptTokens} token + ruang jawaban ${reserve} melebihi jendela ${candidate.contextWindow} token`,
+            { data: { prompt_tokens: promptTokens, context_window: candidate.contextWindow } }
+          );
+        }
+        try {
+          for await (const chunk of retryStream(
+            () =>
+              candidate.provider.chat({
+                model: candidate.model,
+                messages,
+                tools: availableSpecs,
+                signal
+              }),
+            {
+              attempts: index === 0 ? 2 : 1,
+              signal,
+              onRetry: (attempt, error, delayMs) => {
+                publish("error", {
+                  code: error.code,
+                  message: error.message,
+                  retry_attempt: attempt,
+                  retry_in_ms: delayMs
+                });
+              }
+            }
+          )) {
+            if (chunk.type === "text") {
+              text += chunk.text;
+              publish("message.delta", { text: chunk.text });
+            } else if (chunk.type === "tool_call") {
+              calls.push({ id: chunk.id, name: chunk.name, args: chunk.args });
+            } else if (chunk.type === "usage") {
+              usage.inputTokens += chunk.inputTokens;
+              usage.outputTokens += chunk.outputTokens;
+              if (budget.maxTokensPerTurn > 0 && usage.inputTokens + usage.outputTokens > budget.maxTokensPerTurn) {
+                throw new RannError(
+                  "E_BUDGET_EXHAUSTED",
+                  `Budget turn habis: ${usage.inputTokens + usage.outputTokens} dari ${budget.maxTokensPerTurn} token`
+                );
+              }
+            } else if (chunk.type === "done") {
+              finishReason = chunk.finishReason;
+            }
           }
-        } else if (chunk.type === "done") {
-          finishReason = chunk.finishReason;
+          providerHealth.recordSuccess(candidate.provider.name);
+          usedProviderName = candidate.provider.name;
+          usedModel = candidate.model;
+          completed = true;
+          if (index > 0) {
+            publish("log", {
+              level: "info",
+              event: "provider.switch",
+              from: provider.name,
+              to: candidate.provider.name,
+              model: candidate.model,
+              reason: "primary_unavailable"
+            });
+          }
+          break;
+        } catch (error) {
+          lastProviderError = error;
+          const err = toRannError(error);
+          providerHealth.recordFailure(candidate.provider.name, err);
+          if (text.length > 0 || err.code === "E_CANCELLED" || err.code === "E_BUDGET_EXHAUSTED") throw err;
         }
       }
+      if (!completed) throw lastProviderError ?? new RannError("E_PROVIDER_UNAVAILABLE", "Semua provider gagal");
 
       if (text.length > 0) {
         addMessage(db, {
@@ -503,14 +576,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           finalText += `\n\nBelum diverifikasi:\n${verification.gaps.map((gap) => `- ${gap}`).join("\n")}`;
         }
         recordUsage(db, {
-          provider: provider.name,
-          model,
+          provider: usedProviderName,
+          model: usedModel,
           sessionId: session.id,
           turnId,
           inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens
+          outputTokens: usage.outputTokens,
+          costUsd: options.costUsd?.(usage.inputTokens, usage.outputTokens) ?? null
         });
-        publish("usage.update", { ...usage });
+        publish("usage.update", { ...usage, cost_usd: options.costUsd?.(usage.inputTokens, usage.outputTokens) ?? null });
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
         publish("turn.end", { status: "done", steps, usage, text: finalText });
         finalize("done");
@@ -631,6 +705,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     throw new RannError("E_BUDGET_EXHAUSTED", message);
   } catch (error) {
     const err = toRannError(error);
+    if (err.code === "E_PROVIDER_UNAVAILABLE" || err.code === "E_PROVIDER_RATE_LIMIT" || err.code === "E_PROVIDER_AUTH" || err.code === "E_TIMEOUT") {
+      providerHealth.recordFailure(provider.name, err);
+    }
     publish("error", { error_code: err.code, message: err.message });
     publish("turn.end", { status: err.code === "E_CANCELLED" ? "cancelled" : "failed", error_code: err.code });
     if (activePlan) {
