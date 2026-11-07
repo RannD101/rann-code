@@ -1,7 +1,7 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
-import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
+import { RannError, PROTOCOL_VERSION, explainKey, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
   appendAudit,
   appendEvent,
@@ -769,7 +769,6 @@ export class RpcServer {
       case "usage.summary":
         return summarizeUsage(this.db, input.sessionId as string | undefined);
       case "config.explain": {
-        const { explainKey } = await import("@rann/shared");
         return explainKey(this.options.config, input.key as string);
       }
       case "config.get":

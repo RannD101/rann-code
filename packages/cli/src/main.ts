@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { RannError, toRannError } from "@rann/shared";
+import { RannError, loadConfig, providerFor, toRannError } from "@rann/shared";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
 import { inspectDatabase, renderGoal, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
@@ -579,7 +579,6 @@ async function doctorCommand(args: ParsedArgs): Promise<number> {
   });
 
   try {
-    const { loadConfig, providerFor } = await import("@rann/shared");
     const loaded = loadConfig({ home: layout.home });
     const provider = providerFor(loaded.config);
     const envName = provider.api_key_env;
