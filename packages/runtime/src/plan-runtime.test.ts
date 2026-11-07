@@ -81,7 +81,7 @@ describe("plan runtime", () => {
 
     mkdirSync(join(dir, "src"), { recursive: true });
     writeFileSync(join(dir, "src", "app.ts"), "export {};", { encoding: "utf8" });
-    const call = addToolCall(db, { sessionId: session.id, turnId: turn.id, toolName: "shell", args: { command: "pnpm test" } });
+    const call = addToolCall(db, { sessionId: session.id, turnId: turn.id, toolName: "shell_run", args: { command: "pnpm test" } });
     completeToolCall(db, call.id, { status: "ok", result: { output: "ok" }, exitCode: 0, durationMs: 5 });
 
     result = verifyPlan(db, turn.id, draft, dir);

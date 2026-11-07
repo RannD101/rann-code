@@ -154,7 +154,11 @@ export function verifyPlan(
     }
     checked += 1;
     const match = tools.find(
-      (tool) => tool.tool_name === "shell" && commandMatches(tool.args_json, command) && tool.status === "ok" && (tool.exit_code ?? 0) === 0
+      (tool) =>
+        (tool.tool_name === "shell_run" || tool.tool_name === "shell") &&
+        commandMatches(tool.args_json, command) &&
+        tool.status === "ok" &&
+        (tool.exit_code ?? 0) === 0
     );
     if (!match) gaps.push(`${criterion.id}: perintah verifikasi belum berhasil: ${command}`);
   }

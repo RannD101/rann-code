@@ -535,7 +535,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tasks, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /execute <tugas>, /tasks, /cancel, /tools, /usage, /cost, /budget, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -668,6 +668,26 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line === "/cancel") {
           await client.request("session.cancel", { sessionId });
           print(ui.dim("permintaan batal dikirim"));
+          continue;
+        }
+        if (line.startsWith("/execute ")) {
+          const text = line.slice(9).trim();
+          if (text.length === 0) {
+            print(ui.red("Pakai: /execute <tugas>"));
+            continue;
+          }
+          busy = true;
+          try {
+            const result = await runStreaming(client, sessionId, text, {
+              ...(model ? { model } : {}),
+              ...(permissionMode ? { permissionMode } : {}),
+              forcePlan: true,
+              ...(onApproval ? { onApproval } : {})
+            });
+            if (!result.ok) print(ui.red("[eksekusi gagal]"));
+          } finally {
+            busy = false;
+          }
           continue;
         }
         if (line.startsWith("/plan ")) {

@@ -602,6 +602,7 @@ export class RpcServer {
       mcp,
       delegate,
       planOnly: input.planOnly === true,
+      forcePlan: input.forcePlan === true,
       modelCapabilities: descriptor.capabilities,
       contextWindow: descriptor.contextWindow,
       maxOutputTokens: descriptor.maxOutputTokens,

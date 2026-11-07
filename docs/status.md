@@ -81,15 +81,17 @@ Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan he
 
 - `packages/runtime/src/planner.ts`: skema rencana DAG, validasi siklus, kriteria selesai, dan estimasi.
 - `packages/runtime/src/plan-runtime.ts`: rencana disimpan ke `plans`, `plan_nodes`, dan `tasks`; status task dipublikasikan lewat `task.update`.
-- `packages/runtime/src/verifier.ts`: verifikasi bukti task sebelum turn ditutup; turn yang berhenti prematur dikirim ulang dengan daftar celah, maksimal dua kali.
+- `packages/runtime/src/plan-runtime.ts` (`verifyPlan`): verifikasi bukti task sebelum turn ditutup; nama tool `shell_run` sekarang dikenali, turn yang berhenti prematur dikirim ulang dengan daftar celah, maksimal dua kali.
+- `packages/runtime/src/agent.ts`: persetujuan rencana berisiko tinggi lewat `approvePlan` sebelum task pertama dijalankan.
+- `packages/shared/src/rpc.ts`: `planOnly` dan `forcePlan` tidak lagi dibuang oleh validasi params `session.send`.
 - `packages/runtime/src/agent.ts`: batas langkah, budget, checkpoint `pre_tool`, pembatalan, dan `turn.failed`.
 - `packages/runtime/src/rpc.ts`: `plan.list` dan `task.list` untuk membaca rencana serta task per sesi.
-- `packages/cli/src/main.ts`: `/tasks` menampilkan rencana dan status task, `/cancel` membatalkan turn aktif.
+- `packages/cli/src/main.ts`: `/tasks` menampilkan rencana dan status task, `/execute <tugas>` memaksa penyusunan rencana lalu eksekusi, `/cancel` membatalkan turn aktif.
 - `packages/runtime/src/failure-analysis.ts`: kategori kegagalan (auth, rate limit, timeout, budget, izin, konteks, stream, plan), sifat bisa diulang, dan saran tindakan; ikut terkirim di event `error` dan `turn.failed`.
 - `packages/cli/src/stream.ts`: menampilkan saran tindakan saat turn gagal.
-- Tes: `planner.test.ts` lulus; `verifier` dan `plan-runtime` belum punya tes sendiri. Total 107 tes (22 berkas).
+- Tes: `planner.test.ts`, `plan-runtime.test.ts`, `failure-analysis.test.ts`, `rpc.test.ts` lulus. Total 109 tes (23 berkas).
 
-Sisa M4: goal tracking eksplisit, `/execute`, dan pemulihan task setelah kill -9.
+Sisa M4: goal tracking eksplisit dan pemulihan task setelah kill -9.
 
 ## Aturan
 

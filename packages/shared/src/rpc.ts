@@ -61,7 +61,9 @@ export const sessionSendParams = z.object({
   text: z.string().min(1).max(200_000),
   model: z.string().min(1).optional(),
   permissionMode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).optional(),
-  idempotencyKey: z.string().min(8).max(200).optional()
+  idempotencyKey: z.string().min(8).max(200).optional(),
+  planOnly: z.boolean().optional(),
+  forcePlan: z.boolean().optional()
 });
 
 export const sessionCancelParams = z.object({

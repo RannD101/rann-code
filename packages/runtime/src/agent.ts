@@ -92,6 +92,7 @@ export interface RunTurnOptions {
   approved?: boolean;
   taskClass?: TaskClass;
   planOnly?: boolean;
+  forcePlan?: boolean;
   approvePlan?: (plan: { goal: string; highRisk: boolean; text: string }) => Promise<boolean>;
   modelCapabilities?: ModelCapabilities;
   contextWindow?: number;
@@ -333,7 +334,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const taskClass = options.taskClass ?? classifyTask(options.userText);
   let activePlan: ActivePlan | undefined;
   let planText = "";
-  if (options.planOnly || needsPlan(taskClass)) {
+  if (options.planOnly || options.forcePlan || needsPlan(taskClass)) {
     publish("plan.update", { status: "draft", task_class: taskClass });
     try {
       const generated = await generatePlan(
