@@ -483,7 +483,7 @@ export class RpcServer {
       }
     }
     const turn = createTurn(this.db, { sessionId, idempotencyKey: input.idempotencyKey as string | undefined });
-    setTurnModel(this.db, turn.id, model);
+    setTurnModel(this.db, turn.id, descriptor.id);
     recordRoutingLog(this.db, {
       sessionId,
       turnId: turn.id,
@@ -757,18 +757,35 @@ export class RpcServer {
 
   private providerList(): unknown {
     const config = this.options.config.config;
-    const entries = Object.entries(config.providers).map(([name, provider]) => ({
-      name,
-      kind: provider.kind,
-      base_url: provider.base_url,
-      default_model: provider.default_model,
-      models: provider.models,
-      has_key: Boolean(
-        provider.api_key_ref ||
-          (provider.api_key_env && process.env[provider.api_key_env]) ||
-          (provider.api_key_file && existsSync(provider.api_key_file))
-      )
-    }));
+    const entries = Object.entries(config.providers).map(([name, provider]) => {
+      let keyHint: string | null = null;
+      if (provider.api_key_ref) {
+        try {
+          const value = this.secrets.get(provider.api_key_ref);
+          if (value) keyHint = `****${value.slice(-4)}`;
+        } catch {
+          keyHint = null;
+        }
+      } else if (provider.api_key_env && process.env[provider.api_key_env]) {
+        const value = process.env[provider.api_key_env]!;
+        keyHint = `****${value.slice(-4)}`;
+      }
+      return {
+        name,
+        kind: provider.kind,
+        base_url: provider.base_url,
+        default_model: provider.default_model,
+        models: provider.models,
+        has_key: Boolean(
+          provider.api_key_ref ||
+            (provider.api_key_env && process.env[provider.api_key_env]) ||
+            (provider.api_key_file && existsSync(provider.api_key_file))
+        ),
+        key_hint: keyHint,
+        health: providerHealth.get(name).status,
+        retry_after_ms: providerHealth.get(name).retryAfterMs ?? null
+      };
+    });
     if (!config.providers.mock) {
       entries.unshift({
         name: "mock",
@@ -776,7 +793,10 @@ export class RpcServer {
         base_url: undefined,
         default_model: "mock-1",
         models: ["mock-1"],
-        has_key: true
+        has_key: true,
+        key_hint: "****mock",
+        health: "unknown" as const,
+        retry_after_ms: null
       } as (typeof entries)[number]);
     }
     return entries;

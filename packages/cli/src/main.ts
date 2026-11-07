@@ -6,7 +6,7 @@ import { ensureLayout, resolveHome, resolveLayout, type RpcClient } from "@rann/
 import { inspectDatabase } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
-import { setConfigValue } from "./config-store.js";
+import { setConfigValue, unsetConfigValue } from "./config-store.js";
 import { choose, chooseWith, print, printErr, relativeTime, table, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat } from "./stream.js";
 
@@ -27,6 +27,8 @@ Pemakaian:
   rann usage                    ringkasan token, biaya, dan budget hari ini
   rann providers                daftar provider dan status key
   rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
+  rann provider login <nama> --env ENV   simpan kunci ke vault terenkripsi
+  rann provider remove <nama>     hapus kunci provider dari vault
   rann provider test [nama]       uji koneksi provider dan model default
   rann secret list               daftar secret terenkripsi (tanpa nilai)
   rann secret set <nama> --env ENV  simpan secret dari environment
@@ -533,7 +535,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tools, /usage, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tools, /usage, /cost, /budget, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -553,6 +555,24 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const rows = await client.request<Array<Record<string, unknown>>>("usage.summary", { sessionId });
           if (rows.length === 0) print("belum ada pemakaian token di sesi ini");
           else for (const row of rows) print(formatUsageRow(row));
+          continue;
+        }
+        if (line === "/cost") {
+          const rows = await client.request<Array<Record<string, unknown>>>("usage.summary", { sessionId });
+          let total = 0;
+          for (const row of rows) {
+            total += Number(row.cost_usd ?? 0);
+            print(formatUsageRow(row));
+          }
+          print(`total biaya sesi $${total.toFixed(4)}`);
+          continue;
+        }
+        if (line === "/budget") {
+          const status = await client.request<Record<string, unknown>>("budget.status", {});
+          print(`biaya hari ini $${Number(status.spent_usd_today ?? 0).toFixed(4)} dari $${Number(status.max_usd_per_day ?? 0).toFixed(2)}`);
+          print(`token hari ini ${String(status.tokens_today ?? 0)} dari ${String(status.max_tokens_per_day ?? 0)}`);
+          const unknown = Number(status.unknown_cost_events_today ?? 0);
+          if (unknown > 0) print(`biaya tidak diketahui: ${unknown} event`);
           continue;
         }
         if (line.startsWith("/new")) {
@@ -597,7 +617,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           if (name.length === 0) {
             for (const item of list) {
               const active = item.name === (model?.includes("/") ? model.split("/")[0] : undefined);
-              print(`${active ? "*" : " "} ${String(item.name)}  ${String(item.kind)}  key ${item.has_key ? "ada" : "belum"}  default ${String(item.default_model ?? "-")}`);
+              print(`${active ? "*" : " "} ${String(item.name)}  ${String(item.kind)}  key ${item.has_key ? "ada" : "belum"}  status ${String(item.health ?? "unknown")}  default ${String(item.default_model ?? "-")}`);
             }
             continue;
           }
@@ -804,14 +824,29 @@ async function providersCommand(args: ParsedArgs): Promise<number> {
     String(provider.name),
     String(provider.kind),
     provider.base_url ? String(provider.base_url) : "-",
-    provider.has_key ? "ada" : "tidak",
+    provider.key_hint ? String(provider.key_hint) : provider.has_key ? "ada" : "tidak",
+    String(provider.health ?? "unknown"),
     (provider.models as string[]).join(",") || "-"
   ]);
-  print(table(["NAMA", "TIPE", "BASE URL", "KEY", "MODEL"], rows));
+  print(table(["NAMA", "TIPE", "BASE URL", "KEY", "STATUS", "MODEL"], rows));
   return 0;
 }
 
 async function providerCommand(args: ParsedArgs): Promise<number> {
+  if (args.subcommand === "list" || args.subcommand === undefined) {
+    const list = await withClient((client) => client.request<Array<Record<string, unknown>>>("provider.list"));
+    if (flagBool(args, "json")) {
+      print(JSON.stringify(list, null, 2));
+      return 0;
+    }
+    for (const item of list) {
+      print(
+        `${String(item.name)}  ${String(item.kind)}  key ${item.has_key ? "ada" : "belum"}  ` +
+          `status ${String(item.health ?? "unknown")}  default ${String(item.default_model ?? "-")}`
+      );
+    }
+    return 0;
+  }
   if (args.subcommand === "test") {
     const name = args.positionals[0];
     const data = await withClient((client) =>
@@ -828,7 +863,49 @@ async function providerCommand(args: ParsedArgs): Promise<number> {
     }
     return 0;
   }
-  if (args.subcommand !== "add") throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider add <nama> ... atau rann provider test [nama]");
+  if (args.subcommand === "login") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider login <nama> --env ENV_VAR");
+    const list = await withClient((client) => client.request<Array<Record<string, unknown>>>("provider.list"));
+    if (!list.some((item) => item.name === name)) {
+      throw new RannError("E_INVALID_PARAMS", `Provider ${name} belum terdaftar. Jalankan rann provider add dulu.`);
+    }
+    const envName = flagString(args, "env");
+    const value = envName ? process.env[envName] : await readPipedStdin();
+    if (!value) {
+      throw new RannError("E_INVALID_PARAMS", "Nilai kunci kosong. Pakai --env ENV_VAR atau pipe lewat stdin.");
+    }
+    const ref = `${name}.api_key`;
+    await withClient((client) =>
+      client.request<Record<string, unknown>>("secret.set", { name: ref, value, provider: name })
+    );
+    const layout = homeLayout();
+    ensureLayout(layout);
+    setConfigValue(layout.home, `providers.${name}.api_key_ref`, ref);
+    await stopDaemonForConfig();
+    print(`kunci ${name} tersimpan di vault, akhiran ****${value.slice(-4)}`);
+    return 0;
+  }
+  if (args.subcommand === "remove" || args.subcommand === "rm") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider remove <nama>");
+    const data = await withClient((client) => client.request<Record<string, unknown>>("config.get"));
+    const config = (data.config as Record<string, unknown> | undefined) ?? data;
+    const providers = (config.providers as Record<string, Record<string, unknown>> | undefined) ?? {};
+    const entry = providers[name];
+    if (!entry) throw new RannError("E_INVALID_PARAMS", `Provider ${name} belum terdaftar`);
+    const ref = typeof entry.api_key_ref === "string" ? entry.api_key_ref : `${name}.api_key`;
+    const removed = await withClient((client) =>
+      client.request<{ removed: boolean }>("secret.remove", { name: ref })
+    );
+    const layout = homeLayout();
+    ensureLayout(layout);
+    const unset = unsetConfigValue(layout.home, `providers.${name}.api_key_ref`);
+    await stopDaemonForConfig();
+    print(removed.removed || unset ? `kunci ${name} dihapus` : `tidak ada kunci tersimpan untuk ${name}`);
+    return 0;
+  }
+  if (args.subcommand !== "add") throw new RannError("E_INVALID_PARAMS", "Pakai: rann provider add <nama> ..., rann provider login <nama>, rann provider remove <nama>, atau rann provider test [nama]");
   const name = args.positionals[0];
   if (!name) throw new RannError("E_INVALID_PARAMS", "Nama provider wajib diisi");
   const baseUrl = flagString(args, "base-url");

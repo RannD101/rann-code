@@ -24,6 +24,7 @@ export interface TurnRow {
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   idempotency_key: string | null;
   usage_json: string | null;
+  model: string | null;
   error_code: string | null;
   error_message: string | null;
   started_at: number | null;

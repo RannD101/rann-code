@@ -13,6 +13,39 @@ function sectionOf(keyPath: string[]): string {
   return keyPath.slice(0, -1).join(".");
 }
 
+export function unsetConfigValue(home: string, key: string): boolean {
+  const parts = key.split(".").filter(Boolean);
+  if (parts.length === 0) throw new RannError("E_INVALID_PARAMS", "Kunci config kosong");
+  const keyName = parts[parts.length - 1]!;
+  const section = sectionOf(parts);
+  const path = join(home, "config", "config.toml");
+  let lines: string[];
+  try {
+    lines = readFileSync(path, "utf8").split("\n");
+  } catch {
+    return false;
+  }
+  let current = "";
+  let removed = false;
+  const output: string[] = [];
+  for (const line of lines) {
+    const header = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+    if (header) {
+      current = header[1] ?? "";
+      output.push(line);
+      continue;
+    }
+    const assignment = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line);
+    if (assignment && current === section && assignment[1] === keyName) {
+      removed = true;
+      continue;
+    }
+    output.push(line);
+  }
+  if (removed) writeFileSync(path, output.join("\n"), { mode: 0o600 });
+  return removed;
+}
+
 export function setConfigValue(home: string, key: string, rawValue: string): void {
   const parts = key.split(".").filter(Boolean);
   if (parts.length === 0) throw new RannError("E_INVALID_PARAMS", "Kunci config kosong");
