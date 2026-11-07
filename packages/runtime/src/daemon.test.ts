@@ -23,7 +23,7 @@ describe("daemon dan RPC", () => {
         const timer = setTimeout(() => reject(new Error("turn tidak selesai dalam 10 detik")), 10_000);
         client.onEvent((event) => {
           events.push(event);
-          if (event.type === "turn.completed") {
+          if (event.type === "turn.end") {
             clearTimeout(timer);
             resolve();
           }
@@ -79,14 +79,14 @@ describe("daemon dan RPC", () => {
         new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("turn tidak selesai")), 10_000);
           const off = client.onEvent((event) => {
-            if (event.type === "approval.requested") {
+            if (event.type === "approval.request") {
               approvals += 1;
               const requestId = String(event.data.request_id ?? "");
               void client
                 .request("permission.respond", { requestId, approved: true, remember: true })
                 .catch(() => undefined);
             }
-            if (event.type === "turn.completed" || event.type === "turn.failed") {
+            if (event.type === "turn.end") {
               clearTimeout(timer);
               off();
               resolve();
@@ -132,12 +132,12 @@ describe("daemon dan RPC", () => {
         new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("turn tidak selesai")), 10_000);
           const off = client.onEvent((event) => {
-            if (event.type === "approval.requested") {
+            if (event.type === "approval.request") {
               approvals += 1;
               const requestId = String(event.data.request_id ?? "");
               void client.request("permission.respond", { requestId, approved: false }).catch(() => undefined);
             }
-            if (event.type === "turn.completed" || event.type === "turn.failed") {
+            if (event.type === "turn.end") {
               clearTimeout(timer);
               off();
               resolve();
@@ -195,7 +195,7 @@ describe("daemon dan RPC", () => {
         new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("turn tidak selesai")), 10_000);
           const off = client.onEvent((event) => {
-            if (event.type === "turn.completed" || event.type === "turn.failed") {
+            if (event.type === "turn.end") {
               clearTimeout(timer);
               off();
               resolve();
@@ -281,7 +281,7 @@ describe("daemon dan RPC", () => {
         const timer = setTimeout(() => reject(new Error("subagent tidak selesai")), 15_000);
         client.onEvent((event) => {
           events.push(event);
-          if (event.sessionId === session.id && (event.type === "turn.completed" || event.type === "turn.failed")) {
+          if (event.sessionId === session.id && (event.type === "turn.end")) {
             clearTimeout(timer);
             resolve();
           }
@@ -289,16 +289,16 @@ describe("daemon dan RPC", () => {
       });
       await client.request("session.send", {
         sessionId: session.id,
-        text: 'tool:task {"goal":"ringkas satu baris","label":"riset"}'
+        text: 'tool:task {"goal":"ringkas satu baris","label":"sub"}'
       });
       await done;
 
-      expect(events.some((event) => event.type === "subagent.started")).toBe(true);
-      expect(events.some((event) => event.type === "subagent.finished" && event.data.status === "ok")).toBe(true);
+      expect(events.some((event) => event.type === "agent.update")).toBe(true);
+      expect(events.some((event) => event.type === "agent.update" && event.data.status === "ok")).toBe(true);
       const sessions = await client.request<Array<{ id: string; title: string; parent_id: string | null }>>("session.list", {
         limit: 20
       });
-      const child = sessions.find((entry) => entry.id !== session.id && entry.title.includes("riset"));
+      const child = sessions.find((entry) => entry.id !== session.id && entry.title.includes("sub"));
       expect(child).toBeDefined();
       expect(child?.parent_id).toBe(session.id);
       const detail = await client.request<{ messages: Array<{ role: string; content: string }> }>("session.get", {
@@ -361,7 +361,7 @@ args = [${JSON.stringify(serverPath)}]
       const done = new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("turn MCP tidak selesai")), 15_000);
         client.onEvent((event) => {
-          if (event.sessionId === session.id && (event.type === "turn.completed" || event.type === "turn.failed")) {
+          if (event.sessionId === session.id && (event.type === "turn.end")) {
             clearTimeout(timer);
             resolve();
           }

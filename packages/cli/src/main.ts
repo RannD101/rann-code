@@ -14,6 +14,7 @@ const HELP = `rann-code ${packageVersion()}
 
 Pemakaian:
   rann "instruksi"              kirim tugas ke sesi terbaru, buat sesi baru kalau perlu
+  rann plan "instruksi"         susun rencana saja, belum menjalankan tool
   rann chat                     sesi interaktif (REPL)
   rann -p "instruksi"           sama, gaya non-interaktif
   rann send <sesi> "instruksi"  kirim ke sesi tertentu
@@ -39,6 +40,7 @@ Flag umum:
   --model <nama>        override model
   --permission <mode>   read-only | ask | accept-edits | trusted | custom
   --yes                 setujui otomatis semua permintaan tool
+  --plan                susun rencana saja, belum menjalankan tool
   --detach              jalankan turn di latar, langsung cetak id turn
   --output-format <f>   text | json | stream-json
   --json                keluaran JSON
@@ -55,6 +57,7 @@ const KNOWN_COMMANDS = new Set([
   "send",
   "resume",
   "run",
+  "plan",
   "chat",
   "models",
   "providers",
@@ -131,6 +134,11 @@ async function main(argv: string[]): Promise<number> {
       return initCommand();
     case "run": {
       const prompt = [flagString(args, "prompt"), args.positionals.join(" ").trim()].filter((part): part is string => Boolean(part)).join("\n");
+      return await runPrompt(args, prompt);
+    }
+    case "plan": {
+      const prompt = args.positionals.join(" ").trim();
+      if (prompt.length === 0) throw new RannError("E_INVALID_PARAMS", "Pakai: rann plan \"instruksi\"");
       return await runPrompt(args, prompt);
     }
     default: {
@@ -383,7 +391,8 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
         sessionId,
         text,
         ...(flagString(args, "model") ? { model: flagString(args, "model") } : {}),
-        ...(flagString(args, "permission") ? { permissionMode: flagString(args, "permission") } : {})
+        ...(flagString(args, "permission") ? { permissionMode: flagString(args, "permission") } : {}),
+        ...(flagBool(args, "plan") || args.command === "plan" ? { planOnly: true } : {})
       });
       const turnId = String(started.turnId);
       if (output === "json") {
@@ -400,6 +409,7 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
       model: flagString(args, "model"),
       permissionMode: flagString(args, "permission"),
       output,
+      planOnly: flagBool(args, "plan") || args.command === "plan",
       onApproval: makeApprovalHandler(args)
     });
     if (output === "json") {
@@ -478,7 +488,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const header = (): void => {
       print(ui.bold(`Rann Code`) + ui.dim(`  ${process.cwd()}`));
       print(ui.dim(`sesi ${sessionId}  model ${model ?? "default"}  izin ${permissionMode ?? "default"}`));
-      print(ui.dim("ketik /help untuk perintah, /exit untuk keluar"));
+      print(ui.dim("ketik /help untuk perintah, /plan <tugas> untuk rencana, /exit untuk keluar"));
     };
 
     if (process.stdin.isTTY !== true) {
@@ -513,7 +523,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /permission [mode], /tools, /usage, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /permission [mode], /plan <tugas>, /tools, /usage, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -574,6 +584,26 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line === "/sessions") {
           const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 10, projectPath: process.cwd() });
           for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
+          continue;
+        }
+        if (line.startsWith("/plan ")) {
+          const text = line.slice(6).trim();
+          if (text.length === 0) {
+            print(ui.red("Pakai: /plan <tugas>"));
+            continue;
+          }
+          busy = true;
+          try {
+            const result = await runStreaming(client, sessionId, text, {
+              ...(model ? { model } : {}),
+              ...(permissionMode ? { permissionMode } : {}),
+              planOnly: true,
+              ...(onApproval ? { onApproval } : {})
+            });
+            if (!result.ok) print(ui.red("[rencana gagal]"));
+          } finally {
+            busy = false;
+          }
           continue;
         }
         if (line.startsWith("/")) {

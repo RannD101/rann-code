@@ -34,6 +34,7 @@ export interface SendOptions {
   model?: string;
   permissionMode?: string;
   output?: OutputFormat;
+  planOnly?: boolean;
   onApproval?: (request: ApprovalRequest) => Promise<ApprovalDecision>;
 }
 
@@ -61,7 +62,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       sessionId,
       text,
       ...(options.model ? { model: options.model } : {}),
-      ...(options.permissionMode ? { permissionMode: options.permissionMode } : {})
+      ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
+      ...(options.planOnly ? { planOnly: true } : {})
     });
   } catch (error) {
     unsubscribe();
@@ -72,6 +74,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
   return await new Promise<StreamResult>((resolve, reject) => {
     let wroteText = false;
     let pendingApproval = false;
+    let pendingError: { code: string; message: string } | undefined;
     let collected = "";
     const emit = (payload: Record<string, unknown>): void => {
       if (format === "stream-json") process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -134,13 +137,13 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         }
         return;
       }
-      if (event.type === "tool.started") {
+      if (event.type === "tool.start" || event.type === "tool.started") {
         breakLine();
         if (format === "text") process.stdout.write(ui.dim(`[tool] ${String(event.data.tool)}\n`));
         emit({ type: "tool.start", turn_id: turnId, tool: String(event.data.tool), args: event.data.args });
         return;
       }
-      if (event.type === "tool.finished") {
+      if (event.type === "tool.end" || event.type === "tool.finished") {
         const status = String(event.data.status ?? "ok");
         if (format === "text") {
           const label = status === "ok" ? ui.green("ok") : ui.red(status);
@@ -149,8 +152,48 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         emit({ type: "tool.end", turn_id: turnId, tool: String(event.data.tool), status });
         return;
       }
-      if (event.type === "approval.requested") {
+      if (event.type === "plan.update") {
+        if (format === "text" && typeof event.data.status === "string") {
+          process.stdout.write(ui.dim(`[plan] ${event.data.status}${event.data.reason ? `: ${event.data.reason}` : ""}\n`));
+        }
+        emit({ type: "plan.update", turn_id: turnId, ...event.data });
+        return;
+      }
+      if (event.type === "task.update") {
+        if (format === "text" && typeof event.data.status === "string") {
+          process.stdout.write(ui.dim(`[task] ${event.data.status} ${String(event.data.title ?? "")}\n`));
+        }
+        emit({ type: "task.update", turn_id: turnId, ...event.data });
+        return;
+      }
+      if (event.type === "approval.request" || event.type === "approval.requested") {
         void askApproval(event);
+        return;
+      }
+      if (event.type === "error") {
+        pendingError = {
+          code: String(event.data.error_code ?? "E_INTERNAL"),
+          message: String(event.data.message ?? "turn gagal")
+        };
+        return;
+      }
+      if (event.type === "turn.end") {
+        breakLine();
+        const usage = readUsage(event.data.usage);
+        const steps = Number(event.data.steps ?? 0);
+        const finalText = typeof event.data.text === "string" ? event.data.text : collected;
+        const ok = String(event.data.status ?? "done") === "done";
+        if (!ok && pendingError) printErr(`${ui.red("rann")}: ${pendingError.code}: ${pendingError.message}`);
+        emit({ type: "turn.end", turn_id: turnId, ok, steps, usage, text: finalText });
+        cleanup();
+        resolve({
+          ok,
+          turnId,
+          text: finalText,
+          steps,
+          usage,
+          error: ok ? undefined : pendingError
+        });
         return;
       }
       if (event.type === "turn.completed") {

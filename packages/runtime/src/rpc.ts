@@ -273,7 +273,7 @@ export class RpcServer {
   ): Promise<ApprovalDecision> {
     const requestId = newId("req");
     const event = appendEvent(this.db, {
-      type: "approval.requested",
+      type: "approval.request",
       sessionId,
       turnId,
       data: { request_id: requestId, tool, args }
@@ -333,7 +333,7 @@ export class RpcServer {
       model,
       permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? config.permissions.mode
     });
-    const event = appendEvent(this.db, { type: "session.created", sessionId: session.id, data: { title: session.title, model: session.model } });
+    const event = appendEvent(this.db, { type: "session.updated", sessionId: session.id, data: { title: session.title, model: session.model } });
     this.broadcast(event);
     return session;
   }
@@ -432,6 +432,15 @@ export class RpcServer {
       skills,
       mcp,
       delegate,
+      planOnly: input.planOnly === true,
+      approvePlan: async (plan) => {
+        const decision = await this.requestApproval(sessionId, turn.id, "plan", {
+          goal: plan.goal,
+          high_risk: plan.highRisk,
+          text: plan.text
+        });
+        return decision.approved;
+      },
       signal: controller.signal,
       emit: (event) => this.broadcast(event)
     })
@@ -463,7 +472,7 @@ export class RpcServer {
       permissionMode: config.subagents.permission_mode
     });
     const created = appendEvent(this.db, {
-      type: "session.created",
+      type: "session.updated",
       sessionId: child.id,
       data: { title: child.title, model: child.model, parent_id: options.parent.id }
     });

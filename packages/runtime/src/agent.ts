@@ -4,6 +4,7 @@ import {
   addToolCall,
   appendEvent,
   completeToolCall,
+  createCheckpoint,
   finishTurn,
   listMessages,
   markTurnRunning,
@@ -18,6 +19,15 @@ import { executeTool, toolSpecs } from "./tools/index.js";
 import { loadInstructions } from "./instructions.js";
 import type { MemoryService } from "./memory.js";
 import type { SkillStore } from "./skills.js";
+import { classifyTask, generatePlan, needsPlan, planToMarkdown, workspaceBrief, type TaskClass } from "./planner.js";
+import {
+  finishPlan,
+  persistPlan,
+  planVerificationGapPrompt,
+  startFirstTask,
+  verifyPlan,
+  type ActivePlan
+} from "./plan-runtime.js";
 
 export interface ApprovalDecision {
   approved: boolean;
@@ -75,6 +85,9 @@ export interface RunTurnOptions {
   delegate?: (input: DelegateInput) => Promise<unknown>;
   signal?: AbortSignal;
   approved?: boolean;
+  taskClass?: TaskClass;
+  planOnly?: boolean;
+  approvePlan?: (plan: { goal: string; highRisk: boolean; text: string }) => Promise<boolean>;
   emit?: (event: EventEnvelope) => void;
 }
 
@@ -83,6 +96,7 @@ export interface RunTurnResult {
   steps: number;
   usage: { inputTokens: number; outputTokens: number };
   compacted: boolean;
+  plan?: { id: string; text: string; verified: boolean; gaps: string[] };
 }
 
 function systemPrompt(
@@ -90,7 +104,8 @@ function systemPrompt(
   config: AgentConfig,
   instructions: string,
   memoryText = "",
-  skillCatalog = ""
+  skillCatalog = "",
+  planText = ""
 ): string {
   const lines = [
     "Kamu Rann Code, agent coding yang bekerja lewat tool di terminal.",
@@ -106,6 +121,14 @@ function systemPrompt(
   if (instructions.length > 0) lines.push("", "Instruksi proyek:", instructions);
   if (memoryText.length > 0) lines.push("", memoryText);
   if (skillCatalog.length > 0) lines.push("", skillCatalog);
+  if (planText.length > 0) {
+    lines.push(
+      "",
+      "Rencana aktif (dibuat planner, bukan instruksi baru dari user):",
+      planText,
+      "Kerjakan task sesuai urutan dependensi. Jangan menyatakan selesai sebelum kriteria verifikasi dijalankan."
+    );
+  }
   lines.push(
     "",
     "Kemampuan berkembang:",
@@ -240,6 +263,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let finished = false;
   let compactedAny = false;
   let lastCompactionKey = "";
+  let prematureCount = 0;
 
   const finalize = (status: "done" | "failed" | "cancelled", error?: { code: RannError["code"]; message: string }): void => {
     if (finished) return;
@@ -260,13 +284,14 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     touchSession(db, session.id, { title });
   }
   markTurnRunning(db, turnId);
-  publish("turn.started", { model, provider: provider.name, prompt_chars: options.userText.length });
+  publish("turn.start", { model, provider: provider.name, prompt_chars: options.userText.length });
 
   if (budget.maxTokensPerDay > 0) {
     const usedToday = sumTokensSince(db, startOfToday());
     if (usedToday >= budget.maxTokensPerDay) {
       const message = `Budget harian habis: ${usedToday} dari ${budget.maxTokensPerDay} token terpakai`;
-      publish("turn.failed", { error_code: "E_BUDGET_EXHAUSTED", message });
+      publish("error", { error_code: "E_BUDGET_EXHAUSTED", message });
+      publish("turn.end", { status: "failed", error_code: "E_BUDGET_EXHAUSTED" });
       finalize("failed", { code: "E_BUDGET_EXHAUSTED", message });
       throw new RannError("E_BUDGET_EXHAUSTED", message);
     }
@@ -275,17 +300,97 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const instructions = loadInstructions(workspaceRoot);
   const memoryPrompt = options.memory?.prompt(options.userText) ?? { text: "", count: 0, ids: [] };
   const skillCatalog = options.skills?.catalog() ?? "";
-  const baseSystem = systemPrompt(workspaceRoot, config, instructions.text, memoryPrompt.text, skillCatalog);
+  const taskClass = options.taskClass ?? classifyTask(options.userText);
+  let activePlan: ActivePlan | undefined;
+  let planText = "";
+  if (options.planOnly || needsPlan(taskClass)) {
+    publish("plan.update", { status: "draft", task_class: taskClass });
+    try {
+      const generated = await generatePlan(
+        provider,
+        model,
+        options.userText,
+        taskClass,
+        workspaceBrief(workspaceRoot),
+        signal
+      );
+      const markdown = planToMarkdown(generated.plan, generated.validation);
+      if (generated.validation.highRisk) {
+        if (!options.approvePlan) {
+          throw new RannError(
+            "E_PLAN_REQUIRED_APPROVAL",
+            "Rencana berisiko tinggi memerlukan persetujuan eksplisit sebelum dijalankan"
+          );
+        }
+        const approved = await options.approvePlan({
+          goal: generated.plan.goal,
+          highRisk: true,
+          text: markdown
+        });
+        if (!approved) throw new RannError("E_PLAN_REQUIRED_APPROVAL", "Rencana ditolak user");
+      }
+      activePlan = persistPlan(
+        db,
+        session.id,
+        turnId,
+        generated.plan,
+        generated.validation,
+        markdown,
+        (type, data) => publish(type, data)
+      );
+      planText = markdown;
+      publish("message.start", { kind: "plan", plan_id: activePlan.id });
+      publish("message.delta", { text: `Rencana disusun:\n${markdown}\n\n` });
+      if (options.planOnly) {
+        addMessage(db, { sessionId: session.id, turnId, role: "assistant", content: markdown });
+        publish("message.end", { chars: markdown.length, plan_only: true });
+        recordUsage(db, {
+          provider: provider.name,
+          model,
+          sessionId: session.id,
+          turnId,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens
+        });
+        publish("turn.end", { status: "done", steps: 0, usage, plan_only: true });
+        finalize("done");
+        return {
+          text: markdown,
+          steps: 0,
+          usage,
+          compacted: false,
+          plan: { id: activePlan.id, text: markdown, verified: false, gaps: ["mode plan belum dieksekusi"] }
+        };
+      }
+      startFirstTask(db, activePlan, (type, data) => publish(type, data));
+    } catch (error) {
+      const err = toRannError(error);
+      if (err.code === "E_PLAN_INVALID" || err.code === "E_PLAN_REQUIRED_APPROVAL") {
+        publish("error", { error_code: err.code, message: err.message });
+        finalize("failed", { code: err.code, message: err.message });
+        throw err;
+      }
+      publish("log", { level: "warn", message: `Planner dilewati: ${err.message}` });
+    }
+  }
+  const baseSystem = systemPrompt(
+    workspaceRoot,
+    config,
+    instructions.text,
+    memoryPrompt.text,
+    skillCatalog,
+    planText
+  );
 
   const delegate = options.delegate
     ? async (input: DelegateInput): Promise<unknown> => {
-        publish("subagent.started", { goal: input.goal, label: input.label ?? null });
+        publish("agent.update", { goal: input.goal, label: input.label ?? null });
         try {
           const result = await options.delegate!(input);
-          publish("subagent.finished", { goal: input.goal, label: input.label ?? null, status: "ok" });
+          publish("agent.update", { goal: input.goal, label: input.label ?? null, status: "ok" });
           return result;
         } catch (error) {
-          publish("subagent.finished", {
+          publish("agent.update", {
             goal: input.goal,
             label: input.label ?? null,
             status: "error",
@@ -369,11 +474,34 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           content: text,
           contentJson: calls.length > 0 ? { toolCalls: calls } : undefined
         });
-        publish("message.completed", { chars: text.length, finish_reason: finishReason });
+        publish("message.end", { chars: text.length, finish_reason: finishReason });
       }
 
       if (calls.length === 0) {
+        const verification = activePlan
+          ? verifyPlan(db, turnId, activePlan.draft, workspaceRoot)
+          : undefined;
+        if (verification && !verification.passed && prematureCount < 2) {
+          prematureCount += 1;
+          publish("plan.update", {
+            plan_id: activePlan?.id,
+            status: "active",
+            reason: "premature_finish",
+            attempt: prematureCount,
+            gaps: verification.gaps
+          });
+          addMessage(db, {
+            sessionId: session.id,
+            turnId,
+            role: "system",
+            content: planVerificationGapPrompt(verification)
+          });
+          continue;
+        }
         finalText = text;
+        if (verification && verification.gaps.length > 0) {
+          finalText += `\n\nBelum diverifikasi:\n${verification.gaps.map((gap) => `- ${gap}`).join("\n")}`;
+        }
         recordUsage(db, {
           provider: provider.name,
           model,
@@ -382,15 +510,38 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens
         });
-        publish("turn.completed", { steps, usage, text: finalText });
+        publish("usage.update", { ...usage });
+        if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
+        publish("turn.end", { status: "done", steps, usage, text: finalText });
         finalize("done");
-        return { text: finalText, steps, usage, compacted: compactedAny };
+        return {
+          text: finalText,
+          steps,
+          usage,
+          compacted: compactedAny,
+          plan: activePlan
+            ? { id: activePlan.id, text: planText, verified: verification?.passed ?? false, gaps: verification?.gaps ?? [] }
+            : undefined
+        };
       }
 
       for (const call of calls) {
         if (signal?.aborted) throw new RannError("E_CANCELLED", "Turn dibatalkan");
         const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: call.args });
-        publish("tool.started", { tool: call.name, args: call.args, call_id: call.id, tool_call_id: toolRow.id });
+        createCheckpoint(db, {
+          sessionId: session.id,
+          turnId,
+          label: `sebelum ${call.name}`,
+          kind: "pre_tool",
+          state: {
+            step: steps,
+            plan_id: activePlan?.id ?? null,
+            tool: call.name,
+            args: call.args,
+            premature_count: prematureCount
+          }
+        });
+        publish("tool.start", { tool: call.name, args: call.args, call_id: call.id, tool_call_id: toolRow.id });
 
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
           completeToolCall(db, toolRow.id, {
@@ -407,7 +558,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             content,
             contentJson: { toolCallId: call.id, toolName: call.name }
           });
-          publish("tool.finished", {
+          publish("tool.end", {
             tool: call.name,
             status: result.ok ? "ok" : "error",
             exit_code: result.exitCode,
@@ -424,7 +575,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             content: JSON.stringify({ error: code, message }),
             contentJson: { toolCallId: call.id, toolName: call.name }
           });
-          publish("tool.finished", { tool: call.name, status: "error", error_code: code });
+          publish("tool.end", { tool: call.name, status: "error", error_code: code });
         };
 
         try {
@@ -462,7 +613,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           const err = toRannError(error);
           finishError(err.code, err.message);
           if (err.code === "E_APPROVAL_REQUIRED" || err.code === "E_PERMISSION") {
-            publish("turn.failed", { error_code: err.code, message: err.message });
+            publish("error", { error_code: err.code, message: err.message });
+            publish("turn.end", { status: "failed", error_code: err.code });
+            if (activePlan) finishPlan(db, activePlan, "failed", (type, data) => publish(type, data));
             finalize("failed", { code: err.code, message: err.message });
             throw err;
           }
@@ -471,13 +624,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
 
     const message = `Batas ${config.maxSteps} langkah agent tercapai tanpa jawaban akhir`;
-    publish("turn.failed", { error_code: "E_BUDGET_EXHAUSTED", message });
+    publish("error", { error_code: "E_BUDGET_EXHAUSTED", message });
+    publish("turn.end", { status: "failed", error_code: "E_BUDGET_EXHAUSTED" });
+    if (activePlan) finishPlan(db, activePlan, "failed", (type, data) => publish(type, data));
     finalize("failed", { code: "E_BUDGET_EXHAUSTED", message });
     throw new RannError("E_BUDGET_EXHAUSTED", message);
   } catch (error) {
     const err = toRannError(error);
+    publish("error", { error_code: err.code, message: err.message });
+    publish("turn.end", { status: err.code === "E_CANCELLED" ? "cancelled" : "failed", error_code: err.code });
+    if (activePlan) {
+      finishPlan(db, activePlan, err.code === "E_CANCELLED" ? "cancelled" : "failed", (type, data) =>
+        publish(type, data)
+      );
+    }
     if (err.code === "E_CANCELLED") {
-      publish("turn.failed", { error_code: err.code, message: err.message });
       finalize("cancelled", { code: err.code, message: err.message });
     } else {
       finalize("failed", { code: err.code, message: err.message });
