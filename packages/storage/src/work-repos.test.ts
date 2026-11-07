@@ -13,14 +13,18 @@ import {
   createSchedulerJob,
   createSession,
   createTask,
+  createTransaction,
   dueSchedulerJobs,
   findApproval,
+  finishTransaction,
   latestCheckpoint,
+  listFileChanges,
   listPlanNodes,
   listPlans,
   listTaskSteps,
   openDatabase,
   recordApproval,
+  recordFileChange,
   releasePathLease,
   updateTaskStatus,
   type Db
@@ -110,5 +114,37 @@ describe("work repositories", () => {
     createSchedulerJob(db, { name: "harian", schedule: "0 0 * * *", command: "ringkas", nextRunAt: 10 });
     createSchedulerJob(db, { name: "nanti", schedule: "0 0 * * *", command: "lain", nextRunAt: 99_999_999_999 });
     expect(dueSchedulerJobs(db, 20).map((row) => row.name)).toEqual(["harian"]);
+  });
+
+  it("mencatat transaksi dan diff perubahan berkas", () => {
+    const { db, dir } = freshDb();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    const transaction = createTransaction(db, { sessionId: session.id, summary: { tool: "fs_edit" } });
+    expect(transaction.status).toBe("open");
+    recordFileChange(db, {
+      transactionId: transaction.id,
+      sessionId: session.id,
+      path: "src/a.ts",
+      beforeHash: "a",
+      afterHash: "b",
+      beforeText: "return 1;\n",
+      afterText: "return 2;\n",
+      diffText: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-return 1;\n+return 2;\n",
+      status: "applied"
+    });
+    finishTransaction(db, transaction.id, "committed", { files: 1 });
+    const changes = listFileChanges(db, transaction.id);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ path: "src/a.ts", status: "applied" });
+    expect(changes[0]?.diff_text).toContain("+return 2;");
+  });
+
+  it("mengizinkan sesi yang sama memakai ulang lease path", () => {
+    const { db, dir } = freshDb();
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "ask" });
+    const path = join(dir, "a.txt");
+    expect(acquirePathLease(db, { path, sessionId: session.id }).ok).toBe(true);
+    expect(acquirePathLease(db, { path, sessionId: session.id }).ok).toBe(true);
+    expect(releasePathLease(db, path)).toBe(true);
   });
 });

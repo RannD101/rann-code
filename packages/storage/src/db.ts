@@ -10,6 +10,7 @@ import { SCHEMA_V7 } from "./schema-v7.js";
 import { SCHEMA_V8 } from "./schema-v8.js";
 import { SCHEMA_V9 } from "./schema-v9.js";
 import { SCHEMA_V10 } from "./schema-v10.js";
+import { SCHEMA_V11 } from "./schema-v11.js";
 
 export type Db = Database.Database;
 
@@ -264,6 +265,11 @@ END;
     version: 10,
     name: "agents",
     sql: SCHEMA_V10
+  },
+  {
+    version: 11,
+    name: "file-change-diff",
+    sql: SCHEMA_V11
   }
 ];
 

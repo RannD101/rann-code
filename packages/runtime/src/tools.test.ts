@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { acquirePathLease, createSession, listFileChanges, openDatabase } from "@rann/storage";
 import { executeTool, toolSpecs, type ToolContext } from "./tools/index.js";
 
 function workspace(): string {
@@ -40,6 +41,34 @@ describe("tools", () => {
     const list = await executeTool("fs_list", { path: ".", depth: 2 }, context(root));
     const listed = (list.output as { entries: Array<{ path: string; type: string }> }).entries;
     expect(listed.some((entry) => entry.path === "src/halo.txt" && entry.type === "file")).toBe(true);
+  });
+
+  it("mencatat edit ke transaksi dan menolak lease milik sesi lain", async () => {
+    const root = workspace();
+    const { db } = openDatabase({ path: join(root, "rann.db") });
+    try {
+      const session = createSession(db, { projectPath: root, model: "mock-1", permissionMode: "trusted" });
+      const ctx = context(root, { db, sessionId: session.id });
+      writeFileSync(join(root, "catatan.txt"), "satu\ndua\n", "utf8");
+      const edit = await executeTool("fs_edit", { path: "catatan.txt", old: "dua", new: "2" }, ctx);
+      expect(edit.ok).toBe(true);
+      const output = edit.output as { transaction_id: string; diff: string; status: string };
+      expect(output.status).toBe("updated");
+      expect(output.diff).toContain("+2");
+      const changes = listFileChanges(db, output.transaction_id);
+      expect(changes).toHaveLength(1);
+      expect(changes[0]?.path).toBe("catatan.txt");
+      expect(changes[0]?.diff_text).toContain("+2");
+
+      const other = createSession(db, { projectPath: root, model: "mock-1", permissionMode: "trusted" });
+      writeFileSync(join(root, "dikunci.txt"), "lama\n", "utf8");
+      acquirePathLease(db, { path: join(root, "dikunci.txt"), sessionId: other.id });
+      await expect(executeTool("fs_edit", { path: "dikunci.txt", old: "lama", new: "baru" }, ctx)).rejects.toMatchObject({
+        code: "E_LEASE_CONFLICT"
+      });
+    } finally {
+      db.close();
+    }
   });
 
   it("menolak path keluar workspace", async () => {

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyFileTransaction, searchCode } from "./code-tools.js";
+import { applyFileTransaction, searchCode, unifiedDiff } from "./code-tools.js";
 
 function repo(): string {
   const root = mkdtempSync(join(tmpdir(), "rann-code-tools-"));
@@ -70,5 +70,25 @@ describe("transaksi berkas", () => {
     const result = applyFileTransaction(root, [{ path: "src/a.ts", content: "ganti" }], { dryRun: true });
     expect(result.files[0]?.status).toBe("updated");
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toBe(before);
+  });
+
+  it("menghasilkan diff minimal dan menyertakan teks bila diminta", () => {
+    const root = repo();
+    const before = readFileSync(join(root, "src", "a.ts"), "utf8");
+    const after = before.replace("return 1;", "return 2;");
+    const result = applyFileTransaction(root, [{ path: "src/a.ts", content: after }], { includeText: true });
+    const file = result.files[0]!;
+    expect(file.diff).toContain("-  return 1;");
+    expect(file.diff).toContain("+  return 2;");
+    expect(file.diff.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"))).toEqual(["-  return 1;"]);
+    expect(file.before_text).toBe(before);
+    expect(file.after_text).toBe(after);
+  });
+});
+
+describe("diff terpadu", () => {
+  it("menandai berkas baru dan tidak menghasilkan diff untuk isi yang sama", () => {
+    expect(unifiedDiff("src/baru.ts", null, "a\nb\n")).toContain("--- /dev/null");
+    expect(unifiedDiff("src/a.ts", "a\nb\n", "a\nb\n")).toBe("");
   });
 });

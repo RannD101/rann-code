@@ -116,6 +116,34 @@ export interface PathLeaseRow {
   heartbeat_at: number;
 }
 
+export type TransactionStatus = "open" | "committed" | "rolled_back" | "failed";
+export type FileChangeStatus = "pending" | "applied" | "reverted" | "failed";
+
+export interface TransactionRow {
+  id: string;
+  session_id: string;
+  turn_id: string | null;
+  status: TransactionStatus;
+  summary_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface FileChangeRow {
+  id: string;
+  transaction_id: string | null;
+  session_id: string;
+  turn_id: string | null;
+  path: string;
+  before_hash: string | null;
+  after_hash: string | null;
+  before_text: string | null;
+  after_text: string | null;
+  diff_text: string | null;
+  status: FileChangeStatus;
+  created_at: number;
+}
+
 export interface AgentRow {
   id: string;
   profile_id: string;
@@ -413,7 +441,12 @@ export function acquirePathLease(
   const at = now();
   const ttl = input.ttlMs ?? 60_000;
   const existing = db.prepare("SELECT * FROM path_leases WHERE path = ?").get(input.path) as PathLeaseRow | undefined;
-  if (existing && existing.expires_at > at) return { ok: false, lease: existing };
+  if (existing && existing.expires_at > at) {
+    if (input.sessionId !== undefined && existing.session_id === input.sessionId) {
+      return { ok: true, lease: existing };
+    }
+    return { ok: false, lease: existing };
+  }
   const id = existing?.id ?? newId("lease");
   if (existing) {
     db.prepare(
@@ -432,6 +465,75 @@ export function releasePathLease(db: Db, path: string, ownerAgentId?: string): b
     ? db.prepare("DELETE FROM path_leases WHERE path = ? AND owner_agent_id = ?").run(path, ownerAgentId)
     : db.prepare("DELETE FROM path_leases WHERE path = ?").run(path);
   return result.changes > 0;
+}
+
+export function createTransaction(
+  db: Db,
+  input: { sessionId: string; turnId?: string; summary?: unknown }
+): TransactionRow {
+  const id = newId("txn");
+  const at = now();
+  db.prepare(
+    "INSERT INTO transactions (id, session_id, turn_id, status, summary_json, created_at, updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?)"
+  ).run(id, input.sessionId, input.turnId ?? null, JSON.stringify(input.summary ?? {}), at, at);
+  return db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as TransactionRow;
+}
+
+export function finishTransaction(
+  db: Db,
+  id: string,
+  status: Exclude<TransactionStatus, "open">,
+  summary?: unknown
+): void {
+  db.prepare("UPDATE transactions SET status = ?, summary_json = ?, updated_at = ? WHERE id = ?").run(
+    status,
+    JSON.stringify(summary ?? {}),
+    now(),
+    id
+  );
+}
+
+export function recordFileChange(
+  db: Db,
+  input: {
+    transactionId?: string;
+    sessionId: string;
+    turnId?: string;
+    path: string;
+    beforeHash?: string | null;
+    afterHash?: string | null;
+    beforeText?: string | null;
+    afterText?: string | null;
+    diffText?: string | null;
+    status?: FileChangeStatus;
+  }
+): FileChangeRow {
+  const id = newId("fc");
+  db.prepare(
+    `INSERT INTO file_changes
+      (id, transaction_id, session_id, turn_id, path, before_hash, after_hash, before_text, after_text, diff_text, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    input.transactionId ?? null,
+    input.sessionId,
+    input.turnId ?? null,
+    input.path,
+    input.beforeHash ?? null,
+    input.afterHash ?? null,
+    input.beforeText ?? null,
+    input.afterText ?? null,
+    input.diffText ?? null,
+    input.status ?? "pending",
+    now()
+  );
+  return db.prepare("SELECT * FROM file_changes WHERE id = ?").get(id) as FileChangeRow;
+}
+
+export function listFileChanges(db: Db, transactionId: string): FileChangeRow[] {
+  return db
+    .prepare("SELECT * FROM file_changes WHERE transaction_id = ? ORDER BY created_at ASC, id ASC")
+    .all(transactionId) as FileChangeRow[];
 }
 
 export function addArtifact(

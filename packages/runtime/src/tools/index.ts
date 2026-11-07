@@ -1,12 +1,20 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import type { Db } from "@rann/storage";
 import { getActiveGoal, renderGoal, updateGoalProgress } from "@rann/storage";
+import {
+  acquirePathLease,
+  createTransaction,
+  finishTransaction,
+  recordFileChange,
+  releasePathLease,
+  type TransactionRow
+} from "@rann/storage";
 import { assertAllowed, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
 import { commitMessage, runGit, safeGitPath } from "../git.js";
 import {
@@ -14,7 +22,7 @@ import {
   listFileCheckpoints,
   restoreFileCheckpoint
 } from "../checkpoint-files.js";
-import { applyFileTransaction, searchCode } from "../code-tools.js";
+import { applyFileTransaction, searchCode, type TransactionFile } from "../code-tools.js";
 import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
@@ -81,6 +89,98 @@ function relPath(ctx: ToolContext, absolute: string): string {
 
 function sha256(content: string | Buffer): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+const MAX_SNAPSHOT_CHARS = 200_000;
+const MAX_DIFF_DB_CHARS = 100_000;
+const MAX_DIFF_OUTPUT_CHARS = 8_000;
+const LEASE_TTL_MS = 300_000;
+
+function clipSnapshot(text: string | null): string | null {
+  if (text === null || text.length <= MAX_SNAPSHOT_CHARS) return text;
+  return `${text.slice(0, MAX_SNAPSHOT_CHARS)}\n...[dipotong ${text.length - MAX_SNAPSHOT_CHARS} karakter]`;
+}
+
+function clipDiff(text: string): string {
+  if (text.length <= MAX_DIFF_DB_CHARS) return text;
+  return `${text.slice(0, MAX_DIFF_DB_CHARS)}\n...[diff dipotong ${text.length - MAX_DIFF_DB_CHARS} karakter]`;
+}
+
+function diffForOutput(text: string): { diff: string; diff_truncated: boolean } {
+  if (text.length <= MAX_DIFF_OUTPUT_CHARS) return { diff: text, diff_truncated: false };
+  return { diff: `${text.slice(0, MAX_DIFF_OUTPUT_CHARS)}\n...[diff dipotong]`, diff_truncated: true };
+}
+
+function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
+  if (!ctx.db || !ctx.sessionId) return [];
+  const acquired: string[] = [];
+  for (const path of [...new Set(paths)]) {
+    const lease = acquirePathLease(ctx.db, {
+      path,
+      sessionId: ctx.sessionId,
+      ttlMs: LEASE_TTL_MS
+    });
+    if (!lease.ok) {
+      for (const held of acquired) releasePathLease(ctx.db, held, undefined);
+      throw new RannError("E_LEASE_CONFLICT", `Berkas sedang dipegang agen lain: ${relPath(ctx, path)}`, {
+        data: {
+          path: relPath(ctx, path),
+          owner_agent_id: lease.lease.owner_agent_id,
+          owner_session_id: lease.lease.session_id,
+          expires_at: lease.lease.expires_at
+        }
+      });
+    }
+    acquired.push(path);
+  }
+  return acquired;
+}
+
+function releaseLeases(ctx: ToolContext, paths: string[]): void {
+  if (!ctx.db || !ctx.sessionId) return;
+  for (const path of paths) releasePathLease(ctx.db, path, undefined);
+}
+
+function beginTransaction(ctx: ToolContext, summary: unknown): TransactionRow | null {
+  if (!ctx.db || !ctx.sessionId) return null;
+  return createTransaction(ctx.db, {
+    sessionId: ctx.sessionId,
+    ...(ctx.turnId ? { turnId: ctx.turnId } : {}),
+    summary
+  });
+}
+
+function recordChanges(
+  ctx: ToolContext,
+  transaction: TransactionRow | null,
+  files: TransactionFile[],
+  status: "applied" | "reverted" | "failed"
+): void {
+  if (!ctx.db || !ctx.sessionId || !transaction) return;
+  for (const file of files) {
+    recordFileChange(ctx.db, {
+      transactionId: transaction.id,
+      sessionId: ctx.sessionId,
+      ...(ctx.turnId ? { turnId: ctx.turnId } : {}),
+      path: file.path,
+      beforeHash: file.before_sha256,
+      afterHash: file.after_sha256,
+      beforeText: clipSnapshot(file.before_text ?? null),
+      afterText: clipSnapshot(file.after_text ?? null),
+      diffText: clipDiff(file.diff),
+      status
+    });
+  }
+}
+
+function finishTransactionSafe(
+  ctx: ToolContext,
+  transaction: TransactionRow | null,
+  status: "committed" | "rolled_back" | "failed",
+  summary: unknown
+): void {
+  if (!ctx.db || !transaction) return;
+  finishTransaction(ctx.db, transaction.id, status, summary);
 }
 
 const BINARY_SAMPLE = 8_192;
@@ -382,22 +482,48 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsWriteSchema, args, "fs_write");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_write", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
-      if (existsSync(target)) {
-        assertTextFile(target, input.path);
-        if (input.expected_sha256) {
-          const actual = sha256(readFileSync(target));
-          if (actual !== input.expected_sha256.toLowerCase()) {
-            throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} berubah sejak dibaca. Baca ulang sebelum menulis.`, {
-              data: { path: input.path, expected: input.expected_sha256, actual }
-            });
-          }
-        }
-      } else if (input.expected_sha256) {
-        throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} tidak ada, hash yang diharapkan tidak cocok`);
+      if (input.create_dirs === false && !existsSync(dirname(target))) {
+        throw new RannError("E_TOOL_FAILED", `Folder induk tidak ada: ${input.path}`);
       }
-      if (input.create_dirs !== false) mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, input.content, "utf8");
-      return textResult({ path: relPath(ctx, target), bytes: Buffer.byteLength(input.content, "utf8"), sha256: sha256(input.content) });
+      const leases = acquireLeases(ctx, [target]);
+      const transaction = beginTransaction(ctx, { tool: "fs_write", path: input.path });
+      try {
+        if (existsSync(target)) assertTextFile(target, input.path);
+        const applied = applyFileTransaction(
+          ctx.workspaceRoot,
+          [{
+            path: input.path,
+            content: input.content,
+            ...(input.expected_sha256 ? { expected_sha256: input.expected_sha256 } : {})
+          }],
+          { workspaceOnly: ctx.workspaceOnly, includeText: true }
+        );
+        recordChanges(ctx, transaction, applied.files, "applied");
+        finishTransactionSafe(ctx, transaction, "committed", {
+          tool: "fs_write",
+          path: input.path,
+          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after }))
+        });
+        const file = applied.files[0]!;
+        const visible = diffForOutput(file.diff);
+        return textResult({
+          path: file.path,
+          bytes: Buffer.byteLength(input.content, "utf8"),
+          sha256: file.after_sha256,
+          status: file.status,
+          transaction_id: transaction?.id ?? null,
+          ...visible
+        });
+      } catch (error) {
+        finishTransactionSafe(ctx, transaction, "failed", {
+          tool: "fs_write",
+          path: input.path,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      } finally {
+        releaseLeases(ctx, leases);
+      }
     }
   },
   {
@@ -420,22 +546,57 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsEditSchema, args, "fs_edit");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_edit", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
-      if (!existsSync(target)) throw new RannError("E_TOOL_FAILED", `Berkas tidak ditemukan: ${input.path}`);
-      assertTextFile(target, input.path);
-      const before = readFileSync(target, "utf8");
-      if (input.expected_sha256 && sha256(before) !== input.expected_sha256.toLowerCase()) {
-        throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} berubah sejak dibaca. Baca ulang sebelum mengedit.`, {
-          data: { path: input.path, expected: input.expected_sha256, actual: sha256(before) }
+      const leases = acquireLeases(ctx, [target]);
+      const transaction = beginTransaction(ctx, { tool: "fs_edit", path: input.path });
+      try {
+        if (!existsSync(target)) throw new RannError("E_TOOL_FAILED", `Berkas tidak ditemukan: ${input.path}`);
+        assertTextFile(target, input.path);
+        const before = readFileSync(target, "utf8");
+        if (input.expected_sha256 && sha256(before) !== input.expected_sha256.toLowerCase()) {
+          throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} berubah sejak dibaca. Baca ulang sebelum mengedit.`, {
+            data: { path: input.path, expected: input.expected_sha256, actual: sha256(before) }
+          });
+        }
+        const occurrences = before.split(input.old).length - 1;
+        if (occurrences === 0) throw new RannError("E_TOOL_FAILED", "Teks lama tidak ditemukan");
+        if (occurrences > 1 && input.all !== true) {
+          throw new RannError("E_TOOL_FAILED", `Teks lama muncul ${occurrences} kali. Set all=true atau perjelas konteks.`);
+        }
+        const after = input.all === true ? before.split(input.old).join(input.new) : before.replace(input.old, input.new);
+        const applied = applyFileTransaction(
+          ctx.workspaceRoot,
+          [{ path: input.path, content: after, expected_sha256: sha256(before) }],
+          { workspaceOnly: ctx.workspaceOnly, includeText: true }
+        );
+        recordChanges(ctx, transaction, applied.files, "applied");
+        finishTransactionSafe(ctx, transaction, "committed", {
+          tool: "fs_edit",
+          path: input.path,
+          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after }))
         });
+        const file = applied.files[0]!;
+        const visible = diffForOutput(file.diff);
+        return textResult({
+          path: file.path,
+          replacements: input.all === true ? occurrences : 1,
+          sha256: file.after_sha256,
+          before_sha256: file.before_sha256,
+          status: file.status,
+          lines_before: file.lines_before,
+          lines_after: file.lines_after,
+          transaction_id: transaction?.id ?? null,
+          ...visible
+        });
+      } catch (error) {
+        finishTransactionSafe(ctx, transaction, "failed", {
+          tool: "fs_edit",
+          path: input.path,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      } finally {
+        releaseLeases(ctx, leases);
       }
-      const occurrences = before.split(input.old).length - 1;
-      if (occurrences === 0) throw new RannError("E_TOOL_FAILED", "Teks lama tidak ditemukan");
-      if (occurrences > 1 && input.all !== true) {
-        throw new RannError("E_TOOL_FAILED", `Teks lama muncul ${occurrences} kali. Set all=true atau perjelas konteks.`);
-      }
-      const after = input.all === true ? before.split(input.old).join(input.new) : before.replace(input.old, input.new);
-      writeFileSync(target, after, "utf8");
-      return textResult({ path: relPath(ctx, target), replacements: input.all === true ? occurrences : 1, sha256: sha256(after) });
     }
   },
   {
@@ -775,11 +936,60 @@ export const tools: ToolDefinition[] = [
     async run(args, ctx) {
       const input = parse(transactionSchema, args, "apply_patch");
       assertAllowed({ mode: ctx.permissionMode, tool: "apply_patch", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
-      const result = applyFileTransaction(ctx.workspaceRoot, input.changes, {
-        workspaceOnly: ctx.workspaceOnly,
-        ...(input.dry_run !== undefined ? { dryRun: input.dry_run } : {})
+      if (input.dry_run === true) {
+        const preview = applyFileTransaction(ctx.workspaceRoot, input.changes, {
+          workspaceOnly: ctx.workspaceOnly,
+          dryRun: true
+        });
+        return textResult({
+          ...preview,
+          files: preview.files.map((file) => ({ ...file, ...diffForOutput(file.diff) })),
+          transaction_id: null
+        });
+      }
+      const targets = input.changes.map((change) => resolveInsideWorkspace(change.path, ctx));
+      const leases = acquireLeases(ctx, targets);
+      const transaction = beginTransaction(ctx, {
+        tool: "apply_patch",
+        files: input.changes.map((change) => change.path)
       });
-      return textResult(result);
+      try {
+        const result = applyFileTransaction(ctx.workspaceRoot, input.changes, {
+          workspaceOnly: ctx.workspaceOnly,
+          includeText: true
+        });
+        recordChanges(ctx, transaction, result.files, "applied");
+        finishTransactionSafe(ctx, transaction, "committed", {
+          tool: "apply_patch",
+          files: result.files.map((file) => ({
+            path: file.path,
+            status: file.status,
+            lines_before: file.lines_before,
+            lines_after: file.lines_after
+          })),
+          bytes: result.bytes
+        });
+        return textResult({
+          files: result.files.map((file) => {
+            const visible = { ...file };
+            delete visible.before_text;
+            delete visible.after_text;
+            return { ...visible, ...diffForOutput(file.diff) };
+          }),
+          bytes: result.bytes,
+          rolled_back: result.rolled_back,
+          transaction_id: transaction?.id ?? null
+        });
+      } catch (error) {
+        finishTransactionSafe(ctx, transaction, "failed", {
+          tool: "apply_patch",
+          files: input.changes.map((change) => change.path),
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      } finally {
+        releaseLeases(ctx, leases);
+      }
     }
   },
   {

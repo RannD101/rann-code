@@ -199,6 +199,45 @@ function countLines(text: string): number {
   return text.split(/\r?\n/).length - (text.endsWith("\n") ? 1 : 0);
 }
 
+/**
+ * Diff terpadu sederhana berbasis awalan dan akhiran yang sama.
+ *
+ * Untuk edit satu blok (old_string -> new_string) hasilnya satu hunk yang
+ * minimal. Untuk penulisan ulang penuh, blok tengah bisa lebih lebar dari
+ * diff LCS, tetapi tetap cukup untuk audit dan pratinjau.
+ */
+export function unifiedDiff(path: string, before: string | null, after: string, context = 3): string {
+  const a = before === null || before.length === 0 ? [] : before.split(/\r?\n/);
+  const b = after.length === 0 ? [] : after.split(/\r?\n/);
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+  let endA = a.length - 1;
+  let endB = b.length - 1;
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
+    endA -= 1;
+    endB -= 1;
+  }
+  if (start > endA && start > endB) return "";
+
+  const hunkStart = Math.max(0, start - context);
+  const hunkEndA = Math.min(a.length, endA + 1 + context);
+  const hunkEndB = Math.min(b.length, endB + 1 + context);
+  const oldCount = hunkEndA - hunkStart;
+  const newCount = hunkEndB - hunkStart;
+  const range = (lineCount: number): string =>
+    lineCount === 0 ? `${hunkStart},0` : `${hunkStart + 1},${lineCount}`;
+  const lines = [
+    `--- ${before === null ? "/dev/null" : `a/${path}`}`,
+    `+++ b/${path}`,
+    `@@ -${range(oldCount)} +${range(newCount)} @@`
+  ];
+  for (let i = hunkStart; i < start; i += 1) lines.push(` ${a[i] ?? ""}`);
+  for (let i = start; i <= endA; i += 1) lines.push(`-${a[i] ?? ""}`);
+  for (let i = start; i <= endB; i += 1) lines.push(`+${b[i] ?? ""}`);
+  for (let i = endA + 1; i < hunkEndA; i += 1) lines.push(` ${a[i] ?? ""}`);
+  return `${lines.join("\n")}\n`;
+}
+
 export interface FileChange {
   path: string;
   content: string;
@@ -212,6 +251,9 @@ export interface TransactionFile {
   after_sha256: string;
   lines_before: number;
   lines_after: number;
+  diff: string;
+  before_text?: string | null;
+  after_text?: string;
 }
 
 export interface TransactionResult {
@@ -223,7 +265,7 @@ export interface TransactionResult {
 export function applyFileTransaction(
   workspaceRoot: string,
   changes: FileChange[],
-  options: { workspaceOnly?: boolean; dryRun?: boolean } = {}
+  options: { workspaceOnly?: boolean; dryRun?: boolean; includeText?: boolean } = {}
 ): TransactionResult {
   if (changes.length === 0) throw new RannError("E_TOOL_INVALID_ARGS", "Transaksi tanpa berkas");
   const prepared: Array<{
@@ -264,7 +306,11 @@ export function applyFileTransaction(
     before_sha256: item.before,
     after_sha256: hash(item.content),
     lines_before: item.original === null ? 0 : countLines(item.original),
-    lines_after: countLines(item.content)
+    lines_after: countLines(item.content),
+    diff: unifiedDiff(item.rel, item.original, item.content),
+    ...(options.includeText === true
+      ? { before_text: item.original, after_text: item.content }
+      : {})
   }));
 
   if (options.dryRun === true) {
@@ -280,6 +326,12 @@ export function applyFileTransaction(
       writeFileSync(temp, item.content, "utf8");
       renameSync(temp, item.absolute);
       written.push(item);
+    }
+    for (const item of written) {
+      const actual = readFileSync(item.absolute, "utf8");
+      if (hash(actual) !== hash(item.content)) {
+        throw new RannError("E_FILE_CHANGED", `Hash berkas setelah tulis tidak cocok: ${item.rel}`);
+      }
     }
   } catch (error) {
     for (const item of written.reverse()) {
