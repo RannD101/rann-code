@@ -2,6 +2,13 @@
 module.exports = {
   forbidden: [
     {
+      name: "tanpa-siklus",
+      severity: "error",
+      comment: "Dependensi melingkar dilarang",
+      from: {},
+      to: { circular: true }
+    },
+    {
       name: "shared-tanpa-dependensi-lokal",
       severity: "error",
       comment: "packages/shared harus tetap menjadi lapisan paling bawah",

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
-import { RannError, toRannError, type EventEnvelope, type RannConfig } from "@rann/shared";
+import { RannError, toRannError, type EventEnvelope } from "@rann/shared";
 import {
   ensureChannelDevice,
   getChannelCursor,
@@ -12,26 +12,11 @@ import {
   type Db
 } from "@rann/storage";
 import { findTool } from "./tools/index.js";
+import type { MessagingLogger, MessagingOptions } from "./messaging-support.js";
 import { DiscordAdapter } from "./messaging-discord.js";
 import { SlackAdapter } from "./messaging-slack.js";
 
-export interface MessagingLogger {
-  info: (message: string) => void;
-  warn: (message: string) => void;
-}
-
-export interface MessagingOptions {
-  db: Db;
-  config: RannConfig;
-  invoke: (method: string, params: Record<string, unknown>) => Promise<unknown>;
-  subscribe: (listener: (event: EventEnvelope) => void) => () => void;
-  logger?: MessagingLogger;
-  fetchImpl?: typeof fetch;
-  apiBase?: string;
-  discordApiBase?: string;
-  slackApiBase?: string;
-  autoPoll?: boolean;
-}
+export type { MessagingLogger, MessagingOptions } from "./messaging-support.js";
 
 type Json = Record<string, unknown>;
 

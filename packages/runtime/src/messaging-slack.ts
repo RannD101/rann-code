@@ -8,7 +8,6 @@ import {
   setChannelCursor,
   type Db
 } from "@rann/storage";
-import type { MessagingLogger, MessagingOptions } from "./messaging.js";
 import {
   approvalText,
   asNumber,
@@ -24,7 +23,9 @@ import {
   splitPlatformMessage,
   stripCommandPrefix,
   type Invoke,
-  type JsonRecord
+  type JsonRecord,
+  type MessagingLogger,
+  type MessagingOptions
 } from "./messaging-support.js";
 
 interface SlackFile {

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import type { Db } from "@rann/storage";
-import { getActiveGoal, renderGoal, updateGoalProgress, listProcedures, recordProcedureResult, upsertProcedure } from "@rann/storage";
+import { appendAudit, getActiveGoal, renderGoal, updateGoalProgress, listProcedures, recordProcedureResult, upsertProcedure } from "@rann/storage";
 import {
   acquirePathLease,
   heartbeatPathLease,
@@ -238,10 +238,17 @@ const fsWriteSchema = z.object({
 
 const fsEditSchema = z.object({
   path: z.string().min(1),
-  old: z.string().min(1),
-  new: z.string(),
+  old: z.string().min(1).optional(),
+  new: z.string().optional(),
+  old_string: z.string().min(1).optional(),
+  new_string: z.string().optional(),
   all: z.boolean().optional(),
   expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
+}).transform((value) => {
+  const old = value.old_string ?? value.old;
+  const next = value.new_string ?? value.new;
+  if (old === undefined || next === undefined) throw new RannError("E_TOOL_INVALID_ARGS", "fs_edit butuh old_string/new_string");
+  return { ...value, old, new: next };
 });
 
 const fsStatSchema = z.object({
@@ -623,7 +630,7 @@ export const tools: ToolDefinition[] = [
         finishTransactionSafe(ctx, transaction, "committed", {
           tool: "fs_write",
           path: input.path,
-          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after }))
+          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after, lines_added: file.lines_added, lines_removed: file.lines_removed }))
         });
         const file = applied.files[0]!;
         const visible = diffForOutput(file.diff);
@@ -656,11 +663,13 @@ export const tools: ToolDefinition[] = [
         type: "object",
         properties: {
           path: { type: "string" },
-          old: { type: "string" },
-          new: { type: "string" },
+          old_string: { type: "string", description: "Teks lama; wajib unik." },
+          new_string: { type: "string", description: "Teks pengganti." },
+          old: { type: "string", description: "Alias lama untuk old_string." },
+          new: { type: "string", description: "Alias lama untuk new_string." },
           all: { type: "boolean", description: "Diabaikan; edit selalu menolak kemunculan ganda." }
         },
-        required: ["path", "old", "new"]
+        required: ["path"]
       }
     },
     async run(args, ctx) {
@@ -693,7 +702,7 @@ export const tools: ToolDefinition[] = [
         finishTransactionSafe(ctx, transaction, "committed", {
           tool: "fs_edit",
           path: input.path,
-          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after }))
+          files: applied.files.map((file) => ({ path: file.path, status: file.status, lines_before: file.lines_before, lines_after: file.lines_after, lines_added: file.lines_added, lines_removed: file.lines_removed }))
         });
         const file = applied.files[0]!;
         const visible = diffForOutput(file.diff);
@@ -705,6 +714,8 @@ export const tools: ToolDefinition[] = [
           status: file.status,
           lines_before: file.lines_before,
           lines_after: file.lines_after,
+          lines_added: file.lines_added,
+          lines_removed: file.lines_removed,
           transaction_id: transaction?.id ?? null,
           ...visible
         });
@@ -809,9 +820,29 @@ export const tools: ToolDefinition[] = [
       if (stat.isDirectory() && readdirSync(target).length > 0 && input.recursive !== true) {
         throw new RannError("E_TOOL_FAILED", "Direktori tidak kosong. Set recursive=true untuk memindahkan seluruh isinya ke trash.");
       }
+      const beforeSha = stat.isFile() ? sha256(readFileSync(target)) : null;
+      if (ctx.db !== undefined && ctx.sessionId !== undefined) {
+        try {
+          appendAudit(ctx.db, {
+            actor: "agent",
+            action: "fs_delete",
+            resource: input.path,
+            decision: "ok",
+            metadata: {
+              session_id: ctx.sessionId,
+              turn_id: ctx.turnId ?? null,
+              hard: input.hard === true,
+              recursive: input.recursive === true,
+              before_sha256: beforeSha
+            }
+          });
+        } catch {
+          // audit tidak boleh menggagalkan operasi berkas
+        }
+      }
       if (input.hard === true) {
         rmSync(target, { recursive: true, force: false });
-        return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", hard: true });
+        return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", hard: true, before_sha256: beforeSha });
       }
       const trashDir = resolveInsideWorkspace(".rann/trash", { ...ctx, workspaceOnly: true });
       mkdirSync(trashDir, { recursive: true });
@@ -819,7 +850,7 @@ export const tools: ToolDefinition[] = [
       const name = target.split(/[\\/]/).pop() ?? "berkas";
       const destination = `${trashDir}/${stamp}-${name}`;
       renameSync(target, destination);
-      return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", trash_path: relPath(ctx, destination) });
+      return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", trash_path: relPath(ctx, destination), before_sha256: beforeSha });
     }
   },
   {

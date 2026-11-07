@@ -1,8 +1,27 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
-import { RannError } from "@rann/shared";
+import { RannError, type EventEnvelope, type RannConfig } from "@rann/shared";
+import type { Db } from "@rann/storage";
 import { findTool } from "./tools/index.js";
+
+export interface MessagingLogger {
+  info: (message: string) => void;
+  warn: (message: string) => void;
+}
+
+export interface MessagingOptions {
+  db: Db;
+  config: RannConfig;
+  invoke: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+  subscribe: (listener: (event: EventEnvelope) => void) => () => void;
+  logger?: MessagingLogger;
+  fetchImpl?: typeof fetch;
+  apiBase?: string;
+  discordApiBase?: string;
+  slackApiBase?: string;
+  autoPoll?: boolean;
+}
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 

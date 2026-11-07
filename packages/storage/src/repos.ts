@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { newId, type ErrorCode, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import type { Db } from "./db.js";
-import { recordMemoryEvent } from "./procedure-repos.js";
 
 export interface SessionRow {
   id: string;
@@ -618,7 +617,12 @@ export function updateMemory(db: Db, id: string, patch: { text?: string; tags?: 
     Date.now(),
     id
   );
-  recordMemoryEvent(db, id, "updated", JSON.stringify({ before: existing.text, after: patch.text ?? existing.text, reason: patch.reason ?? null }));
+  db.prepare("INSERT INTO memory_events (id, memory_id, action, actor, after_json, created_at) VALUES (?, ?, 'updated', 'agent', ?, ?)").run(
+    newId("mev"),
+    id,
+    JSON.stringify({ before: existing.text, after: patch.text ?? existing.text, reason: patch.reason ?? null }),
+    Date.now()
+  );
   return toMemoryEntry(db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow);
 }
 

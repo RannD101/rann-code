@@ -251,6 +251,8 @@ export interface TransactionFile {
   after_sha256: string;
   lines_before: number;
   lines_after: number;
+  lines_added: number;
+  lines_removed: number;
   diff: string;
   before_text?: string | null;
   after_text?: string;
@@ -307,6 +309,14 @@ export function applyFileTransaction(
     after_sha256: hash(item.content),
     lines_before: item.original === null ? 0 : countLines(item.original),
     lines_after: countLines(item.content),
+    ...(() => {
+      const diff = unifiedDiff(item.rel, item.original, item.content);
+      const lines = diff.split("\n");
+      return {
+        lines_added: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+        lines_removed: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
+      };
+    })(),
     diff: unifiedDiff(item.rel, item.original, item.content),
     ...(options.includeText === true
       ? { before_text: item.original, after_text: item.content }
