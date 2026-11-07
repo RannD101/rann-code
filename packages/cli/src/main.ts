@@ -23,7 +23,8 @@ Pemakaian:
   rann new [--title teks]       buat sesi baru
   rann sessions [--limit N]     daftar sesi di folder ini (--all untuk semua)
   rann models                   daftar model provider aktif
-  rann usage [sesi]             ringkasan token dan biaya
+  rann route explain "<prompt>"  jelaskan pilihan model tanpa mengirim request
+  rann usage                    ringkasan token, biaya, dan budget hari ini
   rann providers                daftar provider dan status key
   rann provider add <nama> --type openai-compatible --base-url URL --key-env ENV
   rann provider test [nama]       uji koneksi provider dan model default
@@ -66,6 +67,7 @@ const KNOWN_COMMANDS = new Set([
   "providers",
   "provider",
   "secret",
+  "route",
   "usage",
   "turn",
   "config",
@@ -134,6 +136,8 @@ async function main(argv: string[]): Promise<number> {
       return await memoryCommand(args);
     case "secret":
       return await secretCommand(args);
+    case "route":
+      return await routeCommand(args);
     case "skill":
       return await skillCommand(args);
     case "init":
@@ -865,6 +869,41 @@ function renderMemories(entries: MemoryView[]): string {
       relativeTime(entry.updated_at)
     ])
   );
+}
+
+async function routeCommand(args: ParsedArgs): Promise<number> {
+  if (args.subcommand !== "explain") {
+    throw new RannError("E_INVALID_PARAMS", "Pakai: rann route explain \"<prompt>\"");
+  }
+  const prompt = args.positionals[0];
+  if (!prompt) throw new RannError("E_INVALID_PARAMS", "Prompt kosong");
+  const decision = await withClient((client) =>
+    client.request<{
+      taskClass: string;
+      chosen: string | null;
+      score: number;
+      policy: string;
+      pinned: boolean;
+      warning?: string;
+      candidates: Array<{ model: string; score: number; reason: string }>;
+      rejected: Array<{ model: string; reason: string }>;
+    }>("route.explain", {
+      prompt,
+      ...(flagString(args, "policy") ? { policy: flagString(args, "policy") } : {})
+    })
+  );
+  if (flagBool(args, "json")) {
+    print(JSON.stringify(decision, null, 2));
+    return 0;
+  }
+  print(`kelas tugas: ${decision.taskClass}`);
+  print(`dipilih: ${decision.chosen ?? "(tidak ada)"} skor=${decision.score.toFixed(3)} policy=${decision.policy}${decision.pinned ? " pinned" : ""}`);
+  for (const candidate of decision.candidates) {
+    print(`  ${candidate.model}  ${candidate.score.toFixed(3)}  ${candidate.reason}`);
+  }
+  for (const item of decision.rejected) print(`  x ${item.model}  ${item.reason}`);
+  if (decision.warning) print(`peringatan: ${decision.warning}`);
+  return decision.chosen ? 0 : 4;
 }
 
 async function secretCommand(args: ParsedArgs): Promise<number> {

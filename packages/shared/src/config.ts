@@ -82,6 +82,17 @@ export const configSchema = z.object({
       summary_chars: z.number().int().positive().max(32_000).default(6_000)
     })
     .default({}),
+  routing: z
+    .object({
+      mode: z.enum(["auto", "manual"]).default("manual"),
+      policy: z.string().default("balanced"),
+      pinned: z.string().min(1).optional(),
+      prefer: z.array(z.string()).default([]),
+      min_quality: z.number().min(0).max(1).optional(),
+      max_cost_per_task: z.number().nonnegative().optional(),
+      strict_budget: z.boolean().default(false)
+    })
+    .default({}),
   budget: z
     .object({
       max_tokens_per_turn: z.number().int().nonnegative().default(0),

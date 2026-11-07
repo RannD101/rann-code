@@ -24,7 +24,8 @@ const config = configSchema.parse({
   models: {
     "rann/rann/gpt-6-astra": {
       context_window: 300_000,
-      capabilities: { vision: false }
+      capabilities: { vision: false },
+      aliases: ["astra"]
     }
   }
 });
@@ -41,6 +42,8 @@ describe("model registry", () => {
     expect(descriptor.capabilities.vision).toBe(false);
     expect(listModels(db, "rann")).toHaveLength(1);
     expect(registrySnapshot(db, config)).toHaveLength(1);
+    expect(registrySnapshot(db, config)[0]?.aliases).toEqual(["astra"]);
+    expect(resolveDescriptor(db, config, "rann", "astra").model).toBe("rann/gpt-6-astra");
   });
 
   it("memberi harga nol dan $? saat harga tidak diketahui", () => {

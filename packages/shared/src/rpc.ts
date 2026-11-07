@@ -149,6 +149,11 @@ export const secretSetParams = z.object({
 });
 export const secretRemoveParams = z.object({ name: z.string().min(1).max(128) });
 
+export const routeExplainParams = z.object({
+  prompt: z.string().min(1).max(200_000),
+  policy: z.string().min(1).max(64).optional()
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -178,7 +183,8 @@ export const methodParams = {
   "secret.list": empty,
   "secret.set": secretSetParams,
   "secret.remove": secretRemoveParams,
-  "budget.status": empty
+  "budget.status": empty,
+  "route.explain": routeExplainParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

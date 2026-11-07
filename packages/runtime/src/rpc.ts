@@ -25,6 +25,7 @@ import {
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
+import { routeModel, type HealthState } from "./router.js";
 import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
@@ -205,6 +206,24 @@ export class RpcServer {
         return this.providerList();
       case "provider.test":
         return await this.providerTest(input);
+      case "route.explain": {
+        const config = this.options.config.config;
+        const descriptors = registrySnapshot(this.db, config);
+        const snapshot = providerHealth.snapshot();
+        const health: Record<string, HealthState> = {};
+        for (const [name, entry] of Object.entries(snapshot)) health[name] = entry.status;
+        return routeModel({
+          prompt: input.prompt as string,
+          descriptors,
+          health,
+          policy: (input.policy as string | undefined) ?? config.routing.policy,
+          ...(config.routing.pinned ? { pinned: config.routing.pinned } : {}),
+          prefer: config.routing.prefer,
+          ...(config.routing.min_quality !== undefined ? { minQuality: config.routing.min_quality } : {}),
+          ...(config.routing.max_cost_per_task !== undefined ? { maxCostPerTask: config.routing.max_cost_per_task } : {}),
+          strictBudget: config.routing.strict_budget
+        });
+      }
       case "budget.status": {
         const config = this.options.config.config;
         const start = new Date();

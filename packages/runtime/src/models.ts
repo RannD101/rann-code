@@ -191,23 +191,39 @@ export function resolveDescriptor(
 ): ModelDescriptor {
   const providerConfig = config.providers[providerName];
   const kind = providerConfig?.kind ?? (providerName === "mock" ? "mock" : "openai-compatible");
+  const aliasEntry = requested && requested !== "auto"
+    ? Object.entries(config.models ?? {}).find(([, value]) => value.aliases.includes(requested))
+    : undefined;
+  let aliasedModel: string | undefined;
+  if (aliasEntry) {
+    const [key] = aliasEntry;
+    const slash = key.indexOf("/");
+    const aliasProvider = slash > 0 ? key.slice(0, slash) : providerName;
+    if (aliasProvider !== providerName) {
+      throw new RannError("E_CONFIG_INVALID", `Alias ${requested} menunjuk provider ${aliasProvider}, bukan ${providerName}`);
+    }
+    aliasedModel = slash > 0 ? key.slice(slash + 1) : key;
+  }
   const modelName =
-    requested && requested !== "auto"
+    aliasedModel ??
+    (requested && requested !== "auto"
       ? requested
-      : providerConfig?.default_model ?? providerConfig?.models[0] ?? (kind === "mock" ? "mock-1" : "");
+      : providerConfig?.default_model ?? providerConfig?.models[0] ?? (kind === "mock" ? "mock-1" : ""));
   if (!modelName) {
     throw new RannError("E_CONFIG_INVALID", `Model default belum ditentukan untuk provider ${providerName}`);
   }
   const base = builtinDescriptor(providerName, modelName, kind);
   const row = db ? getModel(db, providerName, modelName) : undefined;
   const rowCaps = row ? (JSON.parse(row.capabilities_json) as Record<string, unknown>) : undefined;
+  const rowHasPrice = row !== undefined && (row.input_price !== null || row.output_price !== null);
+  const hasPriceOverride = overrides?.inputPrice !== undefined || overrides?.outputPrice !== undefined;
   const merged: ModelDescriptor = {
     ...base,
     displayName: row?.display_name ?? base.displayName,
     contextWindow: overrides?.contextWindow ?? row?.context_window ?? base.contextWindow,
     maxOutputTokens: overrides?.maxOutputTokens ?? row?.max_output_tokens ?? base.maxOutputTokens,
     capabilities: mergeCapabilities(mergeCapabilities(base.capabilities, rowCaps), overrides?.capabilities),
-    ...(overrides?.inputPrice !== undefined || overrides?.outputPrice !== undefined || row?.input_price !== null
+    ...(hasPriceOverride || rowHasPrice
       ? {
           pricing: {
             inputPerMTok: overrides?.inputPrice ?? row?.input_price ?? 0,
@@ -238,31 +254,27 @@ export function seedRegistry(db: Db, config: RannConfig): void {
     for (const model of provider.models) {
       const descriptor = builtinDescriptor(name, model, provider.kind);
       const override = config.models?.[`${name}/${model}`];
-      if (!getModel(db, name, model)) {
-        upsertModel(db, {
-          provider: name,
-          name: model,
-          displayName: descriptor.displayName,
-          contextWindow: override?.context_window ?? descriptor.contextWindow,
-          maxOutputTokens: override?.max_output_tokens ?? descriptor.maxOutputTokens,
-          capabilities: override?.capabilities ?? descriptor.capabilities,
-          ...(override?.input_price !== undefined ? { inputPrice: override.input_price } : {}),
-          ...(override?.output_price !== undefined ? { outputPrice: override.output_price } : {})
-        });
-      }
+      upsertModel(db, {
+        provider: name,
+        name: model,
+        displayName: descriptor.displayName,
+        contextWindow: override?.context_window ?? descriptor.contextWindow,
+        maxOutputTokens: override?.max_output_tokens ?? descriptor.maxOutputTokens,
+        capabilities: override?.capabilities ?? descriptor.capabilities,
+        ...(override?.input_price !== undefined ? { inputPrice: override.input_price } : {}),
+        ...(override?.output_price !== undefined ? { outputPrice: override.output_price } : {})
+      });
     }
     if (provider.default_model && !provider.models.includes(provider.default_model)) {
-      if (!getModel(db, name, provider.default_model)) {
-        const descriptor = builtinDescriptor(name, provider.default_model, provider.kind);
-        upsertModel(db, {
-          provider: name,
-          name: provider.default_model,
-          displayName: descriptor.displayName,
-          contextWindow: descriptor.contextWindow,
-          maxOutputTokens: descriptor.maxOutputTokens,
-          capabilities: descriptor.capabilities
-        });
-      }
+      const descriptor = builtinDescriptor(name, provider.default_model, provider.kind);
+      upsertModel(db, {
+        provider: name,
+        name: provider.default_model,
+        displayName: descriptor.displayName,
+        contextWindow: descriptor.contextWindow,
+        maxOutputTokens: descriptor.maxOutputTokens,
+        capabilities: descriptor.capabilities
+      });
     }
   }
 }
@@ -273,9 +285,13 @@ export function registrySnapshot(db: Db, config: RannConfig): ModelDescriptor[] 
   const output: ModelDescriptor[] = [];
   for (const provider of providers) {
     for (const row of listModels(db, provider)) {
-      const descriptor = resolveDescriptor(db, config, provider, row.name);
+      const aliases = config.models?.[`${provider}/${row.name}`]?.aliases ?? [];
+      const descriptor = resolveDescriptor(db, config, provider, row.name, { aliases });
       output.push(descriptor);
     }
+  }
+  if (output.length === 0 && config.provider === "mock") {
+    output.push(resolveDescriptor(db, config, "mock", "mock-1"));
   }
   return output;
 }

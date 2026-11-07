@@ -58,10 +58,13 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 - `packages/storage/src/schema-v4.ts`: migrasi 4 `model-and-jobs`, kolom model/biaya pada turn dan usage, tabel `jobs`.
 - `packages/runtime/src/agent.ts`: capability gate, cek context window, fallback provider, retry sebelum chunk pertama, health provider, biaya per usage.
 - `packages/runtime/src/providers/`: adapter `anthropic`, `gemini`, `openai-responses`, parser SSE bersama, factory 5 jenis provider, skenario mock.
+- `packages/runtime/src/router.ts`: skor kandidat per kelas tugas (9 kelas, bobot PRD 25.3), filter hard capability/context/deprecated/health, pin dan prefer, batas biaya per task, alasan tiap kandidat.
+- `packages/runtime/src/rpc.ts`: `route.explain`, `budget.status`, dan audit untuk operasi secret.
+- `packages/cli/src/main.ts`: `rann route explain "<prompt>"`, `rann usage` menampilkan biaya dan budget hari ini.
 - `packages/storage/src/secrets.ts`: vault XChaCha20-Poly1305, kunci 0600 atau passphrase scrypt, audit untuk set/remove, CLI `rann secret`.
-- Tes: `models.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 83 tes.
+- Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 88 tes (19 berkas).
 
-Sisa M2: budget/quota provider dan pemakaian proxy pool per koneksi.
+Sisa M2: routing otomatis saat `model.default = auto` dan biaya cache read/write pada `costFor`.
 
 ## Aturan
 
