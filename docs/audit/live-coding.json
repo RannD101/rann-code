@@ -1,0 +1,413 @@
+[
+  {
+    "id": "RC-FR-040",
+    "title": "Eksplorasi repository",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/project-map.ts:266 buildProjectMap memindai file, menghitung bahasa per ekstensi, package manager, framework, entry point, direktori, dan perintah.",
+      "packages/runtime/src/project-map.ts:91 walk melewati .git, node_modules, dist, build, coverage, target, vendor, dan cache; batas 20.000 file dengan flag truncated.",
+      "packages/runtime/src/project-map.ts:324 saveProjectMap menulis .rann/project-map.json; :332 ensureProjectMap memakai cache 24 jam atau refresh.",
+      "packages/cli/src/main.ts:2990 initCommand membuat .rann, memanggil buildProjectMap dan saveProjectMap; /init di main.ts:2089 memanggil fungsi yang sama.",
+      "packages/runtime/src/tools/index.ts:864 repo_map mengekspos pemindaian yang sama sebagai tool agent.",
+      "packages/runtime/src/project-map.test.ts:31,45,58 menguji deteksi bahasa/perintah/entry point, simpan-muat-refresh, dan asumsi saat lockfile tidak ada.",
+      "Uji langsung: buildProjectMap pada repo sintetis 5.003 file selesai 84 ms, 5.001 file TypeScript, package manager pnpm, entry point src/index.ts."
+    ],
+    "gaps": [
+      "README tidak dibaca sama sekali oleh project-map.ts, padahal RC-FR-040.1 menyebut README.",
+      "Tidak ada pembaruan incremental; ensureProjectMap hanya memakai ulang cache atau memindai ulang seluruh repo.",
+      "Asumsi dicetak di ringkasan, tetapi tidak ada permintaan konfirmasi saat deteksi ambigu (RC-FR-040.5).",
+      "File biner tetap dihitung di file_count dan direktori karena walk tidak memeriksa isi biner."
+    ]
+  },
+  {
+    "id": "RC-FR-041",
+    "title": "Pencarian kode semantik",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/code-tools.ts:99 searchCode melakukan pencarian teks atau regex, mendukung glob, case sensitivity, batas hasil, dan melewati berkas non-teks.",
+      "packages/runtime/src/code-tools.ts:170 setiap hasil memuat path, line, column, cuplikan 400 karakter, dan reason; hasil kosong diberi note di :189.",
+      "packages/runtime/src/tools/index.ts:886 search_code mengekspos pencarian ke agent dengan max_results 1..500.",
+      "packages/runtime/src/code-tools.test.ts:19,27,34 menguji pencarian teks, regex plus glob, dan penjelasan hasil kosong."
+    ],
+    "gaps": [
+      "Tidak ada indeks simbol tree-sitter dan tidak ada indeks vektor knowledge chunk; hanya grep. Tidak ada dependensi tree-sitter di packages/runtime/package.json.",
+      ".gitignore tidak dihormati; yang diabaikan hanya daftar direktori hardcoded di code-tools.ts.",
+      "Hasil tidak diberi skor relevansi, hanya alasan tekstual.",
+      "/index rebuild masih stub NOT_YET di packages/cli/src/repl-commands.ts:149."
+    ]
+  },
+  {
+    "id": "RC-FR-042",
+    "title": "Operasi file dasar",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:386,431,470,533,606,635,670 mendaftarkan fs_read, fs_list, fs_write, fs_edit, fs_stat, fs_glob, fs_delete; alias read_file/write_file/edit_file/delete_file/list_dir/stat_file dibuat di :1349.",
+      "packages/runtime/src/policy.ts:100 resolveInsideWorkspace memakai realpath dan menolak path keluar workspace, termasuk symlink.",
+      "packages/runtime/src/tools/index.ts:691 fs_delete memindahkan ke .rann/trash, bukan menghapus permanen.",
+      "packages/runtime/src/tools.test.ts:25,74,225,238 menguji tulis/baca/edit/list, penolakan path keluar, trash plus glob, dan penolakan berkas biner.",
+      "vitest 2026-11-07: tools.test.ts 17 tes lulus."
+    ],
+    "gaps": [
+      "fs_write hanya menolak overwrite bila pemanggil mengirim expected_sha256, dan field itu tidak tercantum di skema parameters fs_write (tools/index.ts:470-480), jadi model tidak tahu field itu ada.",
+      "fs_delete tidak punya mode hard dan tidak mencatat file_changes atau hash sebelum/sesudah; hanya tool call yang tercatat di agent.",
+      "Operasi baca tidak mencatat hash sebelum/sesudah di audit, sehingga RC-FR-042.5 baru terpenuhi untuk write/edit."
+    ]
+  },
+  {
+    "id": "RC-FR-043",
+    "title": "Patch editing yang aman",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:533 fs_edit menerima old, new, all, dan expected_sha256; :562-564 menolak bila teks lama tidak ada atau muncul lebih dari sekali tanpa all=true.",
+      "packages/runtime/src/code-tools.ts:331-333 membaca ulang setiap berkas setelah tulis dan membandingkan hash, lalu rollback bila tidak cocok.",
+      "packages/runtime/src/tools/index.ts:114 acquireLeases melempar E_LEASE_CONFLICT bila path dipegang sesi lain; TTL lease 300.000 ms di :97.",
+      "packages/runtime/src/tools/index.ts:153 recordChanges menyimpan diff ke file_changes, dengan diff dipotong di 100.000 karakter (:95).",
+      "packages/runtime/src/tools.test.ts:46,213 dan packages/runtime/src/code-tools.test.ts:75 menguji lease conflict, penolakan hash berubah, dan diff minimal."
+    ],
+    "gaps": [
+      "Tidak ada input unified diff; hanya old_string/new_string (RC-FR-043.1 menyebut keduanya).",
+      "Diff yang dikembalikan ke model dipotong di 8.000 karakter (tools/index.ts:96), sehingga diff besar tidak tampil utuh.",
+      "Verifikasi hash setelah tulis hanya berlaku di jalur applyFileTransaction; fs_edit memakai jalur itu, tetapi tidak ada verifikasi independen setelah release lease."
+    ]
+  },
+  {
+    "id": "RC-FR-044",
+    "title": "Modifikasi multi-file dan transaksi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:915 apply_patch menerima array changes, dry_run, dan expected_sha256 per berkas.",
+      "packages/runtime/src/code-tools.ts:265 applyFileTransaction menyiapkan semua berkas, menghitung before_sha256, menulis lewat temp lalu rename, dan memverifikasi hash setelah tulis.",
+      "packages/runtime/src/code-tools.ts:336-348 mengembalikan berkas yang sudah ditulis ke isi awal dan menghapus berkas baru bila salah satu langkah gagal.",
+      "Uji langsung di /root/.hermes/cache/scratch/rollbacktest: transaksi tiga berkas dengan berkas kedua gagal menghasilkan E_TOOL_FAILED, a.txt dan c.txt tetap berisi isi awal.",
+      "packages/runtime/src/code-tools.test.ts:43,56,67,90 menguji tulis multi-berkas, penolakan hash berubah, dry run, dan status created/unchanged."
+    ],
+    "gaps": [
+      "RC-FR-044.4 hanya terpenuhi bila pemanggil mengirim expected_sha256; apply_patch tidak menghitung dan membandingkan hash otomatis untuk semua target.",
+      "Tidak ada pengecekan ulang hash tepat sebelum rename, jadi perubahan pihak lain di antara persiapan dan penulisan bisa tertimpa.",
+      "Baris transaksi ditutup dengan status failed, bukan rolled_back, sehingga status rollback tidak bisa dibedakan dari kegagalan sebelum penulisan.",
+      "apply_patch tidak masuk daftar tool yang memicu checkpoint otomatis di packages/runtime/src/agent.ts:728."
+    ]
+  },
+  {
+    "id": "RC-FR-045",
+    "title": "Code generation dan refactoring",
+    "status": "missing",
+    "evidence": [
+      "Registry tool di packages/runtime/src/tools/index.ts:382-1365 tidak memuat tool rename, refactor, format, atau symbol search.",
+      "packages/runtime/src/project-map.ts tidak membangun indeks simbol, sehingga rename lintas referensi tidak mungkin dilakukan secara terdeteksi.",
+      "Tidak ada pemanggilan Prettier, ESLint --fix, gofmt, atau rustfmt di packages/runtime/src dan packages/cli/src.",
+      "Profil coder di packages/runtime/src/subagent-profiles.ts:49-57 hanya memberi instruksi prompt untuk perubahan kecil, tanpa mekanisme pemeriksaan sebelum/sesudah."
+    ],
+    "gaps": [
+      "Tidak ada eksekusi tes sebelum dan sesudah refactor sebagai syarat (RC-FR-045.1).",
+      "Tidak ada rename simbol yang memperbarui semua referensi (RC-FR-045.2).",
+      "Tidak ada bukti grep/simbol yang diwajibkan sebelum menghapus kode (RC-FR-045.3).",
+      "Tidak ada integrasi formatter project dan tidak ada pemecahan patch besar (RC-FR-045.4 dan .5)."
+    ]
+  },
+  {
+    "id": "RC-FR-046",
+    "title": "Debugging dan diagnosis error",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/subagent-profiles.ts:61-67 mendefinisikan profil debugger dengan prompt reproduksi dan uji hipotesis, tetapi hanya prompt.",
+      "/debug tercatat sebagai stub NOT_YET di packages/cli/src/repl-commands.ts:140 dan tidak punya handler di packages/cli/src/main.ts.",
+      "Tidak ada penyimpanan hipotesis, langkah reproduksi, atau tes regresi di packages/runtime/src; failure-analysis.ts hanya mengklasifikasi error.",
+      "packages/runtime/src/agent.ts tidak mewajibkan tes regresi sebelum turn debugging ditutup."
+    ],
+    "gaps": [
+      "Tidak ada pengumpulan error, stack trace, log, dan langkah reproduksi secara terstruktur (RC-FR-046.1).",
+      "Hipotesis tidak ditulis sebagai artefak dan tidak diuji satu per satu (RC-FR-046.2).",
+      "Tidak ada penegakan tes regresi gagal-sebelum dan lulus-sesudah (RC-FR-046.3).",
+      "Tidak ada larangan mekanis terhadap try/catch kosong atau any tanpa alasan (RC-FR-046.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-047",
+    "title": "Generasi dan eksekusi tes",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:999 project_check menjalankan action test/lint/build/typecheck memakai perintah dari project map.",
+      "packages/runtime/src/project-map.ts:224 detectCommands membaca scripts package.json dan jatuh ke pytest, go test, cargo test.",
+      "packages/runtime/src/tools/index.ts:1020 project_check memanggil shell_run dan mengembalikan action, command, stdout, stderr, dan exitCode asli.",
+      "packages/runtime/src/subagent-profiles.ts:81-87 menyediakan profil tester yang boleh menulis tes dan menjalankan project_check.",
+      "packages/runtime/src/tools.test.ts:140 menguji project_check dengan perintah test dari package.json."
+    ],
+    "gaps": [
+      "Hasil tes tidak diparse menjadi jumlah lulus, gagal, dan skip; hanya stdout mentah (RC-FR-047.3).",
+      "Tidak ada deteksi flaky dan tidak ada rerun maksimal dua kali (RC-FR-047.4).",
+      "Tidak ada penjagaan yang menolak penghapusan atau pelemahan tes (RC-FR-047.5).",
+      "/test masih stub NOT_YET di packages/cli/src/repl-commands.ts:139."
+    ]
+  },
+  {
+    "id": "RC-FR-048",
+    "title": "Code review",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1082 /review mengubah input menjadi prompt review diff dan meminta path serta baris.",
+      "packages/runtime/src/subagent-profiles.ts:71-77 profil reviewer meminta temuan berurut keparahan dengan path, baris, dampak, dan saran.",
+      "Tidak ada struktur data temuan di packages/runtime/src; hasil review adalah teks bebas dari model."
+    ],
+    "gaps": [
+      "Tidak ada skema temuan dengan severity blocker/major/minor/nit yang divalidasi (RC-FR-048.2).",
+      "Temuan tanpa lokasi atau alasan tidak difilter secara mekanis (RC-FR-048.3).",
+      "Cakupan bug, keamanan, performa, dan gaya hanya instruksi prompt, bukan pemeriksaan (RC-FR-048.4).",
+      "Tidak ada pemisahan temuan pasti dan dugaan (RC-FR-048.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-049",
+    "title": "Analisis arsitektur dan dependensi",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada tool analisis dependensi di packages/runtime/src/tools/index.ts:382-1365.",
+      "dependency-cruiser terpasang dan dipakai sebagai gate repo di package.json script depcruise dengan konfigurasi .dependency-cruiser.cjs, tetapi tidak diekspos ke agent.",
+      "Tidak ada kode yang mendeteksi siklus, layer, package tidak terpakai, lisensi, atau ukuran dependensi di packages/runtime/src."
+    ],
+    "gaps": [
+      "RC-FR-049.1 dan .2 tidak terpenuhi: tidak ada import graph atau parser yang dijalankan agent.",
+      "Dependency baru tidak dilaporkan dengan lisensi dan ukuran (RC-FR-049.3).",
+      "Tidak ada ekspor hasil ke Markdown atau JSON (RC-FR-049.4).",
+      "Tidak ada tool read-only untuk analisis arsitektur (RC-FR-049.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-050",
+    "title": "Build, lint, typecheck, dan dependency",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/project-map.ts:224 detectCommands membaca scripts test/lint/build/typecheck/check dari package.json dan heuristik pytest, go, cargo, ruff.",
+      "packages/runtime/src/tools/index.ts:999 project_check menjalankan perintah yang terdeteksi dan mengembalikan exit code serta output asli.",
+      "packages/runtime/src/tools/index.ts:1015 project_check melempar E_TOOL_FAILED dengan assumptions dan scripts bila perintah tidak terdeteksi.",
+      "packages/runtime/src/tools.test.ts:140 membuktikan perintah test dari package.json dipakai."
+    ],
+    "gaps": [
+      "Makefile tidak dideteksi, padahal RC-FR-050.1 menyebutnya.",
+      "Tidak ada tool package_install dan tidak ada pencatatan lockfile yang berubah (RC-FR-050.4).",
+      "Perintah yang mengubah lingkungan global hanya dicegah lewat regex DANGEROUS_SHELL di packages/runtime/src/policy.ts:8-20, bukan aturan khusus instalasi.",
+      "Saat perintah tidak terdeteksi, tool melempar error, tidak bertanya atau memakai perintah standar berlabel asumsi (RC-FR-050.2)."
+    ]
+  },
+  {
+    "id": "RC-FR-051",
+    "title": "Integrasi Git",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:703 git_read mendukung status, diff, log, show, blame, branch, dan remote.",
+      "packages/runtime/src/tools/index.ts:745 git_write mendukung stage, unstage, commit, dan branch_create; :784 menolak commit bila masih ada konflik.",
+      "packages/runtime/src/git.ts:63-66 menambahkan trailer Rann-Code-Session saat sessionId tersedia.",
+      "packages/runtime/src/tools.test.ts:244,268 menguji status git, commit dengan trailer, dan penolakan commit saat konflik.",
+      "Tidak ada pemanggilan commit otomatis di packages/runtime/src/agent.ts."
+    ],
+    "gaps": [
+      "/git dan /commit masih stub NOT_YET di packages/cli/src/repl-commands.ts:141 dan :143.",
+      "Working tree kotor tidak dicatat sebelum task dimulai; tidak ada baseline atau initial diff di agent.ts, rpc.ts, atau main.ts (RC-FR-051.4).",
+      "Pesan commit tidak dibuat dari diff; pemanggil harus mengirim message sendiri (RC-FR-115.2).",
+      "push dan pull belum ada, begitu juga worktree."
+    ]
+  },
+  {
+    "id": "RC-FR-052",
+    "title": "Dokumentasi dan inisialisasi project",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2990 initCommand membuat .rann/config.toml dan RANN.md hanya bila belum ada.",
+      "packages/cli/src/main.ts:2997 menulis RANN.md dengan teks tetap 'Tulis aturan yang harus diikuti agent di repo ini', bukan fakta repo.",
+      "packages/cli/src/main.ts:2993-2995 membuat .rann/config.toml berisi satu komentar, tanpa nilai project.",
+      "packages/cli/src/main.ts:2089 /init di REPL memanggil initCommand yang sama."
+    ],
+    "gaps": [
+      "RANN.md adalah placeholder kosong, bukan perintah, konvensi, dan batasan project (RC-FR-052.1 dan .2).",
+      "Tidak ada pembaruan dokumentasi setelah perubahan besar (RC-FR-052.3).",
+      "Tidak ada pilihan bahasa dokumentasi (RC-FR-052.4).",
+      "RC-AC-052 menyebut .rann/config.json, tetapi kode menulis .rann/config.toml."
+    ]
+  },
+  {
+    "id": "RC-FR-086",
+    "title": "Registry tool bawaan",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:382-1365 mendaftarkan 23 tool: filesystem, git, checkpoint, repo_map, search_code, apply_patch, project_check, plan, goal, shell, memory, skill, task.",
+      "packages/runtime/src/tools/index.ts:1349 menambah 6 alias, sehingga toolSpecs di :1368 mengembalikan 29 nama.",
+      "packages/runtime/src/tools.test.ts:178 memverifikasi daftar 29 nama tool yang diekspos ke provider.",
+      "packages/runtime/src/tools/index.ts:73-77 ToolDefinition hanya berisi spec, risk, dan run; ToolSpec di packages/runtime/src/providers/types.ts:24-28 hanya name, description, parameters."
+    ],
+    "gaps": [
+      "Tidak ada outputSchema, permission, timeoutMs, idempotent, maxOutputBytes, tags, atau costHint di metadata tool (RC-FR-086.2).",
+      "/tools di packages/cli/src/main.ts:1720 hanya mencetak string hardcoded tanpa kategori, status, atau izin (RC-FR-086.4).",
+      "Tool bawaan tidak bisa dimatikan per project; AgentConfig.tools ada di agent.ts:88 dan dipakai di :511, tetapi tidak pernah diisi dari config di rpc.ts:1205-1216.",
+      "Kategori web search, HTTP, browser, database, package, image, document, system, scheduling, dan messaging belum ada (RC-FR-086.1)."
+    ]
+  },
+  {
+    "id": "RC-FR-087",
+    "title": "Tool kustom dan eksternal",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada loader .rann/tools, defineTool, atau SDK tool di packages, scripts, maupun package.json.",
+      "/tool masih stub NOT_YET di packages/cli/src/repl-commands.ts:130.",
+      "packages/runtime/src/tools/index.ts:1368 toolSpecs hanya menggabungkan array tools dan aliasTools internal."
+    ],
+    "gaps": [
+      "Tidak ada modul TypeScript kustom yang dimuat dari .rann/tools (RC-FR-087.1).",
+      "Tidak ada tool eksternal berbasis proses dengan input/output JSON (RC-FR-087.2).",
+      "Tidak ada deklarasi permission dan timeout untuk tool kustom (RC-FR-087.3).",
+      "Tidak ada validasi skema saat registrasi dan tidak ada /tool test (RC-FR-087.4 dan .5)."
+    ]
+  },
+  {
+    "id": "RC-FR-088",
+    "title": "Validasi skema dan chaining",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:374 parse memakai Zod safeParse dan menyusun pesan error dari issue.path serta issue.message.",
+      "Setiap tool memanggil parse sebelum efek samping, misalnya fs_write di :483 dan apply_patch di :938.",
+      "packages/runtime/src/tools.test.ts:117 menguji argumen salah tipe dan tool tak dikenal.",
+      "Tidak ada outputSchema di packages/runtime/src/tools/index.ts:73-77, sehingga output tidak divalidasi."
+    ],
+    "gaps": [
+      "Output tool tidak divalidasi dengan Zod (RC-FR-088.1).",
+      "Tidak ada mesin chaining; setiap tool dipanggil model satu per satu (RC-FR-088.3 dan .4).",
+      "Tidak ada penyimpanan output antara sebagai artefak (RC-FR-088.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-089",
+    "title": "Permission, timeout, retry, dan log tool",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/policy.ts:52 decide menangani mode read-only, ask, accept-edits, trusted, custom, allow, deny, dan perintah berbahaya.",
+      "packages/runtime/src/tools/index.ts:1192-1204 shell_run memakai detached process dan process.kill(-pid, SIGKILL) saat timeout, jadi seluruh process group dibunuh.",
+      "packages/runtime/src/agent.ts:737 addToolCall menyimpan args yang sudah diredaksi; :767 completeToolCall menyimpan status, hasil, exit code, dan durasi.",
+      "packages/runtime/src/tools/index.ts:80 output dipotong di 100.000 karakter; packages/shared/src/redact.ts:9 menyediakan redactSecrets.",
+      "packages/runtime/src/tools.test.ts:101,109,292 menguji shell, penolakan perintah berbahaya, dan sanitasi env; policy.test.ts 9 tes lulus."
+    ],
+    "gaps": [
+      "Timeout default tidak tercatat per tool; hanya shell_run yang punya default 120.000 ms dan project_check yang meneruskan timeout.",
+      "E_TOOL_TIMEOUT tidak pernah dilempar; shell_run mengembalikan ok=false dengan output.error='timeout' dan exitCode 124 (tools/index.ts:1203).",
+      "Tidak ada matriks retry atau flag idempotent; retry yang ada hanya retry stream provider di agent.ts:585.",
+      "Log tidak punya trace id, dan output besar tidak disimpan sebagai artefak; addArtifact tidak dipanggil di packages/runtime/src."
+    ]
+  },
+  {
+    "id": "RC-FR-090",
+    "title": "Cakupan kategori tool",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:382-1365 hanya mencakup filesystem, terminal, git, testing/build lewat project_check, serta plan/goal/memory/skill/task.",
+      "Tidak ada tool web_search, http_request, browser_*, run_code, db_query, package_install, test_run, coverage, image_*, pdf_extract, docx_read, xlsx_read, system_info, schedule_*, atau send_message.",
+      "packages/runtime/package.json hanya bergantung pada @rann/shared, @rann/storage, croner, ws, dan zod; tidak ada Playwright, Puppeteer, sharp, pdf parser, atau library dokumen.",
+      "Scheduler dan messaging ada sebagai service di packages/runtime/src/scheduler.ts dan messaging.ts, tetapi tidak diekspos sebagai tool."
+    ],
+    "gaps": [
+      "Hanya 5 dari 15 kategori di RC-FR-086 punya tool, sehingga RC-FR-090.1 tidak terpenuhi.",
+      "Tool database read-only dan penolakan write tanpa izin tidak ada (RC-FR-090.2).",
+      "Ekstraksi PDF, DOCX, dan XLSX tidak ada (RC-FR-090.3).",
+      "Resize, crop, dan OCR gambar tidak ada (RC-FR-090.4), dan messaging tidak memakai adapter gateway sebagai tool (RC-FR-090.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-115",
+    "title": "Operasi Git dasar",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:703-739 git_read menyediakan status, diff, log, show, blame, branch list, dan remote.",
+      "packages/runtime/src/tools/index.ts:745-790 git_write menyediakan stage, unstage, commit, dan branch_create.",
+      "packages/runtime/src/git.ts:63-66 menambahkan trailer Rann-Code-Session pada commit.",
+      "packages/runtime/src/tools.test.ts:244,268 menguji commit dengan trailer dan penolakan commit saat konflik.",
+      "Commit tidak otomatis: tidak ada pemanggilan git_write dari loop agent."
+    ],
+    "gaps": [
+      "Commit message tidak dibuat dari diff dan tidak bisa diedit lewat alur commit; message wajib dikirim pemanggil (RC-FR-115.2).",
+      "/git dan /commit tidak tersedia di CLI, keduanya NOT_YET di packages/cli/src/repl-commands.ts:141 dan :143.",
+      "Tidak ada push atau pull, jadi klaim 'commit dengan benar' baru berlaku lokal."
+    ]
+  },
+  {
+    "id": "RC-FR-116",
+    "title": "Checkpoint dan rollback",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:728-732 membuat file checkpoint sebelum tool mutasi pertama dalam satu turn bila checkpointsDir tersedia.",
+      "packages/runtime/src/checkpoint-files.ts:51 createFileCheckpoint menyimpan manifest dan salinan berkas; :125 restoreFileCheckpoint mengembalikan berkas.",
+      "packages/runtime/src/checkpoint-files.ts:141-148 menolak rollback dengan E_FILE_CHANGED bila berkas berubah setelah checkpoint dan force bukan true.",
+      "packages/runtime/src/tools/index.ts:796,819,842 mengekspos checkpoint_create, checkpoint_list, dan checkpoint_restore.",
+      "/checkpoint, /checkpoints, dan /undo terhubung di packages/cli/src/main.ts:2093,2172,2183; restore lewat RPC menulis audit di rpc.ts:715-721.",
+      "packages/runtime/src/checkpoint-files.test.ts:20,35,43 dan tools.test.ts:123 menguji snapshot, penolakan rollback, pembersihan, dan restore."
+    ],
+    "gaps": [
+      "Checkpoint hanya dibuat sebelum perubahan, tidak setelah verifikasi sukses (RC-FR-116.1).",
+      "State task tidak dipulihkan; state_json disimpan di checkpoints tetapi tidak ada fungsi restore state (RC-FR-116.2).",
+      "apply_patch tidak memicu checkpoint otomatis karena tidak ada di daftar mutating agent.ts:728.",
+      "pruneFileCheckpoints ada di checkpoint-files.ts:165 tetapi tidak dipanggil di kode produksi.",
+      "checkpoint_restore sebagai tool tidak menulis audit; hanya jalur RPC yang menulis audit (RC-FR-116.5)."
+    ]
+  },
+  {
+    "id": "RC-FR-117",
+    "title": "Worktree dan konflik",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada pemanggilan git worktree, merge, pull, atau push di packages/runtime/src dan packages/cli/src.",
+      "/worktree masih stub NOT_YET di packages/cli/src/repl-commands.ts:145.",
+      "packages/runtime/src/git.ts:23 runGit hanya menjadi helper; tidak ada service worktree."
+    ],
+    "gaps": [
+      "Tidak ada pembuatan worktree per task atau per agen (RC-FR-117.1).",
+      "Tidak ada merge berbasis diff atau deteksi konflik antar worktree (RC-FR-117.2).",
+      "Tidak ada alur penyelesaian konflik dengan pilihan pengguna (RC-FR-117.3).",
+      "Tidak ada pembersihan worktree, dan pull/push belum ada (RC-FR-117.4 dan .5)."
+    ]
+  },
+  {
+    "id": "RC-FR-118",
+    "title": "Browser automation dasar",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada tool browser di packages/runtime/src/tools/index.ts:382-1365.",
+      "Tidak ada dependensi Playwright atau Puppeteer di package.json maupun packages/runtime/package.json.",
+      "Kata browser di packages/runtime/src hanya muncul di packages/runtime/src/dashboard.ts:3 sebagai komentar.",
+      "Tidak ada konsep artifact untuk screenshot atau unduhan di jalur tool."
+    ],
+    "gaps": [
+      "Semua aksi navigate, click, type, scroll, select, screenshot, extract, download, upload, dan evaluate tidak ada (RC-FR-118.1).",
+      "Tidak ada timeout atau error khusus aksi browser (RC-FR-118.2).",
+      "Screenshot dan file tidak disimpan sebagai artefak (RC-FR-118.3).",
+      "Tidak ada izin untuk aksi yang mengubah data dan tidak ada daftar domain terblokir (RC-FR-118.4 dan .5)."
+    ]
+  },
+  {
+    "id": "RC-FR-119",
+    "title": "Isolasi sesi dan alur autentikasi browser",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada browser context, cookie store, atau profil persisten di packages/runtime/src.",
+      "Tidak ada penanganan 2FA atau kredensial browser di packages/runtime/src.",
+      "Tidak ada dependensi browser di packages/runtime/package.json."
+    ],
+    "gaps": [
+      "Tidak ada context terpisah per task dengan cookie dan storage sendiri (RC-FR-119.1).",
+      "Tidak ada kontrol profil persisten (RC-FR-119.2).",
+      "Tidak ada jaminan kredensial tidak masuk log atau transcript (RC-FR-119.3).",
+      "Tidak ada alur menunggu pengguna menyelesaikan 2FA dan tidak ada pembersihan context (RC-FR-119.4 dan .5)."
+    ]
+  },
+  {
+    "id": "RC-FR-120",
+    "title": "Perbedaan search, fetch, dan browser",
+    "status": "missing",
+    "evidence": [
+      "Tidak ada tool web search, HTTP fetch, atau browser di packages/runtime/src/tools/index.ts:1368.",
+      "fetch di packages/runtime/src hanya dipakai adapter provider (openai.ts, anthropic.ts, gemini.ts, openai-responses.ts) dan dashboard, bukan tool agent.",
+      "Tidak ada pencatatan alasan pemilihan metode di packages/runtime/src/agent.ts."
+    ],
+    "gaps": [
+      "Web search terstruktur dengan judul, URL, dan cuplikan tidak ada (RC-FR-120.1).",
+      "HTTP fetch yang menghormati robots dan batas ukuran tidak ada (RC-FR-120.2).",
+      "Tidak ada pemilihan browser untuk halaman ber-JavaScript atau login (RC-FR-120.3).",
+      "Tidak ada catatan alasan metode dan tidak ada fallback antar metode (RC-FR-120.4 dan .5)."
+    ]
+  }
+]

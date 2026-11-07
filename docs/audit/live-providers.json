@@ -1,0 +1,360 @@
+[
+  {
+    "id": "RC-FR-101",
+    "title": "Arsitektur adapter provider",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:45-49 mendefinisikan Provider hanya dengan name, kind, dan chat(); tidak ada embed, listModels, health, atau countTokens",
+      "packages/runtime/src/providers/index.ts:14-80 createProvider memilih adapter lewat rantai if pada config.kind; adapter baru berarti menambah cabang di berkas registry ini",
+      "packages/runtime/src/providers/openai.ts:59-62 statusToCode memetakan 401/403, 429, dan sisanya ke E_PROVIDER_AUTH, E_PROVIDER_RATE_LIMIT, E_PROVIDER_UNAVAILABLE",
+      "packages/runtime/src/providers/provider-contract.test.ts:51-147 berisi 4 tes kontrak (anthropic, gemini, openai-responses, pemetaan 401 dan stream tanpa penutup)",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Interface adapter belum mencakup embed, listModels, health, dan countTokens seperti RC-FR-101.1",
+      "Tidak ada tes yang membuktikan penambahan adapter hanya menyentuh folder adapter dan registry; kontrak hanya diuji untuk 3 adapter nyata",
+      "Registry berupa if-chain di index.ts, bukan tabel registri yang bisa diperluas tanpa menyentuh kode inti"
+    ]
+  },
+  {
+    "id": "RC-FR-102",
+    "title": "Dukungan provider",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/index.ts:42-79 membuat AnthropicProvider, GeminiProvider, OpenAiResponsesProvider, dan OpenAiCompatibleProvider; MockProvider dipilih di baris 20",
+      "packages/runtime/src/providers/openai.ts:65-79 OpenAiCompatibleProvider menerima baseUrl, headers kustom, dan mode stream, jadi endpoint lokal dan OpenRouter bisa dipakai lewat kind openai-compatible",
+      "packages/shared/src/config.ts:12-19 ProviderConfig memuat base_url, headers, dan timeout_ms",
+      "packages/runtime/src/providers/openai.test.ts:38-110 menguji stream teks/tool/usage, 401, mode non-stream, dan gambar sebagai data URL",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "OpenRouter tidak ada sebagai adapter atau preset bernama; pengguna harus menulis base_url https://openrouter.ai/api/v1 dan header tambahan sendiri",
+      "Tidak ada contoh konfigurasi provider di repo (tidak ada direktori examples atau berkas contoh TOML)",
+      "Klaim tes kontrak per adapter belum terpenuhi: OpenRouter dan server lokal tidak punya tes kontrak sendiri"
+    ]
+  },
+  {
+    "id": "RC-FR-103",
+    "title": "Manajemen kredensial",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/secrets.ts:40-60 SecretStore memakai XChaCha20-Poly1305 dengan master.key 32 byte mode 0600 atau kunci turunan scrypt",
+      "packages/storage/src/secrets.test.ts:20-64 menguji simpan/baca/hapus, tidak ada plaintext di disk, rotasi nilai, master key berubah, mode passphrase, dan nama tidak valid",
+      "packages/cli/src/main.ts:2522-2545 provider login menulis kunci ke vault lewat secret.set, menyetel api_key_ref, dan hanya mencetak 4 karakter terakhir",
+      "packages/cli/src/main.ts:2506-2521 dan 2545-2563 menyediakan provider test dan provider remove",
+      "packages/runtime/src/rpc.ts:1646-1675 provider list mengembalikan key_hint ****xxxx, bukan nilai penuh",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Kunci dari env tidak dipindahkan otomatis ke vault saat first-run; migrasi hanya terjadi bila pengguna menjalankan provider login",
+      "provider login memanggil stopDaemonForConfig (main.ts:2542) sehingga sesi yang sedang berjalan terputus, bertentangan dengan RC-FR-103.5",
+      "provider add --key-env hanya menulis api_key_env ke config; tidak ada jalur yang memaksa kunci masuk store"
+    ]
+  },
+  {
+    "id": "RC-FR-104",
+    "title": "Discovery dan registrasi model",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:187-251 resolveDescriptor menggabungkan descriptor bawaan, baris DB, override config, dan alias",
+      "packages/runtime/src/models.ts:254-294 seedRegistry menulis provider dan model dari config ke tabel models",
+      "packages/storage/src/model-repos.ts:104-137 upsertModel menyimpan context_window, max_output_tokens, harga input/output/cache, dan capabilities_json",
+      "packages/cli/src/main.ts:1743-1753 /models menampilkan id, context window, dan capability"
+    ],
+    "gaps": [
+      "Tidak ada discovery ke endpoint /models provider; listModels di storage hanya membaca tabel lokal, jadi daftar tidak pernah diambil atau di-cache dari provider",
+      "Tidak ada penanda unavailable saat model hilang dari provider; kolom dan logika penandaan tidak ada",
+      "/models tidak menampilkan harga seperti diminta RC-FR-104.4",
+      "Tidak ada tes yang menutup jalur discovery provider"
+    ]
+  },
+  {
+    "id": "RC-FR-105",
+    "title": "Capability registry",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:5-17 mendaftar 11 capability: streaming, toolCalling, parallelToolCalls, structuredOutput, strictSchema, reasoning, vision, audio, pdf, promptCaching, embeddings",
+      "packages/runtime/src/models.ts:163-174 mergeCapabilities menggabungkan default, baris DB, dan override",
+      "packages/runtime/src/models.ts:317-325 requireCapability melempar E_PROVIDER_CAPABILITY",
+      "packages/runtime/src/agent.ts:507-516 mengosongkan daftar tool bila modelCapabilities.toolCalling bernilai false",
+      "packages/runtime/src/models.test.ts:91-98 menguji penggabungan capability dan model tanpa tool calling",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "requireCapability hanya didefinisikan, tidak dipanggil di jalur produksi mana pun",
+      "Tidak ada pencatatan sumber perubahan capability; tabel model_capabilities di schema-v3.ts:322-329 tidak dipakai kode",
+      "Capability yang tidak diketahui tidak ditandai; descriptor memakai default bawaan tanpa penanda asumsi"
+    ]
+  },
+  {
+    "id": "RC-FR-106",
+    "title": "Context window dan tokenizer",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:51-53 estimateTokens memakai panjang teks dibagi 4, bukan tokenizer model",
+      "packages/runtime/src/agent.ts:274-313 buildChatContext memotong riwayat dan membuat digest ketika total melewati maxTokens",
+      "packages/runtime/src/agent.ts:561-569 melempar E_CONTEXT_OVERFLOW bila prompt + reserve melebihi contextWindow kandidat",
+      "packages/runtime/src/rpc.ts:1298-1302 meneruskan context.max_tokens, keep_recent, dan summary_chars dari config",
+      "packages/cli/src/repl-commands.ts:136 /context masih ditandai NOT_YET"
+    ],
+    "gaps": [
+      "Ambang 75 persen untuk mulai compaction dan 90 persen untuk mode esensial tidak ada; compaction dipicu hanya oleh max_tokens konfigurasi",
+      "Tidak ada tokenizer per model dan tidak ada bukti error estimasi ≤ 15 persen",
+      "Digest tidak menjamin goal, keputusan, error, path file, dan hasil verifikasi dipertahankan",
+      "/context belum tersedia sehingga komposisi context dan alasan pemotongan tidak bisa dilihat",
+      "Prompt caching tidak dikirim ke provider; anthropic hanya membaca cache_read_input_tokens"
+    ]
+  },
+  {
+    "id": "RC-FR-107",
+    "title": "Streaming dan tool calling",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:39-43 ProviderChunk mendukung text, tool_call, usage, dan done",
+      "packages/runtime/src/providers/openai.ts:206-234 mengakumulasi delta tool_calls per index lalu memancarkan tool_call setelah argumen lengkap",
+      "packages/runtime/src/providers/retry.ts:100-122 retryStream hanya mengulang bila belum ada chunk yang dipancarkan",
+      "packages/runtime/src/agent.ts:631-640 menyimpan teks parsial dan memancarkan message.end partial saat stream gagal",
+      "packages/runtime/src/agent-wiring.test.ts:152-175 menguji penyimpanan teks parsial saat stream terputus"
+    ],
+    "gaps": [
+      "Tidak ada delta reasoning di ProviderChunk dan tidak ada penanganan reasoning_content/thinking di adapter",
+      "Parallel tool call tidak dijalankan paralel: agent.ts:712 memproses calls dengan for-of berurutan",
+      "Stream yang terputus setelah chunk pertama tidak bisa dilanjutkan atau diulang; hanya teks parsial disimpan",
+      "Tidak ada tes resume stream setelah koneksi putus di tengah"
+    ]
+  },
+  {
+    "id": "RC-FR-108",
+    "title": "Structured output dan multimodal",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/openai.ts:44-51 mengirim gambar sebagai image_url data URI; openai-responses.ts:42-45 memakai input_image; anthropic.ts:54-55 memakai blok image; gemini.ts:52-53 memakai inlineData",
+      "packages/runtime/src/attachments.ts:24-25 membatasi 20 MB per lampiran dan 50 MB total; baris 72-120 memvalidasi path, symlink, ukuran, dan tipe",
+      "packages/runtime/src/attachments.ts:125-146 mengekstrak PDF lewat pdftotext untuk model non-multimodal",
+      "packages/runtime/src/rpc.ts:1159-1161 menolak gambar dengan E_UNSUPPORTED bila model tidak punya capability vision"
+    ],
+    "gaps": [
+      "Tidak ada response_format atau json_schema di adapter OpenAI; structured output provider-native belum dipakai",
+      "Tidak ada validasi dan repair output JSON di agent atau planner",
+      "Audio tidak didukung: AttachmentKind hanya image, pdf, dan text (attachments.ts:7)",
+      "Tidak ada tes structured output maupun pengiriman PDF/audio ke provider"
+    ]
+  },
+  {
+    "id": "RC-FR-109",
+    "title": "Usage dan biaya",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:334-352 recordUsage menyimpan input, output, cache read/write, provider_request_id, dan cost_source known/unknown",
+      "packages/runtime/src/agent.ts:682-697 mencatat usage dan biaya per turn; baris 363-390 menegakkan budget harian token dan USD; baris 602-607 menegakkan budget per turn",
+      "packages/runtime/src/models.ts:327-341 costFor mengembalikan null bila harga tidak diketahui",
+      "packages/runtime/src/rpc.ts:731-744 budget.status dan 769-770 usage.summary menyuplai data /budget, /usage, dan /cost (main.ts:1695-1718)"
+    ],
+    "gaps": [
+      "provider_request_id tidak pernah diisi: agent.ts:682-693 tidak meneruskan id dari provider sehingga kolom selalu null",
+      "Tidak ada budget per task; max_cost_per_task di routing hanya filter pemilihan model, bukan batas eksekusi",
+      "recordUsage pada jalur plan-only (agent.ts:439-446) tidak mengisi cache dan biaya",
+      "Tidak ada tes yang membandingkan total usage 10 request dengan penjumlahan per request"
+    ]
+  },
+  {
+    "id": "RC-FR-110",
+    "title": "Kesehatan provider dan rate limit",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/retry.ts:3-16 mendefinisikan 6 status dan konstanta 5 kegagalan serta 30 detik",
+      "packages/runtime/src/providers/retry.ts:38-62 recordFailure menghitung kegagalan dalam window 60 detik dan menyetel openUntil",
+      "packages/runtime/src/providers/retry.ts:74-77 retryDelayMs memakai retryAfterMs dari header; openai.ts:137 mengisi retryAfterMs dari Retry-After",
+      "packages/runtime/src/providers/retry.test.ts:42-56 menguji pembukaan circuit setelah lima kegagalan",
+      "packages/runtime/src/rpc.ts:1673-1674 dan packages/cli/src/main.ts:1762 menampilkan status dan retry_after_ms di /providers",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "HealthRegistry.isOpen (retry.ts:29-32) tidak dipanggil di mana pun, jadi circuit breaker tidak pernah mencegah request",
+      "Tidak ada health check berkala atau on-demand yang mengukur latensi; status hanya berubah dari hasil panggilan nyata dan provider test",
+      "Status bar tidak ada; status provider hanya terlihat lewat /providers",
+      "Tidak ada tes yang membuktikan request tidak dihantam ulang sebelum Retry-After lewat"
+    ]
+  },
+  {
+    "id": "RC-FR-111",
+    "title": "Retry dan fallback",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/retry.ts:100-122 retryStream memakai maksimal 2 percobaan dengan delay 1s/2s/4s dan menghormati retryAfterMs",
+      "packages/runtime/src/agent.ts:550-644 membangun rantai kandidat dari provider utama plus options.fallbacks lalu mencoba berurutan",
+      "packages/runtime/src/rpc.ts:1164-1183 mengisi fallback dari config.model.fallback dan melewati provider tanpa kredensial",
+      "packages/runtime/src/agent.ts:616-625 memancarkan log provider.switch saat fallback dipakai",
+      "packages/runtime/src/providers/retry.test.ts:6-40 menguji retry sebelum chunk pertama, tidak mengulang setelah teks terkirim, dan klasifikasi error",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Tidak ada gerbang allowFallback atau pin: fallback tetap dipasang meski pengguna memilih model eksplisit (rpc.ts:1164-1183 tidak memeriksa input.model)",
+      "Kandidat fallback tidak difilter capability atau context window yang sama/lebih tinggi",
+      "Rantai fallback tidak dicatat di routing log (fallbackChain tidak diisi) dan error akhir tidak memuat rantai percobaan",
+      "Fallback hanya dicoba bila belum ada teks; kegagalan setelah chunk pertama langsung mengakhiri turn"
+    ]
+  },
+  {
+    "id": "RC-FR-112",
+    "title": "Alias dan pemilihan model",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:196-208 menyelesaikan alias dari config.models ke provider/model",
+      "packages/cli/src/main.ts:1731-1742 /model tanpa argumen menampilkan model aktif dan daftar; /model <nama> mengganti model sesi",
+      "packages/runtime/src/rpc.ts:1124-1130 dan 1190 menetapkan target turn dan menyimpan model ke turns lewat setTurnModel",
+      "packages/runtime/src/models.test.ts:34-48 menguji registry dari config dan override",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Flag --pin tidak ada di CLI maupun di /model, jadi tidak ada cara mencegah fallback per sesi",
+      "/model tanpa argumen tidak menunjukkan sumber pemilihan (config, sesi, override, atau auto)",
+      "Tidak ada status bar yang menampilkan nama model asli setelah alias",
+      "Perubahan model tidak dicatat sebagai event tersendiri di turn selain kolom turns.model"
+    ]
+  },
+  {
+    "id": "RC-FR-113",
+    "title": "Smart router",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/router.ts:122-242 routeModel menilai task class, kualitas, context, tool, biaya, latensi, dan health lalu mengurutkan kandidat",
+      "packages/runtime/src/router.ts:142-173 membuang model deprecated, provider down/auth_error, capability tidak cocok, context kurang, dan kualitas di bawah minimum",
+      "packages/runtime/src/rpc.ts:387-404 route.explain mengembalikan keputusan lengkap dengan kandidat dan alasan",
+      "packages/cli/src/main.ts:2093-2100 /route explain dan 2646-2670 rann route explain mencetak skor serta kandidat",
+      "packages/runtime/src/router.test.ts:20-80 menguji klasifikasi, pembuangan model tanpa tool, pemilihan reasoning, pin/alias, dan batas biaya",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Perintah /route why yang diminta RC-FR-113.2 tidak ada; yang tersedia hanya /route explain",
+      "Router tidak belajar dari hasil task; tidak ada penyimpanan outcome atau penyesuaian skor",
+      "Estimasi token untuk filter context memakai panjang prompt dibagi 4, bukan estimasi context sebenarnya",
+      "Tidak ada tes yang memverifikasi error penjelasan saat tidak ada kandidat cocok"
+    ]
+  },
+  {
+    "id": "RC-FR-114",
+    "title": "Kebijakan routing dan override",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:105-114 routing.mode hanya auto/manual, dengan policy string, pinned, prefer, min_quality, max_cost_per_task, dan strict_budget",
+      "packages/runtime/src/rpc.ts:1132-1158 hanya menjalankan router bila mode auto dan model tidak diminta eksplisit",
+      "packages/storage/src/model-repos.ts:164-179 recordRoutingLog menyimpan requested_model, selected_model, reason, fallback_chain_json, dan latency_ms",
+      "packages/storage/src/schema-v3.ts:331-342 tabel routing_logs menyediakan kolom tersebut",
+      "packages/runtime/src/rpc.ts:528-605 mencatat audit untuk add/update/remove scheduler, bukan untuk keputusan routing"
+    ],
+    "gaps": [
+      "Policy cost-first, quality-first, latency-first, dan custom tidak diimplementasikan; router hanya memakai bobot per task class dan string policy tidak mengubah bobot",
+      "Override per task dan per agen tidak ada; hanya override model per sesi/request",
+      "Routing log tidak menyimpan kandidat dan skor, hanya model terpilih dan alasan singkat",
+      "Pin tidak menahan fallback karena fallback dipasang tanpa memeriksa pin atau allowFallback",
+      "Tidak ada perintah untuk membaca routing log (tidak ada route.history di RPC/CLI)"
+    ]
+  },
+  {
+    "id": "RC-FR-121",
+    "title": "Eksekusi dan antrean background",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/job-repos.ts:59-87 enqueueJob menyimpan queue, kind, priority, max_attempts, idempotency_key, dan next_run_at; idempotency key mengembalikan job lama",
+      "packages/storage/src/job-repos.ts:117-142 claimJob mengklaim satu job secara transaksional dengan lease dan urutan priority DESC",
+      "packages/runtime/src/background.ts:62-72 dan 108-130 menjalankan worker dengan concurrency, poll, lease, dan batas runtime dari config",
+      "packages/shared/src/config.ts:85-91 menyediakan background.concurrency, poll_ms, lease_ms, dan max_runtime_ms",
+      "packages/cli/src/main.ts:1487-1586 menyediakan /background list|add|get|logs|cancel|retry"
+    ],
+    "gaps": [
+      "/queue masih NOT_YET (packages/cli/src/repl-commands.ts:172), padahal RC-FR-121.5 meminta /background dan /queue sama-sama menampilkan status",
+      "Tidak ada tes beban 20 job yang membuktikan urutan prioritas dan tidak ada duplikasi hasil",
+      "Antrean hanya bisa dipakai lewat daemon; tidak ada jalur CLI one-shot untuk mengirim job tanpa REPL"
+    ]
+  },
+  {
+    "id": "RC-FR-122",
+    "title": "Persistensi dan pemulihan background",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/background.ts:74-84 memanggil recoverStaleJobs saat worker start dan memancarkan event recovered",
+      "packages/storage/src/job-repos.ts:226-252 mengembalikan job running dengan lease kedaluwarsa ke queued bila attempt masih kurang, atau menandainya dead",
+      "packages/storage/src/job-repos.ts:155-173 completeJob hanya menandai done sehingga job selesai tidak diklaim ulang",
+      "packages/storage/src/job-repos.ts:117-142 claimJob hanya mengambil status queued",
+      "packages/storage/src/job-repos.test.ts:54-101 menguji tidak dijalankan ulang setelah restart, pengembalian lease kedaluwarsa, dan dead letter",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Pemulihan dicatat di job_events (job-repos.ts:240,247) tetapi tidak masuk audit log; RC-FR-122.5 meminta log dan audit",
+      "Tidak ada tes restart daemon nyata; pengujian hanya pada repo job",
+      "Kebijakan pemulihan tidak bisa dikonfigurasi; selalu requeue bila attempt tersisa"
+    ]
+  },
+  {
+    "id": "RC-FR-123",
+    "title": "Monitoring, cancel, retry, dan notifikasi",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1487-1586 menangani /background list, add, get, logs, cancel, dan retry",
+      "packages/runtime/src/rpc.ts:499-527 menyediakan background.list, get, cancel, retry, dan logs dengan audit untuk cancel/retry",
+      "packages/storage/src/job-repos.ts:175-199 failJob menghitung backoff eksponensial dan memindahkan job ke dead setelah attempt habis",
+      "packages/storage/src/job-repos.ts:254-268 appendJobEvent dan listJobEvents menyimpan log job",
+      "packages/shared/src/events.ts:16 menyediakan tipe event job.update"
+    ],
+    "gaps": [
+      "Tidak ada notifikasi saat job selesai, gagal, atau butuh approval; messaging.ts tidak menerima event job dan tidak ada pemanggilan notify",
+      "Log job bisa dilihat tetapi tidak bisa diekspor",
+      "Retry manual tidak memakai idempotency key baru dan tidak mencegah efek samping ganda",
+      "Tidak ada perintah untuk memeriksa dead letter secara khusus selain filter status di background.list"
+    ]
+  },
+  {
+    "id": "RC-FR-124",
+    "title": "Jenis jadwal",
+    "status": "done",
+    "evidence": [
+      "packages/runtime/src/scheduler.ts:38-55 parseSchedule mendukung once:<tanggal>, every:<durasi>, dan cron 5 field",
+      "packages/runtime/src/scheduler.ts:65-73 nextRunFor memvalidasi timezone dan memakai Cron dengan opsi timezone",
+      "packages/runtime/src/scheduler.ts:139-183 tick mengantre job scheduler.run dan mendukung overlap skip serta replace; queue berarti job baru tetap diantrekan",
+      "packages/runtime/src/rpc.ts:528-605 menyediakan scheduler.add, list, run, update, remove, dan history",
+      "packages/cli/src/main.ts:1588-1668 menyediakan /scheduler list|add|run|enable|disable|remove|history",
+      "packages/runtime/src/scheduler.test.ts:36-136 berisi 11 tes termasuk once/every/cron, timezone, catch_up, dan pengantrean job",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Tidak ada tes end-to-end yang menjalankan ketiga jenis jadwal pada waktu nyata; pengujian memakai waktu injeksi"
+    ]
+  },
+  {
+    "id": "RC-FR-125",
+    "title": "Trigger, timezone, dan DST",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/scheduler.ts:57-63 assertTimezone memvalidasi timezone lewat Intl.DateTimeFormat",
+      "packages/runtime/src/scheduler.ts:65-73 perhitungan next run memakai Cron dengan timezone lokal lalu mengembalikan timestamp",
+      "packages/runtime/src/scheduler.ts:96-109 planSchedulerTick menerapkan catch_up: bila terlewat dan catch_up mati, jadwal dilewati",
+      "packages/runtime/src/scheduler.test.ts:74-127 menguji timezone cron, penolakan timezone tidak dikenal, serta catch_up hidup dan mati",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Trigger kondisional (status, tanggal, hasil job sebelumnya) dan trigger event tidak ada",
+      "Tidak ada tes DST eksplisit; klaim tidak berjalan dua kali atau terlewat belum dibuktikan",
+      "catch_up hanya boolean sekali/lewat, belum ada kebijakan lain seperti jumlah maksimum catch-up"
+    ]
+  },
+  {
+    "id": "RC-FR-126",
+    "title": "Persistensi, riwayat, dan retry jadwal",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/job-repos.ts:391-419 startSchedulerRun dan finishSchedulerRun mencatat status, started_at, ended_at, duration_ms, output, dan error_message di job_runs",
+      "packages/storage/src/job-repos.ts:421-425 listSchedulerRuns membaca riwayat dengan limit",
+      "packages/runtime/src/rpc.ts:601-605 scheduler.history mengembalikan riwayat; packages/cli/src/main.ts:1651-1666 menampilkan lewat /scheduler history",
+      "packages/runtime/src/rpc.ts:543-549, 592, dan 598 mencatat audit untuk add, update, dan remove jadwal",
+      "packages/storage/src/job-repos.test.ts:103-131 menguji penyimpanan jadwal, due/update/remove, dan riwayat dengan durasi serta output",
+      "vitest 2026-11-07: 10 berkas dan 58 tes lulus, termasuk provider-contract, openai, mock, retry, router, models, background, scheduler, job-repos, dan secrets"
+    ],
+    "gaps": [
+      "Retry jadwal tidak tercatat sebagai job_runs terpisah; startSchedulerRun selalu menulis attempt 1 (job-repos.ts:399-401)",
+      "Riwayat hanya bisa dibatasi jumlah, belum bisa difilter atau diekspor",
+      "Job yang gagal berulang tidak dinonaktifkan otomatis dan tidak memberi notifikasi",
+      "Tidak ada tes retry policy 3 kali dengan backoff sampai dead letter untuk job scheduler"
+    ]
+  }
+]

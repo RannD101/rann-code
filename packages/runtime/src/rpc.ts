@@ -1,5 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { execFileSync, spawn } from "node:child_process";
+import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
 import { RannError, PROTOCOL_VERSION, explainKey, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
@@ -82,6 +83,8 @@ import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
 import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
+import { HookRunner, type HookEvent } from "./hooks.js";
+import { PluginManager } from "./plugins.js";
 import { SkillStore } from "./skills.js";
 import { McpManager } from "./mcp.js";
 import { BackgroundQueue, type JobContext } from "./background.js";
@@ -778,6 +781,60 @@ export class RpcServer {
           home: this.options.config.home,
           project_path: this.options.config.projectPath
         };
+      case "plugin.list":
+        return this.pluginManager(input.projectPath as string | undefined).list();
+      case "plugin.install":
+        return this.pluginManager(input.projectPath as string | undefined).install(input.source as string, {
+          scope: input.scope as "global" | "project" | undefined,
+          name: input.name as string | undefined,
+          approve: input.approve === true,
+          checksum: input.checksum as string | undefined,
+          allowUnsigned: input.allowUnsigned === true,
+          overwrite: input.overwrite === true
+        });
+      case "plugin.enable":
+        return this.pluginManager(input.projectPath as string | undefined).enable(input.name as string);
+      case "plugin.disable":
+        return this.pluginManager(input.projectPath as string | undefined).disable(input.name as string);
+      case "plugin.remove":
+        return this.pluginManager(input.projectPath as string | undefined).remove(input.name as string);
+      case "plugin.update":
+        return this.pluginManager(input.projectPath as string | undefined).update(
+          input.name as string,
+          input.source as string | undefined
+        );
+      case "plugin.rollback":
+        return this.pluginManager(input.projectPath as string | undefined).rollback(input.name as string);
+      case "plugin.invoke":
+        return this.pluginManager(input.projectPath as string | undefined).invoke(
+          input.name as string,
+          input.method as string,
+          input.params,
+          typeof input.timeoutMs === "number" ? input.timeoutMs : undefined
+        );
+      case "hooks.list": {
+        const projectPath = (input.projectPath as string | undefined) ?? this.options.config.projectPath ?? process.cwd();
+        const runner = new HookRunner(this.options.config.config.hooks, { projectRoot: projectPath });
+        return { hooks: runner.list(), invalid: runner.validate() };
+      }
+      case "hooks.test": {
+        const projectPath = (input.projectPath as string | undefined) ?? this.options.config.projectPath ?? process.cwd();
+        const runner = new HookRunner(this.options.config.config.hooks, {
+          projectRoot: projectPath,
+          pluginRoot: join(this.options.layout.profileDir, "plugins")
+        });
+        const event = input.event as HookEvent;
+        return runner.run(
+          event,
+          {
+            session_id: input.sessionId as string | undefined,
+            tool: input.tool as string | undefined,
+            args: input.args,
+            prompt: input.prompt as string | undefined
+          },
+          { cwd: projectPath, dryRun: input.dryRun === true }
+        );
+      }
       case "permission.respond":
         return this.respondPermission(input.requestId as string, input.approved as boolean, input.remember as boolean);
       case "memory.list":
@@ -810,6 +867,24 @@ export class RpcServer {
         return {
           removed: this.memoryService(input.projectPath as string | undefined).remove(input.id as string)
         };
+      case "memory.export":
+        return this.memoryService(input.projectPath as string | undefined).exportAll();
+      case "memory.import":
+        return this.memoryService(input.projectPath as string | undefined).importAll(
+          input.payload as never,
+          { replace: input.replace === true }
+        );
+      case "memory.index":
+        return this.memoryService(input.projectPath as string | undefined).indexKnowledge(
+          (input.root as string | undefined) ?? (input.projectPath as string | undefined) ?? process.cwd(),
+          { maxFiles: typeof input.maxFiles === "number" ? input.maxFiles : 500 }
+        );
+      case "memory.supersede":
+        return this.memoryService(input.projectPath as string | undefined).supersede(
+          input.id as string,
+          input.text as string,
+          (input.reason as string | undefined) ?? "diganti"
+        );
       case "skill.list":
         return this.skillStore(input.projectPath as string | undefined).list(input.limit as number);
       case "skill.view": {
@@ -817,14 +892,66 @@ export class RpcServer {
         if (!skill) throw new RannError("E_NOT_FOUND", `Skill tidak ditemukan: ${input.name}`);
         return skill;
       }
-      case "skill.create":
-        return this.skillStore(input.projectPath as string | undefined).create({
+      case "skill.create": {
+        const store = this.skillStore(input.projectPath as string | undefined);
+        if (input.dryRun === true) {
+          return store.validate({
+            name: input.name as string,
+            description: input.description as string,
+            body: input.body as string,
+            triggers: input.triggers as string[] | undefined,
+            dependencies: input.dependencies as string[] | undefined
+          });
+        }
+        return store.create({
           name: input.name as string,
           description: input.description as string,
           body: input.body as string,
           scope: input.scope as "global" | "project",
-          overwrite: input.overwrite as boolean
+          overwrite: input.overwrite as boolean,
+          triggers: input.triggers as string[] | undefined,
+          dependencies: input.dependencies as string[] | undefined,
+          reason: (input.reason as string | undefined) ?? "dibuat",
+          actor: (input.actor as string | undefined) ?? "user"
         });
+      }
+      case "skill.select":
+        return this.skillStore(input.projectPath as string | undefined).select(input.task as string, {
+          max: typeof input.max === "number" ? input.max : 3,
+          include: input.include as string[] | undefined,
+          exclude: input.exclude as string[] | undefined
+        });
+      case "skill.edit":
+        return this.skillStore(input.projectPath as string | undefined).edit(input.name as string, {
+          body: input.body as string | undefined,
+          description: input.description as string | undefined,
+          triggers: input.triggers as string[] | undefined,
+          reason: input.reason as string | undefined,
+          actor: input.actor as string | undefined
+        });
+      case "skill.history":
+        return {
+          versions: this.skillStore(input.projectPath as string | undefined).history(input.name as string),
+          changelog: this.skillStore(input.projectPath as string | undefined).changelog(input.name as string)
+        };
+      case "skill.rollback":
+        return this.skillStore(input.projectPath as string | undefined).rollback(
+          input.name as string,
+          input.version as string | undefined
+        );
+      case "skill.install":
+        return this.skillStore(input.projectPath as string | undefined).install(input.source as string, {
+          scope: input.scope as "global" | "project" | undefined,
+          name: input.name as string | undefined,
+          approve: input.approve === true
+        });
+      case "skill.update":
+        return this.skillStore(input.projectPath as string | undefined).update(
+          input.name as string,
+          input.source as string | undefined
+        );
+      case "skill.conflicts":
+        return this.skillStore(input.projectPath as string | undefined).conflicts();
       case "skill.remove":
         return {
           removed: this.skillStore(input.projectPath as string | undefined).remove(
@@ -1212,14 +1339,24 @@ export class RpcServer {
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
       preApprovedPatterns: approvalPatterns,
-      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal)
+      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal),
+      ...(config.hooks.length > 0
+        ? {
+            hooks: new HookRunner(config.hooks, {
+              projectRoot: workspaceRoot,
+              pluginRoot: join(this.options.layout.profileDir, "plugins")
+            })
+          }
+        : {}),
+      ...(config.plugins.enabled ? { plugins: this.pluginManager(workspaceRoot) } : {})
     };
 
     const memory = config.memory.enabled
       ? new MemoryService(this.db, workspaceRoot, {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
-          retrieve: config.memory.retrieve
+          retrieve: config.memory.retrieve,
+          sessionId
         })
       : undefined;
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, workspaceRoot) : undefined;
@@ -1293,7 +1430,7 @@ export class RpcServer {
       model,
       workspaceRoot,
       ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
-      config: agentConfig,
+      config: { ...agentConfig, instructionsHome: this.options.layout.profileDir },
       context: {
         maxTokens: config.context.max_tokens,
         keepRecent: config.context.keep_recent,
@@ -1355,6 +1492,10 @@ export class RpcServer {
       });
 
     return { turnId: turn.id, status: "running", sessionId };
+  }
+
+  private pluginManager(projectPath?: string): PluginManager {
+    return new PluginManager(this.options.layout.profileDir, projectPath ?? this.options.config.projectPath);
   }
 
   private resolveTarget(config: LoadedConfig["config"], requested: string): { providerName: string; model: string } {
@@ -1494,7 +1635,8 @@ export class RpcServer {
       ? new MemoryService(this.db, options.projectPath, {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
-          retrieve: config.memory.retrieve
+          retrieve: config.memory.retrieve,
+          sessionId: child.id
         })
       : undefined;
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, options.projectPath) : undefined;
@@ -1516,7 +1658,16 @@ export class RpcServer {
         .filter(Boolean)
         .join("\n"),
       requestApproval: (request) =>
-        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal)
+        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal),
+      ...(config.hooks.length > 0
+        ? {
+            hooks: new HookRunner(config.hooks, {
+              projectRoot: options.projectPath,
+              pluginRoot: join(this.options.layout.profileDir, "plugins")
+            })
+          }
+        : {}),
+      ...(config.plugins.enabled ? { plugins: this.pluginManager(options.projectPath) } : {})
     };
 
     try {
@@ -1610,13 +1761,14 @@ export class RpcServer {
     }
   }
 
-  private memoryService(projectPath?: string): MemoryService {
+  private memoryService(projectPath?: string, sessionId?: string): MemoryService {
     const config = this.options.config.config;
     if (!config.memory.enabled) throw new RannError("E_PERMISSION", "Memori lokal tidak aktif di config");
     return new MemoryService(this.db, projectPath ?? process.cwd(), {
       enabled: config.memory.enabled,
       promptChars: config.memory.prompt_chars,
-      retrieve: config.memory.retrieve
+      retrieve: config.memory.retrieve,
+      ...(sessionId ? { sessionId } : {})
     });
   }
 

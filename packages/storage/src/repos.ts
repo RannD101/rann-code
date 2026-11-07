@@ -391,7 +391,7 @@ export function sumCostSince(db: Db, since: number): { knownUsd: number; unknown
   return { knownUsd: row.known_usd, unknownCount: row.unknown_count };
 }
 
-export type MemoryScope = "global" | "project";
+export type MemoryScope = "global" | "project" | "session";
 
 export interface MemoryEntry {
   id: string;
@@ -452,11 +452,15 @@ function toMemoryEntry(row: MemoryDbRow): MemoryEntry {
   return { ...row, tags: parseTags(row.tags) };
 }
 
-function memoryFilter(scope: MemoryScope | "all", projectPath?: string): { where: string; values: unknown[] } {
+function memoryFilter(scope: MemoryScope | "all", projectPath?: string, sessionId?: string): { where: string; values: unknown[] } {
   if (scope === "global") return { where: "scope = 'global'", values: [] };
+  if (scope === "session") return { where: "scope = 'session' AND session_id = ?", values: [sessionId ?? ""] };
   if (scope === "all") {
     if (!projectPath) return { where: "1 = 1", values: [] };
-    return { where: "(scope = 'global' OR (scope = 'project' AND project_path = ?))", values: [projectPath] };
+    return {
+      where: "(scope = 'global' OR (scope = 'project' AND project_path = ?) OR (scope = 'session' AND session_id = ?))",
+      values: [projectPath, sessionId ?? ""]
+    };
   }
   return { where: "scope = 'project' AND project_path = ?", values: [projectPath ?? ""] };
 }
@@ -466,6 +470,7 @@ export interface AddMemoryInput {
   scope?: MemoryScope;
   profileId?: string;
   projectPath?: string;
+  sessionId?: string;
   kind?: string;
   title?: string;
   tags?: string[];
@@ -495,13 +500,14 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   }
   const id = newId("mem");
   db.prepare(
-    `INSERT INTO memory_entries (id, profile_id, scope, project_path, kind, title, text, tags, source, confidence, importance, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO memory_entries (id, profile_id, scope, project_path, session_id, kind, title, text, tags, source, confidence, importance, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     profileId,
     scope,
     projectPath,
+    input.sessionId ?? null,
     input.kind ?? "fact",
     input.title ?? null,
     input.text,
@@ -519,11 +525,12 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
 export interface ListMemoryOptions {
   scope?: MemoryScope | "all";
   projectPath?: string;
+  sessionId?: string;
   limit?: number;
 }
 
 export function listMemories(db: Db, options: ListMemoryOptions = {}): MemoryEntry[] {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
   return (
     db
       .prepare(`SELECT * FROM memory_entries WHERE ${filter.where} ORDER BY updated_at DESC LIMIT ?`)
@@ -542,7 +549,7 @@ function ftsQuery(query: string): string {
 }
 
 export function searchMemories(db: Db, query: string, options: ListMemoryOptions = {}): MemoryEntry[] {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
   const match = ftsQuery(query);
   if (match.length === 0) return listMemories(db, options);
   try {
@@ -581,7 +588,7 @@ export function removeMemory(db: Db, idOrText: string): number {
 }
 
 export function countMemories(db: Db, options: ListMemoryOptions = {}): number {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
   return (db.prepare(`SELECT COUNT(*) AS c FROM memory_entries WHERE ${filter.where}`).get(...filter.values) as { c: number }).c;
 }
 

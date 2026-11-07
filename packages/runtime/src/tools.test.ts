@@ -200,6 +200,7 @@ describe("tools", () => {
       "shell_run",
       "memory",
       "skill",
+      "plugin_call",
       "task",
       "read_file",
       "write_file",

@@ -61,6 +61,10 @@ export interface ToolContext {
   mcp?: {
     callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
   };
+  plugins?: {
+    list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
+    invoke(name: string, method: string, params: unknown, timeoutMs?: number): Promise<{ ok: boolean; output?: unknown; error?: string }>;
+  };
 }
 
 export interface ToolResult {
@@ -320,13 +324,18 @@ const memorySchema = z.object({
 });
 
 const skillSchema = z.object({
-  action: z.enum(["list", "view", "create", "remove"]),
+  action: z.enum(["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate"]),
   name: z.string().min(1).max(64).optional(),
   description: z.string().min(1).max(500).optional(),
   body: z.string().min(1).max(60_000).optional(),
   scope: z.enum(["global", "project"]).optional(),
   overwrite: z.boolean().optional(),
-  limit: z.number().int().min(1).max(200).optional()
+  limit: z.number().int().min(1).max(200).optional(),
+  task: z.string().min(3).max(8_000).optional(),
+  triggers: z.array(z.string().min(1).max(80)).max(20).optional(),
+  dependencies: z.array(z.string().min(1).max(64)).max(20).optional(),
+  version: z.string().min(1).max(40).optional(),
+  reason: z.string().min(1).max(500).optional()
 });
 
 const taskSchema = z.object({
@@ -1279,13 +1288,18 @@ export const tools: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["list", "view", "create", "remove"] },
+          action: { type: "string", enum: ["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate"] },
           name: { type: "string" },
           description: { type: "string", description: "Kapan skill dipakai, minimal 12 karakter" },
           body: { type: "string", description: "Langkah kerja, maksimal 60.000 karakter" },
           scope: { type: "string", enum: ["global", "project"] },
           overwrite: { type: "boolean" },
-          limit: { type: "integer", minimum: 1, maximum: 200 }
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+          task: { type: "string", description: "Teks tugas untuk memilih skill" },
+          triggers: { type: "array", items: { type: "string" } },
+          dependencies: { type: "array", items: { type: "string" } },
+          version: { type: "string", description: "Versi target untuk rollback" },
+          reason: { type: "string", description: "Alasan perubahan untuk changelog" }
         },
         required: ["action"]
       }
@@ -1300,15 +1314,68 @@ export const tools: ToolDefinition[] = [
         if (!skill) throw new RannError("E_TOOL_FAILED", `Skill tidak ditemukan: ${input.name}`);
         return textResult(skill);
       }
+      if (input.action === "select") {
+        if (!input.task) throw new RannError("E_TOOL_INVALID_ARGS", "skill select butuh task");
+        return textResult(ctx.skills.select(input.task, { max: input.limit ?? 3 }));
+      }
+      if (input.action === "history") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill history butuh name");
+        return textResult({ versions: ctx.skills.history(input.name), changelog: ctx.skills.changelog(input.name) });
+      }
+      if (input.action === "validate") {
+        if (!input.name || !input.description || !input.body) {
+          throw new RannError("E_TOOL_INVALID_ARGS", "skill validate butuh name, description, dan body");
+        }
+        return textResult(ctx.skills.validate({ name: input.name, description: input.description, body: input.body, triggers: input.triggers, dependencies: input.dependencies }));
+      }
       assertAllowed({ mode: ctx.permissionMode, tool: "skill", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       if (input.action === "create") {
         if (!input.name || !input.description || !input.body) {
           throw new RannError("E_TOOL_INVALID_ARGS", "skill create butuh name, description, dan body");
         }
-        return textResult({ created: ctx.skills.create({ name: input.name, description: input.description, body: input.body, scope: input.scope, overwrite: input.overwrite }) });
+        return textResult({ created: ctx.skills.create({ name: input.name, description: input.description, body: input.body, scope: input.scope, overwrite: input.overwrite, triggers: input.triggers, dependencies: input.dependencies, reason: input.reason }) });
+      }
+      if (input.action === "edit") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill edit butuh name");
+        return textResult({ updated: ctx.skills.edit(input.name, { body: input.body, description: input.description, triggers: input.triggers, reason: input.reason }) });
+      }
+      if (input.action === "rollback") {
+        if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill rollback butuh name");
+        return textResult({ restored: ctx.skills.rollback(input.name, input.version) });
       }
       if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill remove butuh name");
       return textResult({ removed: ctx.skills.remove(input.name, input.scope ?? "project") });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "plugin_call",
+      description:
+        "Panggil plugin terpasang. action=list untuk melihat plugin dan izinnya, action=call untuk menjalankan method plugin di proses anak dengan timeout.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "call"] },
+          name: { type: "string", description: "Nama plugin" },
+          method: { type: "string", description: "Method yang diekspos plugin" },
+          params: { type: "object", description: "Parameter JSON untuk plugin" },
+          timeout_ms: { type: "integer", minimum: 1_000, maximum: 120_000 }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      if (!ctx.plugins) throw new RannError("E_TOOL_NOT_FOUND", "Plugin tidak aktif di sesi ini");
+      const action = typeof args === "object" && args !== null ? (args as Record<string, unknown>).action : undefined;
+      if (action === "list") return textResult({ plugins: ctx.plugins.list() });
+      if (action !== "call") throw new RannError("E_TOOL_INVALID_ARGS", "plugin_call action harus list atau call");
+      const record = (args ?? {}) as Record<string, unknown>;
+      if (typeof record.name !== "string" || record.name.length === 0) throw new RannError("E_TOOL_INVALID_ARGS", "plugin_call butuh name");
+      if (typeof record.method !== "string" || record.method.length === 0) throw new RannError("E_TOOL_INVALID_ARGS", "plugin_call butuh method");
+      const result = await ctx.plugins.invoke(record.name, record.method, record.params ?? {}, typeof record.timeout_ms === "number" ? record.timeout_ms : undefined);
+      if (!result.ok) throw new RannError("E_TOOL_FAILED", result.error ?? `Plugin ${record.name} gagal`);
+      return textResult(result.output);
     }
   },
   {

@@ -24,6 +24,7 @@ import { analyzeFailure } from "./failure-analysis.js";
 import { createFileCheckpoint } from "./checkpoint-files.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
+import type { HookEvent, HookRunner } from "./hooks.js";
 import { loadInstructions } from "./instructions.js";
 import { attachmentText, type AttachmentRef } from "./attachments.js";
 import type { MemoryService } from "./memory.js";
@@ -87,10 +88,16 @@ export interface AgentConfig {
   maxRuntimeMs?: number;
   tools?: string[];
   systemExtra: string;
+  instructionsHome?: string;
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
   preApprovedPatterns?: Set<string>;
   requestApproval?: (request: { tool: string; args: unknown }) => Promise<ApprovalDecision>;
+  hooks?: HookRunner;
+  plugins?: {
+    list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
+    invoke(name: string, method: string, params: unknown, timeoutMs?: number): Promise<{ ok: boolean; output?: unknown; error?: string }>;
+  };
 }
 
 export interface RunTurnOptions {
@@ -327,6 +334,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let steps = 0;
   let finished = false;
   let compactedAny = false;
+  let summaryPersisted = false;
   let lastCompactionKey = "";
   let prematureCount = 0;
   let fileCheckpointId: string | undefined;
@@ -357,6 +365,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     const title = options.userText.replace(/\s+/g, " ").trim().slice(0, 70) || "Sesi baru";
     touchSession(db, session.id, { title });
   }
+  const runHook = async (event: HookEvent, payload: Record<string, unknown>): Promise<void> => {
+    if (!config.hooks) return;
+    const result = await config.hooks.run(event, { session_id: session.id, turn_id: turnId, ...payload }, { cwd: workspaceRoot, signal });
+    for (const outcome of result.outcomes) {
+      if (outcome.decision !== "allow" || outcome.error) {
+        publish("log", { level: outcome.error ? "warn" : "info", event: `hook.${event}`, hook: outcome.hook, decision: outcome.decision, reason: outcome.reason ?? null });
+      }
+    }
+    if (!result.allowed) {
+      const denied = result.outcomes.find((outcome) => outcome.decision === "deny");
+      throw new RannError("E_PERMISSION", `Hook ${event} menolak: ${denied?.reason ?? "tanpa alasan"}`);
+    }
+  };
+
+  await runHook("UserPromptSubmit", { prompt: options.userText });
   markTurnRunning(db, turnId);
   publish("turn.start", { model, provider: provider.name, prompt_chars: options.userText.length });
 
@@ -389,9 +412,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
   }
 
-  const instructions = loadInstructions(workspaceRoot);
+  const instructions = loadInstructions(workspaceRoot, undefined, config.instructionsHome);
   const memoryPrompt = options.memory?.prompt(options.userText) ?? { text: "", count: 0, ids: [] };
-  const skillCatalog = options.skills?.catalog() ?? "";
+  let skillCatalog = options.skills?.catalog() ?? "";
+  let selectedSkills: string[] = [];
+  if (options.skills) {
+    try {
+      const loaded = options.skills.loadForTask(options.userText);
+      if (loaded) {
+        skillCatalog = `${loaded}\n\n${skillCatalog}`;
+        selectedSkills = options.skills.select(options.userText).skills.map((skill) => skill.name);
+      }
+    } catch {
+      // Dependensi skill rusak tidak boleh menggagalkan turn; katalog tetap dipakai.
+    }
+  }
   const taskClass = options.taskClass ?? classifyTask(options.userText);
   let activePlan: ActivePlan | undefined;
   let planText = "";
@@ -538,6 +573,14 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             kept_messages: history.length - built.dropped,
             estimated_tokens: built.estimated_tokens
           });
+          if (options.memory && !summaryPersisted) {
+            try {
+              options.memory.summarizeSession(session.id, history.slice(0, built.dropped));
+              summaryPersisted = true;
+            } catch {
+              // Ringkasan gagal disimpan tidak boleh menghentikan turn.
+            }
+          }
         }
       }
       const messages = built.messages;
@@ -711,6 +754,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
         publish("turn.end", { status: "done", steps, usage, text: finalText });
         finalize("done");
+        for (const skillName of selectedSkills) {
+          try {
+            options.skills?.recordUse(skillName, true);
+          } catch {
+            // Statistik skill bersifat best-effort.
+          }
+        }
         return {
           text: finalText,
           steps,
@@ -838,6 +888,22 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           publish("tool.end", { tool: call.name, status: "error", error_code: code });
         };
 
+        const preHook = config.hooks
+          ? await config.hooks.run("PreToolUse", {
+              session_id: session.id,
+              turn_id: turnId,
+              tool: call.name,
+              args: redactSecrets(call.args)
+            }, { cwd: workspaceRoot, signal })
+          : { allowed: true, outcomes: [] as const, modified: undefined };
+        if (!preHook.allowed) {
+          const denied = preHook.outcomes.find((outcome) => outcome.decision === "deny");
+          finishError("E_PERMISSION", `Hook PreToolUse menolak ${call.name}: ${denied?.reason ?? "tanpa alasan"}`);
+          continue;
+        }
+        if (preHook.modified !== undefined) {
+          Object.assign(call, { args: preHook.modified });
+        }
         try {
           let result: Awaited<ReturnType<typeof executeTool>>;
           const pattern = approvalPattern(call.name, call.args);
@@ -925,6 +991,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               };
             },
             mcp: options.mcp,
+            ...(config.plugins ? { plugins: config.plugins } : {}),
             sessionId: session.id,
             turnId,
             db: options.db,
@@ -946,9 +1013,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             }
             result = await executeTool(call.name, call.args, toolContext(true));
           }
+          await runHook("PostToolUse", { tool: call.name, args: redactSecrets(call.args), result: redactSecrets(result.output) });
           finishOk(result);
         } catch (error) {
           const err = toRannError(error);
+          try {
+            await runHook("ToolError", { tool: call.name, args: redactSecrets(call.args), error: err.message, error_code: err.code });
+          } catch {
+            // Hook ToolError tidak boleh menutupi error asli.
+          }
           finishError(err.code, err.message);
           if (err.code === "E_APPROVAL_REQUIRED" || err.code === "E_PERMISSION") {
             publish("error", {

@@ -1,0 +1,425 @@
+{
+  "audited_at": "2026-11-07",
+  "scope": "RC-FR-127..RC-FR-151",
+  "source": "kode aktual packages/{runtime,storage,cli,shared}/src",
+  "items": [
+    {
+      "id": "RC-FR-127",
+      "title": "Gateway server dan transport",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/gateway.ts:171-206 GatewayServer memegang Db, config, dan invoke/subscribe RPC",
+        "packages/runtime/src/gateway.ts:242-289 start membuat HTTP/HTTPS server, WebSocketServer noServer, dan listen ke host/port",
+        "packages/runtime/src/gateway.ts:244-251 tls_cert dan tls_key divalidasi berpasangan dan keberadaan berkasnya",
+        "packages/runtime/src/gateway.ts:325-370 upgrade /v1/events dengan autentikasi dan replay; 372-628 router REST /v1",
+        "packages/shared/src/config.ts:156-166 gateway.host default 127.0.0.1, port 8787, public_url bertipe URL, heartbeat 20 detik",
+        "packages/runtime/src/gateway.test.ts:70,82,109,145 empat tes gateway lulus"
+      ],
+      "gaps": [
+        "Req 3 dilanggar: gateway membuka database langsung dan menjalankan SQL sendiri (gateway.ts:172, 425-457, 489-556), bukan hanya lewat RPC daemon",
+        "Req 4 hanya modul dalam daemon; tidak ada entry point proses gateway terpisah di packages/cli/src",
+        "Batasi body JSON 1 MB ada (gateway.ts:69, 107-121), tetapi tidak ada rate limit umum per token"
+      ]
+    },
+    {
+      "id": "RC-FR-128",
+      "title": "Autentikasi dan pairing",
+      "status": "done",
+      "evidence": [
+        "packages/storage/src/gateway-repos.ts:62-74 kode 8 karakter dari randomBytes, TTL 10 menit (PAIR_TTL_MS di 39), disimpan sebagai hash",
+        "packages/storage/src/gateway-repos.ts:76-113 redeem sekali pakai dalam transaksi; UPDATE ... WHERE used_at IS NULL harus mengubah tepat 1 baris",
+        "packages/storage/src/gateway-repos.ts:49-51 token di-hash SHA-256; gateway.ts:431-435 token mentah hanya dikembalikan saat pairing",
+        "packages/runtime/src/gateway.ts:66-73 batas 5 percobaan per 15 menit; 399-405 pembersihan dan penolakan saat limit tercapai",
+        "packages/runtime/src/gateway.ts:437-446 revoke perangkat; gateway.ts:296-300 koneksi WS ditutup saat server berhenti",
+        "packages/storage/src/gateway-repos.test.ts:38,47,64,72,88 lima tes pairing/role/revoke lulus"
+      ],
+      "gaps": [
+        "clientIp memercayai header x-forwarded-for tanpa validasi (gateway.ts:91-95), sehingga limit 5/15 menit per IP bisa dilewati dengan header palsu",
+        "Perbandingan hash token memakai SQL equality, bukan timingSafeEqual (risiko rendah karena yang dibandingkan hash)"
+      ]
+    },
+    {
+      "id": "RC-FR-129",
+      "title": "Otorisasi, scope, dan RBAC",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/gateway-repos.ts:31-35 ROLE_SCOPES untuk owner/operator/viewer/approver; 16-21 tipe scope read/run/approve/admin",
+        "packages/runtime/src/gateway.ts:100-106 requireScope melempar E_PERMISSION dengan data.scope",
+        "packages/runtime/src/gateway.ts:596-612 penolakan E_PERMISSION dicatat appendAudit dengan required_scope",
+        "packages/storage/src/gateway-repos.ts:138-154 authenticate mengikat token ke profil; gateway.ts:493-497 sesi difilter ke profil token",
+        "packages/runtime/src/gateway.test.ts:109-143 tes kode pairing hanya owner dan percobaan gagal dicatat"
+      ],
+      "gaps": [
+        "Req 2 kepemilikan resource tidak diperiksa: GET /v1/sessions/:id, messages, dan cancel menerima sesi mana pun dalam profil yang sama (gateway.ts:489-503)",
+        "Perubahan role perangkat (gateway.ts:448-457) dan pairing/revoke tidak dicatat audit",
+        "Tidak ada role lokal owner/operator/viewer/approver untuk pengguna; role hanya melekat pada perangkat"
+      ]
+    },
+    {
+      "id": "RC-FR-130",
+      "title": "Routing sesi, task, dan eksekusi remote",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/gateway.ts:672-697 ensureSession memetakan device+channel+channelKey ke sesi dan membuat sesi baru bila belum ada",
+        "packages/runtime/src/gateway.ts:505-534 sesi baru memakai project default atau projectPath yang dikirim",
+        "packages/runtime/src/messaging.ts:206-215 binding per chat+topic; 425-452 hasil turn dikirim balik ke chat/thread asal",
+        "packages/runtime/src/messaging.ts:278-326 perintah /status /cancel /resume /model /cost /approve /deny memakai RPC yang sama dengan CLI"
+      ],
+      "gaps": [
+        "Req 3 tidak terbukti memakai antrean yang sama: gateway memanggil session.send lewat RPC, tetapi tidak ada bukti satu queue job dipakai bersama CLI",
+        "Req 5 tidak ada: tidak ada node id, binding sesi ke node, atau langkah pindah node",
+        "Tidak ada idempotency key untuk pesan masuk, sehingga retry Telegram bisa membuat turn ganda"
+      ]
+    },
+    {
+      "id": "RC-FR-131",
+      "title": "Health, reconnect, dan multi-node",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/gateway.ts:385-392 /health publik; 418-424 /v1/health menggabungkan rpc health dengan status gateway",
+        "packages/runtime/src/rpc.ts:1061-1090 health melaporkan daemon, versi skema database, dan daftar provider",
+        "packages/runtime/src/gateway.ts:270-295 heartbeat 20 detik, ping, dan terminate setelah 3 pong terlewat",
+        "packages/runtime/src/gateway.ts:309-323 buffer 1000 event dan replay berdasarkan since/Last-Event-ID",
+        "packages/runtime/src/gateway.test.ts:82-107 tes replay event setelah reconnect"
+      ],
+      "gaps": [
+        "Replay hanya dari buffer memori; eventsForSession tersedia di storage (repos.ts:630-645) tetapi tidak dipakai gateway, jadi event hilang setelah restart",
+        "Multi-node dan pelaporan node mati tidak ada sama sekali",
+        "Health tidak melaporkan provider yang gagal; hanya daftar provider"
+      ]
+    },
+    {
+      "id": "RC-FR-132",
+      "title": "Adapter Telegram",
+      "status": "done",
+      "evidence": [
+        "packages/runtime/src/messaging.ts:454-483 unduh dokumen/foto ke .rann/telegram dengan batas 20 MB dan mode 0600",
+        "packages/runtime/src/messaging.ts:206-215 sesi dipisah per chat dan thread",
+        "packages/runtime/src/messaging.ts:389-424 approval dikirim dengan tool, dampak, alasan, dan tombol ap:/dn:; 355-378 callback memanggil permission.respond",
+        "packages/runtime/src/messaging.ts:278-326 ketujuh perintah remote diimplementasikan",
+        "packages/runtime/src/messaging.ts:485-492 pesan dipecah splitTelegramMessage dan tombol hanya di chunk terakhir",
+        "packages/runtime/src/messaging.test.ts:90,97,115,124,134,154 enam tes adapter lulus"
+      ],
+      "gaps": [
+        "splitTelegramMessage tidak menambahkan penanda bagian; pemecahan hanya berdasarkan baris",
+        "Pesan edit/edited_message tidak diproses ulang"
+      ]
+    },
+    {
+      "id": "RC-FR-133",
+      "title": "Adapter Discord dan Slack",
+      "status": "missing",
+      "evidence": [
+        "Pencarian discord|slack di packages/runtime/src dan packages/cli/src tidak menemukan adapter; yang ada hanya packages/runtime/src/gateway.ts:711-718 verifySlackSignature untuk webhook generik",
+        "packages/runtime/src/messaging.ts:122-160 hanya TelegramAdapter",
+        "Tabel messaging_channels/identities ada di skema, tetapi tidak ada worker yang mengonsumsinya"
+      ],
+      "gaps": [
+        "Tidak ada klien Discord (guild/channel/thread/slash command) maupun Slack (Block Kit/slash command)",
+        "Tidak ada access control per channel/role, unduhan attachment, atau pemetaan approval ke format platform"
+      ]
+    },
+    {
+      "id": "RC-FR-134",
+      "title": "Web chat, lampiran, dan multi-user",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/dashboard.ts:255-320 chat memakai /v1/chat/ensure, /v1/sessions/:id/messages, dan /v1/events, bukan backend terpisah",
+        "packages/runtime/src/gateway.ts:660-680 unggah attachment dibatasi 20 MB, ekstensi di-allowlist, disimpan mode 0600",
+        "packages/runtime/src/gateway.ts:681-697 sesi baru membawa profile token; gateway.ts:493-497 daftar sesi difilter per profil",
+        "packages/runtime/src/dashboard.ts:65 layout responsif @media(max-width:760px) dengan sidebar geser"
+      ],
+      "gaps": [
+        "Req 4 tidak ada render Markdown/blok kode; dashboard.ts:255-270 hanya esc() dan <br>",
+        "Req 5 riwayat dimuat penuh tanpa pagination dan tidak ada pencarian",
+        "Identitas pengguna = identitas perangkat; tidak ada user terpisah dalam satu token"
+      ]
+    },
+    {
+      "id": "RC-FR-135",
+      "title": "Halaman dashboard",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/dashboard.ts:86-104 19 halaman termasuk chat, overview, sessions, tasks, agents, plans, models, providers, skills, memory, tools, MCP, plugins, scheduler, gateway, usage, logs, permissions, settings",
+        "packages/runtime/src/dashboard.ts:193-205 state loading, error, dan empty ditangani",
+        "packages/runtime/src/dashboard-data.ts:82-215 setiap halaman membaca tabel/berkas nyata",
+        "packages/runtime/src/dashboard.ts:65 layout responsif; 357 tombol menu mobile"
+      ],
+      "gaps": [
+        "Halaman gateway lewat /v1/pages/gateway hanya menerima status+stats (gateway.ts:701-703), sehingga tabel perangkat di dashboard.ts:237-242 selalu kosong",
+        "Aksi berisiko tidak memakai dialog konfirmasi: tombol Buat kode pairing langsung POST (dashboard.ts:243-247)",
+        "Permissions/settings hanya menampilkan data, tidak bisa mengubah state; halaman plugins tidak punya kontrol enable/disable"
+      ]
+    },
+    {
+      "id": "RC-FR-136",
+      "title": "Konsistensi dashboard, analytics, dan log",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/dashboard-data.ts:82-215 memakai tabel yang sama dengan RPC CLI; gateway.ts:309-316 menyiarkan event ke klien",
+        "packages/runtime/src/dashboard.ts:310-330 berlangganan /v1/events dan memuat ulang chat saat turn.end/approval.request",
+        "packages/runtime/src/dashboard-data.ts:186-199 usage dan logs membaca usage_events/events",
+        "packages/runtime/src/rpc.ts:345-347 perintah shutdown tersedia untuk CLI"
+      ],
+      "gaps": [
+        "Analytics tidak menghitung task sukses/gagal maupun latensi per provider",
+        "Log tidak bisa difilter per sesi/task/waktu; hanya level dan limit (dashboard-data.ts:177-184)",
+        "Tidak ada export CSV/JSON untuk usage maupun log"
+      ]
+    },
+    {
+      "id": "RC-FR-137",
+      "title": "Mode izin dan policy engine",
+      "status": "partial",
+      "evidence": [
+        "packages/shared/src/config.ts:21 lima mode read-only/ask/accept-edits/trusted/custom, default ask",
+        "packages/runtime/src/policy.ts:52-66 decide mengevaluasi risk, deny, allow, lalu mode; 68-80 assertAllowed melempar E_PERMISSION/E_APPROVAL_REQUIRED",
+        "packages/runtime/src/agent.ts:755-795 meminta approval saat tool butuh izin",
+        "packages/runtime/src/policy.test.ts:9,15,21,26,31,51,68,83,97 sembilan tes policy lulus",
+        "packages/shared/src/config.ts:81 sesi subagent default read-only"
+      ],
+      "gaps": [
+        "Req 3 belum mendukung rule berbasis path, domain, atau tingkat risiko; hanya nama tool dan glob perintah (policy.ts:41-50)",
+        "Req 4 remote viewer tidak dipaksa read-only: sesi gateway memakai config.permissions.mode global (gateway.ts:505-515)",
+        "Req 5 perubahan mode tidak dicatat audit dan bisa diubah lewat config tanpa persetujuan"
+      ]
+    },
+    {
+      "id": "RC-FR-138",
+      "title": "Sandbox filesystem",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/policy.ts:87-107 realish + resolveInsideWorkspace menyelesaikan symlink dan menolak path di luar root",
+        "packages/runtime/src/tools/index.ts:363-372 sanitizedShellEnv hanya membersihkan variabel bernama sensitif, bukan berkas sensitif",
+        "packages/runtime/src/tools/index.ts:1137-1160 shell_run memaksa cwd ke dalam workspace",
+        "packages/runtime/src/policy.test.ts:83,97 dua tes symlink/path guard lulus"
+      ],
+      "gaps": [
+        "Req 4 tidak terpenuhi: ~/.ssh, ~/.aws, dan file kredensial lain tidak masuk daftar blokir default",
+        "Hardlink tidak dideteksi; realish hanya menangani symlink",
+        "Tidak ada sandbox OS (tidak ada bwrap/seatbelt/container), jadi req 5 hanya andalkan policy aplikasi"
+      ]
+    },
+    {
+      "id": "RC-FR-139",
+      "title": "Batasan terminal dan approval perintah",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/tools/index.ts:363-372 sanitizedShellEnv membuang variabel bernama KEY/TOKEN/SECRET/PASSWORD dan sejenisnya",
+        "packages/runtime/src/policy.ts:8-24 DANGEROUS_SHELL mencakup rm -rf root, mkfs, dd ke disk, shutdown, chmod 777 root, fork bomb, wipefs, git push --force, git reset --hard, git clean -fdx",
+        "packages/runtime/src/policy.ts:52-53 perintah berbahaya langsung deny",
+        "packages/runtime/src/tools/index.ts:1196-1210 timeout membunuh process group (detached + kill(-pid))",
+        "packages/runtime/src/tools/index.ts:1145-1158 cwd dipaksa resolveInsideWorkspace",
+        "packages/runtime/src/tools.test.ts:101,109,292 tiga tes shell dan env lulus"
+      ],
+      "gaps": [
+        "Req 1 tidak ada: sudo tidak dilarang maupun dideteksi; sanitizedShellEnv mempertahankan PATH sehingga sudo tetap bisa dipanggil",
+        "Req 3 perintah berbahaya di-deny, bukan dikonfirmasi; tidak ada jalur allow eksplisit untuk perintah yang dikonfirmasi",
+        "Tidak ada checkpoint otomatis sebelum perintah destruktif"
+      ]
+    },
+    {
+      "id": "RC-FR-140",
+      "title": "Secret management dan enkripsi",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/secrets.ts:28-52 enkripsi XChaCha20-Poly1305 dengan nonce acak per nilai",
+        "packages/storage/src/secrets.ts:54-80 master key dari RANN_MASTER_KEY, berkas 0600, atau scrypt passphrase",
+        "packages/shared/src/redact.ts:1-40 redactSecrets dipakai di rpc.ts:1011 dan 1034",
+        "packages/storage/src/secrets.test.ts:20,30,38,47,56,64 enam tes vault lulus"
+      ],
+      "gaps": [
+        "Req 2 tidak ada integrasi OS keychain; hanya berkas dan passphrase",
+        "Req 4 tidak ada rotasi berversi maupun ekspor terenkripsi; set() hanya menimpa nilai (secrets.ts:100-125)",
+        "Req 5 berbahaya: bila master.key hilang, keyFromFile membuat key baru (secrets.ts:60-68), sehingga ciphertext lama tidak bisa didekripsi tanpa peringatan",
+        "Redaksi tidak diterapkan pada semua log/error; events menyimpan output tool mentah"
+      ]
+    },
+    {
+      "id": "RC-FR-141",
+      "title": "Autentikasi pengguna dan RBAC",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/gateway-repos.ts:31-35 role owner/operator/viewer/approver dipakai untuk perangkat, bukan pengguna",
+        "packages/runtime/src/gateway.ts:448-457 admin bisa mengubah role perangkat; 437-446 revoke perangkat",
+        "packages/runtime/src/dashboard.ts:86-104 tidak ada halaman login; akses dashboard memakai token perangkat"
+      ],
+      "gaps": [
+        "Tidak ada kode yang menulis/membaca tabel gateway_users; tidak ada identitas pengguna lokal",
+        "Tidak ada sesi login dashboard selain token perangkat",
+        "Perubahan role tidak dicatat audit dan tidak mensyaratkan owner",
+        "Pencabutan token perangkat menutup WS, tetapi tidak ada konsep pencabutan sesi pengguna"
+      ]
+    },
+    {
+      "id": "RC-FR-142",
+      "title": "Isolasi sesi dan agen",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/repos.ts:455-470 memoryFilter memfilter session_id dan project_path",
+        "packages/runtime/src/agent.ts:120-171 konteks subagent dibangun dari sesi induk dan dibatasi tool read-only",
+        "packages/storage/src/repos.ts:123-140 listSessions dapat difilter project; gateway.ts:493-497 membatasi per profil",
+        "packages/runtime/src/memory-skills.test.ts mencakup memori per sesi/proyek (lulus)"
+      ],
+      "gaps": [
+        "Req 1 tidak penuh: memoryFilter tidak memakai profile_id, jadi dua profil dengan session_id sama secara teori bisa bertabrakan",
+        "Tidak ada pemisahan browser context per task (tidak ada modul browser)",
+        "Kebocoran lintas sesi tidak dicatat sebagai insiden; tidak ada deteksi"
+      ]
+    },
+    {
+      "id": "RC-FR-143",
+      "title": "Isolasi plugin dan MCP",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/mcp.ts:110-145 server MCP dijalankan sebagai child process terpisah dengan stdio",
+        "packages/runtime/src/mcp.ts:137 env anak = { ...process.env, ...config.env }, sehingga seluruh environment induk diwariskan",
+        "packages/runtime/src/dashboard-data.ts:169-175 hanya membaca tabel plugins; tidak ada runtime plugin",
+        "packages/runtime/src/mcp.ts:150-190 output MCP di-parse sebagai JSON tanpa label trust"
+      ],
+      "gaps": [
+        "Req 1 tidak ada runtime plugin sama sekali; plugin tidak berjalan, apalagi di proses terpisah",
+        "Req 3 tidak ada permission file/jaringan yang dideklarasikan; MCP mewarisi env penuh termasuk kredensial",
+        "Req 4 output MCP tidak diberi label tidak tepercaya",
+        "Req 5 tidak ada tombol/flag mematikan plugin tanpa menghentikan sesi"
+      ]
+    },
+    {
+      "id": "RC-FR-144",
+      "title": "Audit log",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/repos.ts:650-687 appendAudit menghitung hash dari prev_hash + payload dan menyimpannya; 662-696 verifyAuditChain memeriksa rantai",
+        "packages/runtime/src/rpc.ts:1023-1036 approval dicatat; 427-592 mencatat tool.call, secret.set/remove, goal, scheduler, background, checkpoint.restore",
+        "packages/runtime/src/gateway.ts:596-612 penolakan scope dicatat dengan required_scope",
+        "packages/storage/src/db.ts:154-166 tabel audit_log dengan prev_hash/hash dan indeks"
+      ],
+      "gaps": [
+        "Req 1 tidak lengkap: perubahan config, perubahan mode izin, pairing/revoke/role gateway, dan pembacaan secret tidak diaudit",
+        "Req 3 tidak ada proteksi: agent bisa menghapus isi audit_log lewat shell/sqlite; tidak ada trigger append-only",
+        "Req 4 tidak ada export JSONL dan verifyAuditChain tidak dipanggil dari CLI/RPC mana pun, serta tidak ada tes audit",
+        "Req 5 retention_days hanya default di config.ts:150, tidak dipakai; tidak ada arsip"
+      ]
+    },
+    {
+      "id": "RC-FR-145",
+      "title": "Pertahanan prompt injection",
+      "status": "missing",
+      "evidence": [
+        "Pencarian untrusted|prompt.?injection|trust_level|sumber tidak di packages/*.ts tidak menemukan implementasi",
+        "Tidak ada berkas fixture injection di repo (find *injection* kosong) dan tidak ada job CI (.github/workflows tidak ada)",
+        "packages/runtime/src/agent.ts:120-171 menyusun konteks dari isi file/tool tanpa label sumber",
+        "packages/runtime/src/mcp.ts:150-190 hasil MCP masuk ke konteks apa adanya"
+      ],
+      "gaps": [
+        "Req 1 tidak ada label sumber/tingkat kepercayaan pada konten file, web, tool, MCP, atau plugin",
+        "Req 2 dan 3 tidak ada pemisahan instruksi vs data; tidak ada approval khusus untuk aksi yang dipicu konten",
+        "Req 4 secret masih bisa masuk konteks lewat output tool",
+        "Req 5 tidak ada suite fixture prompt injection maupun CI"
+      ]
+    },
+    {
+      "id": "RC-FR-146",
+      "title": "Perlindungan operasi destruktif",
+      "status": "partial",
+      "evidence": [
+        "packages/runtime/src/policy.ts:8-24 regex mencakup rm -rf root, git reset --hard, git clean -fdx, git push --force, dan operasi disk",
+        "packages/runtime/src/tools/index.ts:745-820 git_write hanya mendukung add/commit/checkout branch, tanpa reset --hard, clean -fd, atau push --force",
+        "packages/runtime/src/rpc.ts:1015-1060 approval menampilkan tool dan args yang sudah diredaksi",
+        "packages/runtime/src/tools.test.ts:109,140 percobaan perintah berbahaya dan patch transaksi diuji"
+      ],
+      "gaps": [
+        "Req 1 belum mencakup hapus branch, drop table, migrasi turun, dan overwrite file besar; hanya shell regex dan git_write terbatas",
+        "Req 2 approval menampilkan args, tetapi tidak menghitung target/dampak spesifik (berapa file, path mana)",
+        "Req 3 tidak ada backup/checkpoint otomatis sebelum operasi destruktif",
+        "Req 4 mode ask tidak menolak operasi tak-bisa-dibatalkan secara default; perintah berbahaya justru di-deny tanpa jalur konfirmasi"
+      ]
+    },
+    {
+      "id": "RC-FR-147",
+      "title": "Skema storage dan integritas",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/schema-v1..v11.ts total 51 tabel, 62 foreign key, 66 indeks (hitung otomatis atas packages/storage/src/*.ts)",
+        "packages/storage/src/db.ts:284-302 tabel schema_migrations menyimpan versi dan checksum; migrasi dijalankan berurutan",
+        "packages/storage/src/db.ts:154-166 audit_log dengan prev_hash/hash dan indeks",
+        "packages/storage/src/db.ts:369-394 integrityCheck dan foreign_key_check tersedia sebagai fungsi",
+        "packages/storage/src/db.test.ts:53,65,104,124,174,222,239 tujuh tes skema/migrasi lulus"
+      ],
+      "gaps": [
+        "Req 3 vektor tidak ada; hanya FTS, tidak ada embedding/indeks vektor",
+        "Req 4 rann doctor memakai quick_check (main.ts:575), bukan PRAGMA integrity_check, dan tidak memanggil foreign_key_check",
+        "Req 5 tidak ada GC blob tanpa referensi maupun pemangkasan data kedaluwarsa; retention_days tidak dipakai"
+      ]
+    },
+    {
+      "id": "RC-FR-148",
+      "title": "Backup, restore, dan migrasi",
+      "status": "partial",
+      "evidence": [
+        "packages/storage/src/db.ts:309-330 backup memakai VACUUM INTO ke berkas bertimestamp sebelum migrasi",
+        "packages/storage/src/db.ts:329-343 migrasi gagal memulihkan berkas backup",
+        "packages/storage/src/db.test.ts:104-123 tes pemulihan backup saat migrasi gagal lulus",
+        "packages/cli/src/main.ts tidak memiliki perintah restore; pencarian backup|restore hanya menemukan checkpoint percakapan"
+      ],
+      "gaps": [
+        "Req 1 tidak ada backup harian terjadwal; hanya backup pra-migrasi",
+        "Req 2 backup tidak diverifikasi dengan integrity check setelah VACUUM INTO",
+        "Req 3 tidak ada perintah restore yang teruji; restore hanya otomatis saat migrasi gagal",
+        "Req 4 pemulihan otomatis ada, tetapi tidak menangani kegagalan setelah migrasi sukses sebagian",
+        "Req 5 tidak ada perintah restore yang bisa dijalankan saat daemon mati"
+      ]
+    },
+    {
+      "id": "RC-FR-149",
+      "title": "Hierarki dan struktur konfigurasi",
+      "status": "partial",
+      "evidence": [
+        "packages/shared/src/config.ts:265-332 loadConfig menyusun default, global, profil, project, env, flag",
+        "packages/shared/src/config.ts:333-356 explainKey mengembalikan nilai efektif dan sumber",
+        "packages/cli/src/main.ts:2902-2915 perintah config explain memanggil explainKey; tes di packages/shared/src/config.test.ts:78",
+        "packages/runtime/src/paths.ts:21-24 direktori .rann dibuat dengan mode 0700"
+      ],
+      "gaps": [
+        "Req 1 lapisan sesi tidak ada; override sesi tidak dibaca saat resolve config",
+        "Req 3 config invalid melempar error (config.ts:265-290), bukan memakai default dan menandai field",
+        "Req 5 config set menulis langsung tanpa backup dan tanpa jejak audit (main.ts:2902-2920)"
+      ]
+    },
+    {
+      "id": "RC-FR-150",
+      "title": "Operability, performa, dan distribusi",
+      "status": "partial",
+      "evidence": [
+        "packages/cli/src/main.ts:540-616 doctorCommand memeriksa Node, home, socket daemon, database, config, dan provider key; dipanggil di main.ts:142",
+        "packages/cli/src/main.ts:268-300 perintah rann health memanggil RPC health",
+        "packages/runtime/src/daemon.ts:40-80 shutdown menutup server dan database; rpc.ts:345-347 memicu shutdown",
+        "packages/cli/package.json:6-9 bin rann dan rannd tersedia",
+        "packages/cli/src/repl-commands.ts:176-177 /metrics dan /dashboard ditandai NOT_YET"
+      ],
+      "gaps": [
+        "Req 1 doctor tidak memeriksa gateway, sandbox, maupun permission direktori",
+        "Req 2 shutdown membatalkan turn berjalan, bukan menyelesaikan/menyimpan checkpoint dalam <=5 detik",
+        "Req 3 tidak ada unit systemd/launchd/Windows Service maupun restart otomatis",
+        "Req 4 tidak ada metrics/trace; /metrics NOT_YET dan tidak ada endpoint /metrics di gateway",
+        "Req 5 tidak ada binary per platform, Docker, Homebrew, atau verifikasi checksum"
+      ]
+    },
+    {
+      "id": "RC-FR-151",
+      "title": "Self-improvement terkendali",
+      "status": "missing",
+      "evidence": [
+        "packages/cli/src/repl-commands.ts:87-88 perintah /improve ditandai NOT_YET",
+        "packages/runtime/src/failure-analysis.ts:1-60 hanya mengelompokkan kegagalan tool untuk laporan, tanpa evaluasi task",
+        "packages/storage/src/schema-v11.ts tidak memiliki tabel evaluasi task atau efektivitas skill/tool",
+        "Tidak ada kode yang mencatat intervensi pengguna, biaya per task, atau rollback rekomendasi"
+      ],
+      "gaps": [
+        "Req 1 tidak ada evaluasi task (sukses/gagal/biaya/durasi/intervensi)",
+        "Req 2 failure-analysis tidak menghasilkan rekomendasi yang bisa ditinjau",
+        "Req 3 tidak ada pelacakan efektivitas skill/tool maupun penandaan untuk ditinjau"
+      ]
+    }
+  ]
+}

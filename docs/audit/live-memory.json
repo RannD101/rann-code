@@ -1,0 +1,644 @@
+[
+  {
+    "id": "RC-FR-063",
+    "title": "User memory",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:16-38 - tabel memory_entries punya scope global/project/session, kolom source, confidence, importance, status, expires_at, hash, version.",
+      "packages/storage/src/repos.ts:478-517 - addMemory menyimpan scope global/project, source, tanggal created_at/updated_at, dan dedup teks identik.",
+      "packages/runtime/src/memory.ts:42-60 - MemoryService.add meneruskan source default \"agent\" dan projectPath.",
+      "packages/cli/src/main.ts:1233-1258 - /memory dan /remember berfungsi untuk list, search, dan add.",
+      "packages/runtime/src/memory-skills.test.ts:30-53 - tes membuktikan memori global ikut terambil dan memori project lain tidak bocor."
+    ],
+    "gaps": [
+      "Tidak ada ekstraksi preferensi otomatis setelah turn; satu-satunya jalur tulis adalah tool memory atau /remember (tools/index.ts:1246-1251).",
+      "Status superseded tidak pernah ditulis; status hanya default active di DDL (schema-v3.ts:31) dan tidak ada kode yang mengubahnya.",
+      "Sumber hanya string bebas, bukan id pesan; tidak ada tautan ke pesan asal seperti yang diminta requirement 3.",
+      "Filter retrieval tidak memuat profile_id (repos.ts:455-462); semua penulisan memakai ensureDefaultProfile (repos.ts:481), jadi isolasi antar profil tidak ditegakkan dan /profile masih NOT_YET (repl-commands.ts:123)."
+    ]
+  },
+  {
+    "id": "RC-FR-064",
+    "title": "Project memory",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:455-462 - filter memory membatasi scope project berdasarkan project_path.",
+      "packages/runtime/src/memory.ts:53-60 - add memakai projectPath sesi sebagai kunci memori project.",
+      "packages/cli/src/main.ts:1249-1255 - /remember menulis scope project.",
+      "packages/runtime/src/memory-skills.test.ts:36-44 - tes memastikan memori project A tidak muncul di project B."
+    ],
+    "gaps": [
+      "Tidak ada versi baru saat keputusan project berubah; updateMemory menimpa baris yang sama tanpa alasan (repos.ts:565-576).",
+      "Tidak ada ekspor memori project ke RANN.md.",
+      "Tidak ada validasi yang mencegah isi file penuh disimpan; kind hanya string bebas (schema-v3.ts:23).",
+      "Tidak ada perbedaan perlakuan untuk arsitektur, perintah build, konvensi, dan keputusan.",
+      "Filter juga tidak memuat profile_id, sehingga batas profil dan project tidak ditegakkan di query."
+    ]
+  },
+  {
+    "id": "RC-FR-065",
+    "title": "Session memory",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:19 - DDL mengizinkan scope session dan kolom session_id ada di baris 21.",
+      "packages/storage/src/repos.ts:394 - tipe MemoryScope hanya \"global\" | \"project\", jadi scope session tidak bisa ditulis lewat API.",
+      "packages/runtime/src/agent.ts:301-312 - compaction hanya membuat digest pesan di memori proses untuk prompt berikutnya, tidak disimpan.",
+      "packages/runtime/src/memory.ts:83-101 - prompt memory tidak pernah membaca ringkasan sesi."
+    ],
+    "gaps": [
+      "Tidak ada ringkasan sesi yang dipersistensikan saat sesi berakhir.",
+      "Tidak ada promosi ringkasan menjadi memori dan tidak ada penghapusan otomatis saat sesi dihapus.",
+      "Compaction tidak menulis ke memory_entries, sehingga tidak ada session memory yang bisa dicari.",
+      "Tidak ada tes untuk session memory."
+    ]
+  },
+  {
+    "id": "RC-FR-066",
+    "title": "Agent memory",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:1493-1499 - subagent membuat MemoryService dengan projectPath yang sama dan tanpa identitas agen.",
+      "packages/storage/src/repos.ts:481 - profile_id selalu default profile, tidak memakai profil agen.",
+      "packages/shared/src/config.ts:60-66 - konfigurasi memory hanya enabled, prompt_chars, retrieve; tidak ada toggle per agen.",
+      "packages/runtime/src/memory.ts:42-60 - add tidak menerima parameter agen atau peran."
+    ],
+    "gaps": [
+      "Memory agen tidak terikat pada profil agen; subagent reviewer berbagi memori yang sama dengan agen induk.",
+      "Tidak ada penyaringan pengalaman berdasarkan peran agen.",
+      "Tidak ada kontrol akses antaragens dan tidak ada pelacakan efektivitas memori.",
+      "Tidak ada opsi mematikan memory per profil agen."
+    ]
+  },
+  {
+    "id": "RC-FR-067",
+    "title": "Knowledge memory",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/repos.ts:544-563 - pencarian hanya lewat memory_fts pada tabel memory_entries.",
+      "packages/runtime/src/memory.ts:67-69 - MemoryService.search tidak membedakan knowledge dan memory biasa.",
+      "packages/runtime/src/tools/index.ts:864-901 - hanya ada repo_map dan search_code untuk kode, bukan indeks dokumen."
+    ],
+    "gaps": [
+      "Tidak ada pemindaian .rann/knowledge atau chunk dokumen Markdown.",
+      "Tidak ada metadata path, heading, dan rentang baris pada hasil.",
+      "Tidak ada sitasi yang bisa dibuka dan tidak ada reindex saat file berubah.",
+      "Tidak ada konfigurasi pengecualian dokumen rahasia."
+    ]
+  },
+  {
+    "id": "RC-FR-068",
+    "title": "Procedural memory",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:23 - kind hanya kolom teks bebas dengan default fact, tanpa skema prosedur.",
+      "packages/runtime/src/memory.ts:42-60 - add tidak menerima nama, trigger, prasyarat, langkah, atau verifikasi.",
+      "packages/runtime/src/skills.ts:165-203 - pembuatan skill manual, tidak ada promosi otomatis dari prosedur."
+    ],
+    "gaps": [
+      "Tidak ada penghitung keberhasilan prosedur dan tidak ada ambang 3 kali.",
+      "Tidak ada penandaan stale untuk prosedur yang gagal berulang.",
+      "Tidak ada jalur prosedur menjadi skill.",
+      "Tidak ada struktur langkah, prasyarat, dan verifikasi."
+    ]
+  },
+  {
+    "id": "RC-FR-069",
+    "title": "Ekstraksi otomatis dan review kandidat",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/agent.ts:393 - turn hanya membaca memoryPrompt; tidak ada pemanggilan ekstraksi setelah turn selesai.",
+      "packages/storage/src/schema-v3.ts:31 - status pending ada di DDL tetapi tidak pernah ditulis oleh kode.",
+      "packages/shared/src/config.ts:60-66 - tidak ada mode memory auto/manual/off maupun ambang keyakinan.",
+      "packages/runtime/src/memory.ts:42-60 - tidak ada tipe kandidat, keyakinan, atau antrean review."
+    ],
+    "gaps": [
+      "Tidak ada ekstraktor pasca-turn dan tidak ada kandidat dengan jenis, isi, sumber, dan keyakinan.",
+      "Tidak ada antrean persetujuan, edit, tolak, atau setujui.",
+      "Tidak ada filter secret, data pribadi, dan instruksi sementara.",
+      "Tidak ada saklar ekstraksi per profil atau per project.",
+      "Tidak ada tes ekstraksi atau antrean kandidat."
+    ]
+  },
+  {
+    "id": "RC-FR-070",
+    "title": "Retrieval dan pencarian semantik",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:544-563 - pencarian FTS5 dengan fallback LIKE, tanpa vektor.",
+      "packages/runtime/src/memory.ts:67-69 - search memakai scope all dan projectPath.",
+      "packages/runtime/src/memory.ts:83-101 - prompt menggabungkan hasil relevan dan recent lalu memotong berdasarkan jumlah karakter.",
+      "packages/cli/src/main.ts:1995-2004 - /recall memanggil memory.search."
+    ],
+    "gaps": [
+      "Tidak ada embedding, sqlite-vec, atau Reciprocal Rank Fusion.",
+      "Filter tidak memeriksa status active/deleted dan expires_at, sehingga entri kedaluwarsa atau terhapus masih bisa muncul (repos.ts:455-462).",
+      "Hasil tidak diberi skor dan tidak ada ambang relevansi; prompt selalu menambahkan recent memory.",
+      "Tidak ada /recall --explain dan tidak ada budget token, hanya prompt_chars."
+    ]
+  },
+  {
+    "id": "RC-FR-071",
+    "title": "Indeks dan prioritas memory",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:29-33 - kolom importance dan last_used_at ada.",
+      "packages/storage/src/repos.ts:498-515 - addMemory menulis importance dari input atau 0.5, tetapi tidak menulis last_used_at.",
+      "packages/runtime/src/memory.ts:83-101 - peringkat akhir hanya updated_at, bukan importance."
+    ],
+    "gaps": [
+      "last_used_at tidak pernah diperbarui saat memori diambil.",
+      "Tidak ada pembobotan dari sumber, jenis, atau umpan balik pengguna.",
+      "Tidak ada embedding asinkron dan tidak ada pelacakan status embedding.",
+      "Tidak ada /memory reindex."
+    ]
+  },
+  {
+    "id": "RC-FR-072",
+    "title": "Konsolidasi dan deduplikasi",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:483-495 - dedup hanya mencocokkan teks identik lalu menggabungkan tag pada baris yang sama.",
+      "packages/storage/src/schema-v3.ts:35 - kolom version ada tetapi tidak dinaikkan saat dedup.",
+      "packages/storage/src/schema-v3.ts:75-84 - tabel memory_links tersedia tetapi tidak dipakai kode."
+    ],
+    "gaps": [
+      "Tidak ada kemiripan vektor atau hash isi; dedup gagal untuk teks yang mirip.",
+      "Versi lama tidak disimpan karena baris yang sama diperbarui.",
+      "Tidak ada penandaan contradicted_by dan tidak ada konsolidasi berkala atau manual.",
+      "Tidak ada /memory stats."
+    ]
+  },
+  {
+    "id": "RC-FR-073",
+    "title": "Expiry dan staleness",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:32 - kolom expires_at dan indeks parsialnya ada di baris 42.",
+      "packages/storage/src/repos.ts:455-462 - filter retrieval tidak menyebut expires_at atau status.",
+      "packages/runtime/src/memory.ts:42-60 - add tidak menerima TTL.",
+      "packages/storage/src/repos.ts:578-581 - remove langsung DELETE, bukan menandai stale."
+    ],
+    "gaps": [
+      "Tidak ada TTL default atau per entri yang benar-benar dipakai.",
+      "Tidak ada penandaan status expired/stale saat retrieval.",
+      "Tidak ada perpanjangan TTL saat memori dirujuk.",
+      "Tidak ada job pembersihan harian dan tidak ada kebijakan retensi.",
+      "Tidak ada tes expiry atau staleness."
+    ]
+  },
+  {
+    "id": "RC-FR-074",
+    "title": "Koreksi, update, dan hapus",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:565-576 - updateMemory menimpa text, tags, dan kind tanpa versi baru.",
+      "packages/storage/src/repos.ts:578-581 - removeMemory melakukan hard delete berdasarkan id atau teks.",
+      "packages/storage/src/schema-v3.ts:64-73 - trigger FTS memperbarui indeks pada insert, update, dan delete.",
+      "packages/cli/src/main.ts:1259-1269 - /forget memanggil memory.remove."
+    ],
+    "gaps": [
+      "Tidak ada versi baru, alasan perubahan, atau aktor.",
+      "Hapus tidak soft delete dan tidak meminta konfirmasi hard delete.",
+      "Tidak ada audit ke memory_events atau audit_log saat update/hapus.",
+      "Tidak ada pembaruan vektor karena vektor belum ada."
+    ]
+  },
+  {
+    "id": "RC-FR-075",
+    "title": "Import, export, dan inspeksi",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1916-1924 - /export hanya menulis transkrip sesi ke Markdown, bukan JSONL memory.",
+      "packages/runtime/src/rpc.ts:783-830 - method memory hanya list, search, add, update, remove.",
+      "packages/cli/src/main.ts:1233-1242 - /memory hanya list/search, tanpa filter, detail, atau import.",
+      "packages/cli/src/main.ts:1233-1240 - /memory menampilkan daftar dan hasil pencarian dengan mode scope all atau query, jadi sebagian inspeksi sudah ada."
+    ],
+    "gaps": [
+      "Tidak ada ekspor JSONL dengan metadata dan versi skema.",
+      "Tidak ada impor dan tidak ada strategi konflik lewati/timpa/gabung.",
+      "Tidak ada tampilan detail entri dan tidak ada filter lanjutan.",
+      "Tidak ada pemindaian secret pada file ekspor."
+    ]
+  },
+  {
+    "id": "RC-FR-076",
+    "title": "Instruction system",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/instructions.ts:4 - hanya RANN.md, AGENTS.md, dan CLAUDE.md yang didukung.",
+      "packages/runtime/src/instructions.ts:14-22 - globalConfigDir opsional dan hanya membaca RANN.md global.",
+      "packages/runtime/src/agent.ts:392 - loadInstructions dipanggil tanpa globalConfigDir, sehingga instruksi global tidak pernah dimuat.",
+      "packages/runtime/src/instructions.ts:24-45 - file dibaca berurutan dengan pemotongan ukuran, tanpa deteksi konflik."
+    ],
+    "gaps": [
+      "SOUL.md, USER.md, MEMORY.md, .rann/instructions.md, .rann/rules/*.md, dan instruksi agen tidak didukung.",
+      "Tidak ada urutan prioritas eksplisit; urutan hanya urutan array.",
+      "Konflik tidak dicatat dan pemenang tidak bisa dilihat karena /context masih NOT_YET (repl-commands.ts:136).",
+      "Tidak ada penolakan symlink di luar workspace dan tidak ada penandaan instruksi tidak tepercaya."
+    ]
+  },
+  {
+    "id": "RC-FR-077",
+    "title": "Discovery dan metadata skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:79 - frontmatter hanya memuat name, description, dan version.",
+      "packages/runtime/src/skills.ts:93-111 - parseSkillFile memakai nama folder sebagai fallback dan tidak menolak deskripsi kosong.",
+      "packages/runtime/src/skills.ts:134-142 - pemindaian global dan project, tanpa registry.",
+      "packages/runtime/src/skills.ts:144-158 - list dan catalog hanya memuat metadata, isi tidak dimuat.",
+      "packages/cli/src/main.ts:1272-1283 - /skills menampilkan nama, scope, dan deskripsi."
+    ],
+    "gaps": [
+      "Tidak ada trigger, dependensi, atau sumber registry pada metadata.",
+      "Bentrok nama diselesaikan diam-diam dengan override (skills.ts:139-140), bukan dilaporkan.",
+      "Tidak ada status aktif pada /skills dan tidak ada versi yang ditampilkan.",
+      "Registry skill terpasang tidak dipindai karena instalasi belum ada."
+    ]
+  },
+  {
+    "id": "RC-FR-078",
+    "title": "Progressive loading",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:150-158 - catalog memuat nama dan deskripsi saja sebagai tahap 1.",
+      "packages/runtime/src/skills.ts:160-163 - view memuat SKILL.md penuh sebagai tahap 2.",
+      "packages/runtime/src/agent.ts:394 - katalog skill dimasukkan ke system prompt.",
+      "packages/runtime/src/tools/index.ts:1297-1302 - tool skill action=view mengembalikan isi penuh."
+    ],
+    "gaps": [
+      "Tahap 3 referensi dan skrip tidak ada; tidak ada pembacaan file lain di folder skill.",
+      "Tidak ada pencatatan token per tahap.",
+      "Tidak ada pelewatan referensi opsional saat budget kurang dan tidak ada penanda bagian wajib."
+    ]
+  },
+  {
+    "id": "RC-FR-079",
+    "title": "Aktivasi dan pemilihan skill",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/skills.ts:150-158 - katalog berisi semua skill tanpa skor trigger atau riwayat keberhasilan.",
+      "packages/runtime/src/agent.ts:394 - hanya katalog yang diinjeksi; tidak ada state skill aktif.",
+      "packages/cli/src/main.ts:1285-1295 - /skill hanya membuka detail skill."
+    ],
+    "gaps": [
+      "Tidak ada pemilihan otomatis berdasarkan trigger dan kecocokan tugas.",
+      "Tidak ada alasan pemilihan yang dicatat.",
+      "Tidak ada batas maksimal 3 skill aktif per turn.",
+      "Tidak ada perintah untuk memaksa atau melarang skill."
+    ]
+  },
+  {
+    "id": "RC-FR-080",
+    "title": "Eksekusi skill",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/skills.ts:125-220 - SkillStore tidak punya metode run atau eksekusi skrip.",
+      "packages/runtime/src/tools/index.ts:1282 - action skill hanya list, view, create, remove.",
+      "packages/runtime/src/tools/index.ts:1164-1169 - sandbox shell hanya dipakai tool shell_run, bukan skill."
+    ],
+    "gaps": [
+      "Tidak ada eksekusi skrip skill dengan cwd project, env terbatas, timeout, dan sandbox.",
+      "Tidak ada broker tool untuk skill.",
+      "Output dan error skill tidak dicatat di trace.",
+      "Tidak ada error terstruktur untuk skill yang gagal."
+    ]
+  },
+  {
+    "id": "RC-FR-081",
+    "title": "Pembuatan dan validasi skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:165-203 - create memvalidasi nama, panjang deskripsi, panjang body, dan menulis SKILL.md.",
+      "packages/runtime/src/skills.ts:187-189 - overwrite harus eksplisit; nama bentrok ditolak.",
+      "packages/cli/src/main.ts:2129-2148 - /create-skill membuat body template lalu memanggil skill.create.",
+      "packages/runtime/src/memory-skills.test.ts:65-89 - tes membuat, membaca, menolak duplikat, dan menghapus skill."
+    ],
+    "gaps": [
+      "Tidak meminta trigger, dependensi, dan contoh.",
+      "Validator tidak memeriksa frontmatter, referensi file, atau trigger karena trigger tidak ada.",
+      "Tidak ada dry-run.",
+      "Skill baru langsung aktif dan tidak butuh persetujuan atau pengujian."
+    ]
+  },
+  {
+    "id": "RC-FR-082",
+    "title": "Edit dan versioning skill",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/skills.ts:191-201 - create menulis version: 1 hardcoded dan menimpa file jika overwrite=true.",
+      "packages/runtime/src/skills.ts:125-220 - tidak ada metode edit, history, atau restore.",
+      "packages/storage/src/schema-v3.ts:224-232 - tabel skill_versions ada tetapi tidak dipakai kode."
+    ],
+    "gaps": [
+      "Tidak ada versi semver baru saat skill berubah.",
+      "Versi lama tidak disimpan dan tidak bisa dipulihkan.",
+      "Tidak ada alasan dan aktor perubahan.",
+      "Tidak ada changelog di /skill info."
+    ]
+  },
+  {
+    "id": "RC-FR-083",
+    "title": "Dependensi skill",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/skills.ts:79 - parser hanya membaca name, description, version.",
+      "packages/runtime/src/skills.ts:134-142 - pemuatan skill tidak mengurutkan dependensi.",
+      "packages/runtime/src/skills.ts:160-163 - view hanya mencari satu skill."
+    ],
+    "gaps": [
+      "Dependensi tidak bisa dideklarasikan di frontmatter.",
+      "Dependensi tidak dimuat lebih dulu dan dependensi hilang tidak menggagalkan aktivasi.",
+      "Siklus dependensi tidak dideteksi.",
+      "Tidak ada pembatasan versi dependensi."
+    ]
+  },
+  {
+    "id": "RC-FR-084",
+    "title": "Registry dan instalasi skill",
+    "status": "missing",
+    "evidence": [
+      "packages/cli/src/repl-commands.ts:127 - /install-skill terdaftar dengan NOT_YET.",
+      "packages/runtime/src/skills.ts:114-122 - skill hanya dibaca dari direktori global dan project.",
+      "packages/runtime/src/skills.ts:129-131 - SkillStore hanya mengenal direktori skills global dan project, tanpa direktori registry."
+    ],
+    "gaps": [
+      "Tidak ada sumber HTTPS tarball atau Git repository.",
+      "Tidak ada verifikasi checksum atau signature.",
+      "Tidak ada pratinjau manifest, permission, dan skrip sebelum instalasi.",
+      "Sumber dan versi tidak dicatat untuk update."
+    ]
+  },
+  {
+    "id": "RC-FR-085",
+    "title": "Hapus dan update skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:205-215 - remove menghapus direktori skill dan menolak skill bawaan.",
+      "packages/runtime/src/tools/index.ts:1310-1311 - tool skill action=remove memanggil remove.",
+      "packages/runtime/src/memory-skills.test.ts:88-89 - tes memastikan skill terhapus dari daftar."
+    ],
+    "gaps": [
+      "Tidak ada audit penghapusan.",
+      "Tidak ada update dan tidak ada perbandingan versi.",
+      "Tidak ada changelog atau penanganan konflik.",
+      "Tidak ada rollback dan tidak ada penundaan saat skill sedang dipakai."
+    ]
+  },
+  {
+    "id": "RC-FR-086",
+    "title": "Registry tool bawaan",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:382-1230 - tool yang terdaftar: fs_read, fs_list, fs_write, fs_edit, fs_stat, fs_glob, fs_delete, git_read, git_write, checkpoint_*, repo_map, search_code, apply_patch, project_check, plan_revise, goal_*, shell_run, memory, skill, task.",
+      "packages/runtime/src/tools/index.ts:1368-1370 - toolSpecs hanya menggabungkan tools dan alias, tanpa kategori atau status platform.",
+      "packages/runtime/src/providers/types.ts:24-28 - ToolSpec hanya name, description, parameters; tidak ada output schema, permission, atau timeout.",
+      "packages/cli/src/main.ts:1720-1722 - /tools mencetak string statis, bukan kategori, izin, dan status.",
+      "packages/runtime/src/dashboard-data.ts:142-153 - halaman tools memberi kategori \"builtin\" dan risk \"baca\" hardcoded."
+    ],
+    "gaps": [
+      "Tidak ada tool web search, HTTP, browser, database, package, testing khusus, gambar, dokumen, sistem, scheduling, dan messaging.",
+      "Tidak ada skema output, permission, dan timeout default di registry tool.",
+      "Tool yang tidak tersedia di platform tidak ditandai.",
+      "/tools tidak menampilkan kategori, status, dan izin.",
+      "Pematian tool per project belum terhubung ke config; AgentConfig.tools hanya diisi oleh subagent (rpc.ts:1509)."
+    ]
+  },
+  {
+    "id": "RC-FR-087",
+    "title": "Tool kustom dan eksternal",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:382 - registry berupa array statis di kode.",
+      "packages/runtime/src/tools/index.ts:1368-1370 - tidak ada pemuatan dari .rann/tools.",
+      "packages/shared/src/config.ts:1-355 - tidak ada bagian tools untuk mendaftarkan tool eksternal."
+    ],
+    "gaps": [
+      "Tidak ada modul TypeScript kustom di .rann/tools.",
+      "Tidak ada tool eksternal berbasis proses dengan input dan output JSON.",
+      "Tidak ada deklarasi permission dan timeout untuk tool kustom.",
+      "Tidak ada /tool test atau penolakan saat skema tidak valid."
+    ]
+  },
+  {
+    "id": "RC-FR-088",
+    "title": "Validasi skema dan chaining",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:374-380 - parse memakai zod safeParse dan error menyebut path field.",
+      "packages/runtime/src/tools/index.ts:1244 - tool memory memvalidasi argumen sebelum eksekusi.",
+      "packages/runtime/src/tools/index.ts:1377-1390 - tool MCP dilewatkan tanpa validasi skema input."
+    ],
+    "gaps": [
+      "Output tool tidak divalidasi karena tidak ada skema output.",
+      "Tidak ada chaining dan tidak ada pemeriksaan kecocokan output A ke input B.",
+      "Tidak ada penyimpanan output antara sebagai artefak.",
+      "Tool MCP tidak memakai validasi zod."
+    ]
+  },
+  {
+    "id": "RC-FR-089",
+    "title": "Permission, timeout, retry, dan log tool",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:75 - ToolDefinition punya risk; assertAllowed dipanggil untuk write dan exec, misalnya baris 1019 dan 1151.",
+      "packages/runtime/src/tools/index.ts:1164-1204 - shell dijalankan detached dan timeout membunuh process group lewat process.kill(-pid).",
+      "packages/runtime/src/tools/index.ts:80 - output dibatasi 100.000 karakter.",
+      "packages/runtime/src/agent.ts:751 - event tool.start membawa args yang sudah diredaksi.",
+      "packages/runtime/src/agent.ts:801 - event tool.end mencatat status dan durasi."
+    ],
+    "gaps": [
+      "Tidak ada timeout default per tool di registry; hanya shell yang punya default 120 detik.",
+      "Timeout mengembalikan output error \"timeout\", bukan kode E_TOOL_TIMEOUT.",
+      "Tidak ada retry untuk tool idempoten dan tidak ada matriks retry.",
+      "Output besar dipotong, tidak disimpan sebagai artefak."
+    ]
+  },
+  {
+    "id": "RC-FR-090",
+    "title": "Cakupan kategori tool",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:382-1230 - kategori yang ada hanya filesystem, terminal, Git, pencarian kode, planning, memory, skill, dan task.",
+      "packages/runtime/src/tools/index.ts:864-901 - repo_map dan search_code hanya untuk kode sumber.",
+      "packages/runtime/src/tools/index.ts:1137-1218 - shell_run menjadi satu-satunya jalur eksekusi dan testing."
+    ],
+    "gaps": [
+      "Tidak ada tool web search, HTTP, browser, database, package, gambar, dokumen, sistem, scheduling, dan messaging.",
+      "Tidak ada tool database read-only dengan penolakan write.",
+      "Tidak ada ekstraksi PDF, DOCX, atau XLSX.",
+      "Tidak ada resize, crop, atau OCR gambar dan tidak ada tool messaging."
+    ]
+  },
+  {
+    "id": "RC-FR-091",
+    "title": "Konfigurasi dan transport MCP",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:123-139 - konfigurasi server hanya command, args, env, cwd, enabled, timeout_ms.",
+      "packages/runtime/src/mcp.ts:135-139 - server dijalankan dengan spawn stdio.",
+      "packages/runtime/src/mcp.ts:100 - discovery memakai tools/list.",
+      "packages/cli/src/main.ts:2150-2152 - /mcp hanya mencetak \"backend MCP belum tersedia\"."
+    ],
+    "gaps": [
+      "Tidak ada transport Streamable HTTP atau SSE, dan tidak ada field URL, header, transport, atau permission.",
+      "Tidak ada cakupan global versus project untuk server.",
+      "Tidak ada /mcp add, remove, list, atau reload yang berfungsi.",
+      "Kegagalan satu server melempar error dan membatalkan seluruh loadTools, sehingga tool server lain ikut hilang (mcp.ts:117-126)."
+    ]
+  },
+  {
+    "id": "RC-FR-092",
+    "title": "Discovery tool, resource, dan prompt",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/mcp.ts:100-115 - hanya tools/list yang dipanggil; nama diberi prefiks mcp__server__.",
+      "packages/runtime/src/mcp.ts:111-114 - inputSchema yang tidak valid diganti skema kosong, bukan ditolak.",
+      "packages/runtime/src/mcp.ts:186-205 - notifikasi tanpa id diabaikan, tidak ada penanganan perubahan daftar.",
+      "packages/runtime/src/mcp.test.ts:58-90 - tes mencakup initialize, tools/list, call, kegagalan start, dan timeout."
+    ],
+    "gaps": [
+      "Tidak ada resources/list, resources/read, prompts/list, atau prompts/get.",
+      "Namespace memakai mcp__server__tool, bukan server.tool seperti PRD.",
+      "Tool dengan skema tidak valid tetap didaftarkan dengan skema kosong.",
+      "Tidak ada reload atau deteksi perubahan daftar lewat notifikasi."
+    ]
+  },
+  {
+    "id": "RC-FR-093",
+    "title": "Autentikasi dan lifecycle MCP",
+    "status": "missing",
+    "evidence": [
+      "packages/shared/src/config.ts:123-139 - tidak ada oauth, headers, atau token.",
+      "packages/runtime/src/mcp.ts:160-164 - saat proses keluar, state dihapus dan cachedSpecs dibuang; tidak ada restart atau backoff.",
+      "packages/storage/src/schema-v3.ts:260 - status server hanya stopped, starting, ready, error.",
+      "packages/shared/src/config.ts:134 - timeout default 20.000 ms."
+    ],
+    "gaps": [
+      "Tidak ada OAuth 2.1 dan tidak ada secret store untuk token MCP.",
+      "Header auth tidak bisa dikonfigurasi.",
+      "Tidak ada restart otomatis dengan backoff maksimal tiga kali.",
+      "Status tidak sesuai lima nilai PRD dan tidak pernah diperbarui ke database.",
+      "Timeout default 20 detik, bukan 30 detik."
+    ]
+  },
+  {
+    "id": "RC-FR-094",
+    "title": "Permission dan isolasi MCP",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1377-1390 - setiap tool mcp__ memakai risk \"exec\" dan assertAllowed.",
+      "packages/runtime/src/mcp.ts:135-139 - server berjalan di proses anak terpisah.",
+      "packages/runtime/src/mcp.ts:137 - env anak menggabungkan seluruh process.env dengan env server."
+    ],
+    "gaps": [
+      "Permission tidak dapat dikonfigurasi per server atau per tool; semuanya exec.",
+      "Server mewarisi seluruh environment proses, termasuk kredensial yang tidak seharusnya.",
+      "Tidak ada pembatasan filesystem untuk server MCP.",
+      "Output server dikembalikan sebagai content biasa tanpa label konten tidak tepercaya."
+    ]
+  },
+  {
+    "id": "RC-FR-095",
+    "title": "Instalasi dan registrasi plugin",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:266-275 - hanya ada tabel plugins dengan name, version, path, enabled, manifest_json.",
+      "packages/runtime/src/dashboard-data.ts:169-172 - dashboard membaca tabel plugins.",
+      "packages/cli/src/repl-commands.ts:132 - /plugins terdaftar dengan NOT_YET."
+    ],
+    "gaps": [
+      "Tidak ada manifest plugin, loader, atau entry point.",
+      "Tidak ada instalasi dari folder lokal atau HTTPS tarball dengan checksum.",
+      "Tidak ada status nonaktif setelah instalasi dan tidak ada penolakan nama bentrok.",
+      "Tidak ada kode yang menulis atau membaca tabel plugins selain dashboard.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  },
+  {
+    "id": "RC-FR-096",
+    "title": "Lifecycle dan dependensi plugin",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:266-275 - tabel plugins tidak punya kolom status atau dependensi.",
+      "packages/runtime/src/dashboard-data.ts:169-172 - hanya menampilkan name, version, enabled, path.",
+      "packages/cli/src/repl-commands.ts:132 - /plugins belum tersedia."
+    ],
+    "gaps": [
+      "Tidak ada status installed, enabled, disabled, error.",
+      "Tidak ada pemuatan dependensi berurutan atau kegagalan aktivasi.",
+      "Tidak ada isolasi crash plugin.",
+      "Tidak ada penonaktifan tanpa menghapus data dan tidak ada pemeriksaan kompatibilitas saat update.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  },
+  {
+    "id": "RC-FR-097",
+    "title": "API dan permission plugin",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:272 - manifest_json ada tetapi tidak ada kode yang memvalidasinya.",
+      "packages/runtime/src/tools/index.ts:382 - registry tool hanya berasal dari kode inti.",
+      "packages/runtime/src/tools/index.ts:382-1390 - seluruh registry tool berasal dari array statis dan executeTool; tidak ada jalur registrasi dari plugin."
+    ],
+    "gaps": [
+      "Tidak ada API plugin untuk tool, command, hook, provider, atau messaging adapter.",
+      "Tidak ada permission per capability di manifest.",
+      "Plugin tidak berjalan di proses anak.",
+      "Error plugin tidak dikembalikan sebagai error terstruktur.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  },
+  {
+    "id": "RC-FR-098",
+    "title": "Kompatibilitas dan update plugin",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:266-275 - tidak ada kolom api_version, rentang versi, atau status stale.",
+      "packages/cli/src/repl-commands.ts:132 - /plugins belum tersedia.",
+      "packages/runtime/src/dashboard-data.ts:169-172 - tidak ada data kompatibilitas."
+    ],
+    "gaps": [
+      "Manifest tidak menyebut rentang versi API.",
+      "Tidak ada penolakan plugin di luar rentang dengan pesan versi minimum.",
+      "Tidak ada changelog, konfirmasi perubahan permission, atau rollback.",
+      "Tidak ada penandaan stale setelah 90 hari.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  },
+  {
+    "id": "RC-FR-099",
+    "title": "Event hooks",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:277-288 - tabel hooks punya event, matcher, command, timeout, enabled, priority.",
+      "packages/cli/src/repl-commands.ts:133 - /hooks terdaftar dengan NOT_YET.",
+      "packages/shared/src/events.ts:1-33 - daftar EventType tidak memuat SessionStart, PreToolUse, PostToolUse, atau event hook lain.",
+      "packages/runtime/src/agent.ts:751-825 - tool.start dan tool.end hanya diterbitkan sebagai event UI, tanpa pemanggilan hook."
+    ],
+    "gaps": [
+      "Tidak ada hook engine dan tidak ada 16 event minimum.",
+      "Tidak ada payload JSON per event dan tidak ada keputusan allow, deny, atau modify.",
+      "Hook tidak berjalan berurutan berdasarkan prioritas.",
+      "Tidak ada kode yang membaca atau menulis tabel hooks.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  },
+  {
+    "id": "RC-FR-100",
+    "title": "Konfigurasi, validasi, timeout, dan error hook",
+    "status": "missing",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:277-288 - tabel hooks tidak punya kolom onError atau tipe hook.",
+      "packages/storage/src/schema-v3.ts:282 - timeout default 30.000 ms.",
+      "packages/cli/src/repl-commands.ts:133 - /hooks belum tersedia.",
+      "packages/shared/src/config.ts:60-139 - config hanya memuat memory, skills, dan mcp; tidak ada bagian hooks."
+    ],
+    "gaps": [
+      "Hook tidak bisa didefinisikan di config dengan event, command, timeout, dan onError.",
+      "Tidak ada tipe command, HTTP, script, dan plugin.",
+      "Tidak ada timeout default 10 detik dan tidak ada pembunuhan proses hook.",
+      "Tidak ada kebijakan onError block, warn, atau ignore dan tidak ada dry-run.",
+      "Tidak ada tes unit atau integrasi untuk area ini."
+    ]
+  }
+]

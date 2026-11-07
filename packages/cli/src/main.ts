@@ -170,6 +170,11 @@ async function main(argv: string[]): Promise<number> {
       return await routeCommand(args);
     case "skill":
       return await skillCommand(args);
+    case "plugin":
+    case "plugins":
+      return await pluginCommand(args);
+    case "hooks":
+      return await hooksCommand(args);
     case "init":
       return initCommand();
     case "run": {
@@ -1267,6 +1272,54 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             id: target
           });
           print(result.removed > 0 ? `memori ${target} dihapus` : `memori ${target} tidak ditemukan`);
+          continue;
+        }
+        if (line === "/plugins" || line.startsWith("/plugins ")) {
+          const argument = line.slice(8).trim();
+          const [action = "list", ...rest] = argument.split(/\s+/).filter(Boolean);
+          if (action === "list" || argument.length === 0) {
+            const plugins = await client.request<Array<Record<string, unknown>>>("plugin.list", { projectPath: process.cwd() });
+            if (plugins.length === 0) print("belum ada plugin");
+            else for (const plugin of plugins) print(`${String(plugin.name)} v${String(plugin.version)} [${String(plugin.status)}] ${(plugin.permissions as string[]).join(",")}`);
+            continue;
+          }
+          if (action === "install") {
+            const source = rest[0];
+            if (!source) { print("Pakai: /plugins install <folder|https-url> [--checksum <sha256>]"); continue; }
+            const checksumIndex = rest.indexOf("--checksum");
+            const checksum = checksumIndex >= 0 ? rest[checksumIndex + 1] : undefined;
+            const plugin = await client.request<Record<string, unknown>>("plugin.install", { projectPath: process.cwd(), source, checksum });
+            print(`plugin ${String(plugin.name)} v${String(plugin.version)} ${String(plugin.status)}`);
+            continue;
+          }
+          const name = rest[0];
+          if (!name) { print(`Pakai: /plugins ${action} <nama>`); continue; }
+          if (action === "enable" || action === "disable" || action === "remove" || action === "rollback") {
+            await client.request(`plugin.${action}`, { projectPath: process.cwd(), name });
+            print(`plugin ${name}: ${action} selesai`);
+            continue;
+          }
+          print("subcommand: list, install, enable, disable, remove, rollback");
+          continue;
+        }
+        if (line === "/hooks" || line.startsWith("/hooks ")) {
+          const argument = line.slice(6).trim();
+          const [action = "list", ...rest] = argument.split(/\s+/).filter(Boolean);
+          if (action === "list" || argument.length === 0) {
+            const result = await client.request<{ hooks: Array<Record<string, unknown>>; invalid: Array<Record<string, unknown>> }>("hooks.list", { projectPath: process.cwd() });
+            if (result.hooks.length === 0) print("belum ada hook");
+            else for (const hook of result.hooks) print(`${String(hook.event)} [${String(hook.kind)}] ${String(hook.command ?? hook.path ?? hook.url ?? hook.plugin ?? "")}`);
+            for (const invalid of result.invalid) print(`hook #${String(invalid.index)} tidak valid: ${(invalid.errors as string[]).join("; ")}`);
+            continue;
+          }
+          if (action === "test") {
+            const event = rest[0];
+            if (!event) { print("Pakai: /hooks test <Event> [--dry-run]"); continue; }
+            const result = await client.request<Record<string, unknown>>("hooks.test", { projectPath: process.cwd(), event, dryRun: rest.includes("--dry-run") });
+            print(JSON.stringify(result, null, 2));
+            continue;
+          }
+          print("subcommand: list, test");
           continue;
         }
         if (line === "/skills") {
@@ -2636,6 +2689,15 @@ function limitFlag(args: ParsedArgs, fallback: number): number {
   return parsed;
 }
 
+function commaFlag(args: ParsedArgs, name: string): string[] | undefined {
+  const raw = flagString(args, name);
+  if (raw === undefined) return undefined;
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function tagFlag(args: ParsedArgs): string[] | undefined {
   const raw = flagString(args, "tags");
   if (raw === undefined) return undefined;
@@ -2803,6 +2865,61 @@ async function memoryCommand(args: ParsedArgs): Promise<number> {
     return result.removed ? 0 : 1;
   }
 
+  if (sub === "export") {
+    const payload = await withClient((client) =>
+      client.request<unknown>("memory.export", { projectPath })
+    );
+    const target = flagString(args, "out");
+    const text = `${JSON.stringify(payload, null, 2)}\n`;
+    if (target) writeFileSync(target, text, { mode: 0o600 });
+    else process.stdout.write(text);
+    return 0;
+  }
+
+  if (sub === "import") {
+    const source = flagString(args, "from") ?? args.positionals[0];
+    if (!source) throw new RannError("E_INVALID_PARAMS", "memory import butuh --from <berkas.json>");
+    const payload = JSON.parse(readFileSync(source, "utf8")) as unknown;
+    const result = await withClient((client) =>
+      client.request<{ imported: number; skipped: number }>("memory.import", {
+        projectPath,
+        payload,
+        replace: flagBool(args, "replace")
+      })
+    );
+    print(`memori diimpor: ${result.imported}, dilewati: ${result.skipped}`);
+    return 0;
+  }
+
+  if (sub === "index") {
+    const root = flagString(args, "root") ?? projectPath;
+    const result = await withClient((client) =>
+      client.request<{ files: number; chunks: number; skipped: number }>("memory.index", {
+        projectPath,
+        root,
+        maxFiles: limitFlag(args, 500)
+      })
+    );
+    print(`knowledge: ${result.files} berkas, ${result.chunks} bagian, ${result.skipped} dilewati`);
+    return 0;
+  }
+
+  if (sub === "supersede") {
+    const id = args.positionals[0];
+    const text = flagString(args, "text") ?? args.positionals.slice(1).join(" ").trim();
+    if (!id || !text) throw new RannError("E_INVALID_PARAMS", "memory supersede butuh id dan teks baru");
+    const entry = await withClient((client) =>
+      client.request<MemoryView>("memory.supersede", {
+        projectPath,
+        id,
+        text,
+        reason: flagString(args, "reason") ?? "diganti"
+      })
+    );
+    print(`memori baru ${entry.id}, lama ditandai superseded`);
+    return 0;
+  }
+
   if (sub !== "list") throw new RannError("E_INVALID_PARAMS", `Subcommand memory tidak dikenal: ${sub}`);
   const scope = (flagString(args, "scope") ?? "all") as "global" | "project" | "all";
   const entries = await withClient((client) =>
@@ -2819,6 +2936,96 @@ interface SkillView {
   version: string;
   updated_at: number;
   body?: string;
+}
+
+async function pluginCommand(args: ParsedArgs): Promise<number> {
+  const projectPath = localProject(args);
+  const asJson = flagBool(args, "json");
+  const sub = args.subcommand ?? "list";
+
+  if (sub === "list") {
+    const plugins = await withClient((client) =>
+      client.request<Array<{ name: string; version: string; status: string; permissions: string[]; stale: boolean; last_error?: string }>>("plugin.list", { projectPath })
+    );
+    if (asJson) print(JSON.stringify(plugins, null, 2));
+    else if (plugins.length === 0) print("belum ada plugin");
+    else print(table(["nama", "versi", "status", "izin", "stale"], plugins.map((plugin) => [plugin.name, plugin.version, plugin.status, plugin.permissions.join(","), plugin.stale ? "ya" : "tidak"])));
+    return 0;
+  }
+
+  if (sub === "install") {
+    const source = args.positionals[0];
+    if (!source) throw new RannError("E_INVALID_PARAMS", "plugin install butuh folder atau URL tarball HTTPS");
+    const plugin = await withClient((client) =>
+      client.request<{ name: string; version: string; status: string }>("plugin.install", {
+        projectPath,
+        source,
+        scope: flagString(args, "scope") ?? "project",
+        name: flagString(args, "name"),
+        checksum: flagString(args, "checksum"),
+        allowUnsigned: flagBool(args, "allow-unsigned"),
+        overwrite: flagBool(args, "overwrite")
+      })
+    );
+    print(`plugin ${plugin.name} v${plugin.version} ${plugin.status}`);
+    return 0;
+  }
+
+  const name = args.positionals[0];
+  if (!name && sub !== "list") throw new RannError("E_INVALID_PARAMS", `plugin ${sub} butuh nama`);
+  if (sub === "enable" || sub === "disable" || sub === "remove" || sub === "update" || sub === "rollback") {
+    const result = await withClient((client) =>
+      client.request<Record<string, unknown>>(`plugin.${sub}`, {
+        projectPath,
+        name,
+        source: flagString(args, "source")
+      })
+    );
+    print(asJson ? JSON.stringify(result, null, 2) : `plugin ${name}: ${sub} selesai`);
+    return 0;
+  }
+  if (sub === "invoke") {
+    const method = flagString(args, "method");
+    if (!method) throw new RannError("E_INVALID_PARAMS", "plugin invoke butuh --method");
+    const result = await withClient((client) =>
+      client.request<Record<string, unknown>>("plugin.invoke", { projectPath, name, method, params: flagString(args, "params") ?? "{}" })
+    );
+    print(asJson ? JSON.stringify(result, null, 2) : JSON.stringify(result.output ?? result));
+    return 0;
+  }
+  throw new RannError("E_INVALID_PARAMS", "plugin subcommand: list, install, enable, disable, remove, update, rollback, invoke");
+}
+
+async function hooksCommand(args: ParsedArgs): Promise<number> {
+  const projectPath = localProject(args);
+  const asJson = flagBool(args, "json");
+  const sub = args.subcommand ?? "list";
+  if (sub === "list") {
+    const result = await withClient((client) =>
+      client.request<{ hooks: Array<{ event: string; kind: string; command?: string; path?: string; url?: string; plugin?: string; priority?: number; enabled?: boolean }>; invalid: Array<{ index: number; errors: string[] }> }>("hooks.list", { projectPath })
+    );
+    if (asJson) print(JSON.stringify(result, null, 2));
+    else if (result.hooks.length === 0) print("belum ada hook");
+    else print(table(["event", "jenis", "target", "prioritas"], result.hooks.map((hook) => [hook.event, hook.kind, hook.command ?? hook.path ?? hook.url ?? hook.plugin ?? "", String(hook.priority ?? 0)])));
+    return 0;
+  }
+  if (sub === "test") {
+    const event = args.positionals[0];
+    if (!event) throw new RannError("E_INVALID_PARAMS", "hooks test butuh nama event");
+    const result = await withClient((client) =>
+      client.request<Record<string, unknown>>("hooks.test", {
+        projectPath,
+        event,
+        tool: flagString(args, "tool"),
+        prompt: flagString(args, "prompt"),
+        args: flagString(args, "args"),
+        dryRun: flagBool(args, "dry-run")
+      })
+    );
+    print(asJson ? JSON.stringify(result, null, 2) : JSON.stringify(result, null, 2));
+    return 0;
+  }
+  throw new RannError("E_INVALID_PARAMS", "hooks subcommand: list, test");
 }
 
 async function skillCommand(args: ParsedArgs): Promise<number> {
@@ -2875,10 +3082,107 @@ async function skillCommand(args: ParsedArgs): Promise<number> {
         description,
         body,
         scope: (flagString(args, "scope") ?? "project") as "global" | "project",
-        overwrite: flagBool(args, "overwrite")
+        overwrite: flagBool(args, "overwrite"),
+        triggers: commaFlag(args, "triggers"),
+        dependencies: commaFlag(args, "dependencies"),
+        reason: flagString(args, "reason"),
+        dryRun: flagBool(args, "dry-run")
       })
     );
     print(asJson ? JSON.stringify(skill, null, 2) : `skill ${skill.name} disimpan (${skill.scope})`);
+    return 0;
+  }
+
+  if (sub === "select") {
+    const task = args.positionals.join(" ").trim() || flagString(args, "task");
+    if (!task) throw new RannError("E_INVALID_PARAMS", "skill select butuh teks tugas");
+    const result = await withClient((client) =>
+      client.request<{ skills: SkillView[]; reasons: string[] }>("skill.select", {
+        projectPath,
+        task,
+        max: limitFlag(args, 3)
+      })
+    );
+    if (asJson) print(JSON.stringify(result, null, 2));
+    else {
+      for (const reason of result.reasons) print(`- ${reason}`);
+      if (result.skills.length === 0) print("tidak ada skill yang cocok");
+    }
+    return 0;
+  }
+
+  if (sub === "edit") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill edit butuh nama");
+    const bodyFile = flagString(args, "body-file");
+    const body = flagString(args, "body") ?? (bodyFile ? readFileSync(bodyFile, "utf8") : undefined);
+    const skill = await withClient((client) =>
+      client.request<SkillView>("skill.edit", {
+        projectPath,
+        name,
+        body,
+        description: flagString(args, "description"),
+        triggers: commaFlag(args, "triggers"),
+        reason: flagString(args, "reason")
+      })
+    );
+    print(`skill ${skill.name} v${skill.version} diperbarui`);
+    return 0;
+  }
+
+  if (sub === "history") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill history butuh nama");
+    const result = await withClient((client) =>
+      client.request<{ versions: Array<{ version: string; at: number }>; changelog: Array<Record<string, unknown>> }>(
+        "skill.history",
+        { projectPath, name }
+      )
+    );
+    print(asJson ? JSON.stringify(result, null, 2) : table(["versi", "waktu"], result.versions.map((item) => [item.version, new Date(item.at).toISOString()])));
+    return 0;
+  }
+
+  if (sub === "rollback") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill rollback butuh nama");
+    const skill = await withClient((client) =>
+      client.request<SkillView>("skill.rollback", { projectPath, name, version: flagString(args, "version") })
+    );
+    print(`skill ${skill.name} dipulihkan ke v${skill.version}`);
+    return 0;
+  }
+
+  if (sub === "install") {
+    const source = args.positionals[0];
+    if (!source) throw new RannError("E_INVALID_PARAMS", "skill install butuh sumber folder atau URL Git");
+    const skill = await withClient((client) =>
+      client.request<SkillView>("skill.install", {
+        projectPath,
+        source,
+        scope: (flagString(args, "scope") ?? "project") as "global" | "project",
+        approve: flagBool(args, "approve")
+      })
+    );
+    print(`skill ${skill.name} v${skill.version} terpasang dari ${source}`);
+    return 0;
+  }
+
+  if (sub === "update") {
+    const name = args.positionals[0];
+    if (!name) throw new RannError("E_INVALID_PARAMS", "skill update butuh nama");
+    const skill = await withClient((client) =>
+      client.request<SkillView>("skill.update", { projectPath, name, source: flagString(args, "source") })
+    );
+    print(`skill ${skill.name} v${skill.version}`);
+    return 0;
+  }
+
+  if (sub === "conflicts") {
+    const conflicts = await withClient((client) =>
+      client.request<Array<{ name: string; scopes: string[] }>>("skill.conflicts", { projectPath })
+    );
+    print(asJson ? JSON.stringify(conflicts, null, 2) : conflicts.length === 0 ? "tidak ada bentrok nama" : conflicts.map((item) => `${item.name}: ${item.scopes.join(", ")}`).join("\n"));
     return 0;
   }
 

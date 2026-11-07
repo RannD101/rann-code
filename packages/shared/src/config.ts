@@ -164,6 +164,46 @@ export const configSchema = z.object({
       profile: z.string().default("default")
     })
     .default({}),
+  hooks: z
+    .array(
+      z.object({
+        event: z.enum([
+          "SessionStart",
+          "SessionEnd",
+          "UserPromptSubmit",
+          "PreToolUse",
+          "PostToolUse",
+          "ToolError",
+          "PreTask",
+          "PostTask",
+          "AgentSpawn",
+          "AgentComplete",
+          "MemoryWrite",
+          "SkillLoad",
+          "ContextCompact",
+          "Stop",
+          "PreCompact",
+          "Notification"
+        ]),
+        kind: z.enum(["command", "http", "script", "plugin"]).default("command"),
+        command: z.string().optional(),
+        url: z.string().url().optional(),
+        path: z.string().optional(),
+        plugin: z.string().optional(),
+        timeout_ms: z.number().int().min(100).max(120_000).default(10_000),
+        on_error: z.enum(["block", "warn", "ignore"]).default("warn"),
+        priority: z.number().int().min(-1_000).max(1_000).default(0),
+        enabled: z.boolean().default(true),
+        permissions: z.array(z.string()).default([])
+      })
+    )
+    .default([]),
+  plugins: z
+    .object({
+      enabled: z.boolean().default(true),
+      allow_unsigned: z.boolean().default(false)
+    })
+    .default({}),
   messaging: z
     .object({
       telegram: z
