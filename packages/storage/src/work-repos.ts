@@ -460,10 +460,14 @@ export function acquirePathLease(
   return { ok: true, lease: db.prepare("SELECT * FROM path_leases WHERE id = ?").get(id) as PathLeaseRow };
 }
 
-export function releasePathLease(db: Db, path: string, ownerAgentId?: string): boolean {
-  const result = ownerAgentId
-    ? db.prepare("DELETE FROM path_leases WHERE path = ? AND owner_agent_id = ?").run(path, ownerAgentId)
-    : db.prepare("DELETE FROM path_leases WHERE path = ?").run(path);
+export function releasePathLease(db: Db, path: string, sessionId?: string, ownerAgentId?: string): boolean {
+  const result = sessionId
+    ? ownerAgentId
+      ? db.prepare("DELETE FROM path_leases WHERE path = ? AND session_id = ? AND owner_agent_id = ?").run(path, sessionId, ownerAgentId)
+      : db.prepare("DELETE FROM path_leases WHERE path = ? AND session_id = ?").run(path, sessionId)
+    : ownerAgentId
+      ? db.prepare("DELETE FROM path_leases WHERE path = ? AND owner_agent_id = ?").run(path, ownerAgentId)
+      : db.prepare("DELETE FROM path_leases WHERE path = ?").run(path);
   return result.changes > 0;
 }
 

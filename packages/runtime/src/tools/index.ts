@@ -121,7 +121,7 @@ function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
       ttlMs: LEASE_TTL_MS
     });
     if (!lease.ok) {
-      for (const held of acquired) releasePathLease(ctx.db, held, undefined);
+      for (const held of acquired) releasePathLease(ctx.db, held, ctx.sessionId);
       throw new RannError("E_LEASE_CONFLICT", `Berkas sedang dipegang agen lain: ${relPath(ctx, path)}`, {
         data: {
           path: relPath(ctx, path),
@@ -138,7 +138,7 @@ function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
 
 function releaseLeases(ctx: ToolContext, paths: string[]): void {
   if (!ctx.db || !ctx.sessionId) return;
-  for (const path of paths) releasePathLease(ctx.db, path, undefined);
+  for (const path of paths) releasePathLease(ctx.db, path, ctx.sessionId);
 }
 
 function beginTransaction(ctx: ToolContext, summary: unknown): TransactionRow | null {
@@ -158,6 +158,7 @@ function recordChanges(
 ): void {
   if (!ctx.db || !ctx.sessionId || !transaction) return;
   for (const file of files) {
+    if (file.status === "unchanged") continue;
     recordFileChange(ctx.db, {
       transactionId: transaction.id,
       sessionId: ctx.sessionId,

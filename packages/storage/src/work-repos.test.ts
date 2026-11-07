@@ -92,7 +92,7 @@ describe("work repositories", () => {
     expect(lease.ok).toBe(true);
     const conflict = acquirePathLease(db, { path: join(dir, "a.txt"), ownerAgentId: other.id });
     expect(conflict.ok).toBe(false);
-    expect(releasePathLease(db, join(dir, "a.txt"), agent.id)).toBe(true);
+    expect(releasePathLease(db, join(dir, "a.txt"), undefined, agent.id)).toBe(true);
     expect(acquirePathLease(db, { path: join(dir, "a.txt"), ownerAgentId: other.id }).ok).toBe(true);
   });
 
