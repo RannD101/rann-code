@@ -7,14 +7,17 @@
     "rann": "./dist/main.js",
     "rannd": "./dist/daemon-main.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@rann/shared": "workspace:*",
     "@rann/runtime": "workspace:*",
-    "@rann/storage": "workspace:*"
+    "@rann/shared": "workspace:*",
+    "@rann/storage": "workspace:*",
+    "yaml": "^2.9.1"
   }
 }

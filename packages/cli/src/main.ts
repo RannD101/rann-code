@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, toRannError } from "@rann/shared";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
 import { inspectDatabase, renderGoal, type GoalView } from "@rann/storage";
@@ -12,6 +12,7 @@ import { choose, chooseWith, clearScreen, colorsEnabled, loadCustomThemeIfPresen
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
 import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
 import { HistoryStore } from "./history.js";
+import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
 
 const HELP = `rann-code ${packageVersion()}
@@ -504,6 +505,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const layout = homeLayout();
     loadCustomThemeIfPresent(resolveHome());
     const history = new HistoryStore(layout.historyDir, process.cwd());
+    const custom = loadCustomCommands({
+      homeDir: join(resolveHome(), "commands"),
+      projectDir: join(process.cwd(), ".rann", "commands"),
+      coreNames: REPL_COMMANDS.map((command) => command.name)
+    });
+    for (const error of custom.errors) printErr(ui.dim(`[command] ${error}`));
+    const findCustom = (name: string): CustomCommand | undefined =>
+      custom.commands.find((command) => command.name === name || command.aliases.includes(name));
     let branch = "";
     try {
       branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -533,17 +542,29 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       history,
       busy: () => busy,
       prompt: statusPrompt,
-      palette: REPL_COMMANDS.filter((command) => isAvailable(command)).map((command: ReplCommand) => ({
-        name: command.name,
-        description: command.description,
-        category: command.category,
-        usage: command.usage
-      })),
+      palette: [
+        ...REPL_COMMANDS.filter((command) => isAvailable(command)).map((command: ReplCommand) => ({
+          name: command.name,
+          description: command.description,
+          category: command.category,
+          usage: command.usage
+        })),
+        ...custom.commands.map((command) => ({
+          name: command.name,
+          description: command.description,
+          category: command.source === "project" ? "proyek" : "umum",
+          usage: `/${command.name}${command.args.map((arg) => (arg.required ? ` <${arg.name}>` : ` [${arg.name}]`)).join("")}`
+        }))
+      ],
       completer: async (line: string, cursor: number) => {
         const before = line.slice(0, cursor);
         if (/^\/[^\s]*$/.test(before)) {
           const [items] = completeReplLine(before);
-          return { start: 0, items: items.map((value) => ({ value })) };
+          const query = before.slice(1).toLowerCase();
+          const extra = custom.commands
+            .filter((command) => command.name.startsWith(query) || command.aliases.some((alias) => alias.startsWith(query)))
+            .map((command) => `/${command.name}`);
+          return { start: 0, items: [...new Set([...items, ...extra])].map((value) => ({ value })) };
         }
         const match = /^(\/[a-z-]+)\s+(.*)$/.exec(before);
         if (!match) return { start: cursor, items: [] };
@@ -683,6 +704,31 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/help" || line.startsWith("/help ")) {
           const query = line.slice(5).trim();
+          if (query === "keys") {
+            print(ui.bold("shortcut"));
+            print(table(
+              ["tombol", "aksi", "status"],
+              [
+                ["Enter", "kirim", "aktif"],
+                ["Shift+Enter / Ctrl+J", "baris baru", "aktif"],
+                ["Alt+Up / Alt+Down", "pindah baris", "aktif"],
+                ["Ctrl+P / Ctrl+N", "pindah baris", "aktif"],
+                ["Ctrl+A", "awal baris", "aktif"],
+                ["Ctrl+U", "hapus ke awal baris", "aktif"],
+                ["Ctrl+W", "hapus kata", "aktif"],
+                ["Ctrl+R", "cari riwayat", "aktif"],
+                ["Ctrl+K", "command palette", "aktif"],
+                ["Ctrl+O", "perluas output tool", "aktif"],
+                ["Ctrl+E", "editor eksternal", "aktif"],
+                ["Ctrl+L", "bersihkan layar", "aktif"],
+                ["Ctrl+C", "bersihkan atau batalkan", "aktif"],
+                ["Ctrl+D", "keluar saat input kosong", "aktif"],
+                ["PgUp / PgDn", "gulir transcript", "pakai scrollback terminal"]
+              ]
+            ));
+            print(ui.dim("Ctrl+E dipakai untuk editor eksternal; akhir baris memakai End atau Ctrl+End."));
+            continue;
+          }
           const commands = query ? matchReplCommands(query, { includeUnavailable: true }) : REPL_COMMANDS;
           if (commands.length === 0) {
             print(`tidak ada perintah cocok "${query}"`);
@@ -697,8 +743,93 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
                 print(`  ${command.usage.padEnd(32)} ${command.description}${suffix}`);
               }
             }
+            if (custom.commands.length > 0) {
+              print(ui.bold("command kustom"));
+              for (const command of custom.commands) {
+                const usage = `/${command.name}${command.args.map((arg) => (arg.required ? ` <${arg.name}>` : ` [${arg.name}]`)).join("")}`;
+                print(`  ${usage.padEnd(32)} ${command.description}  [${command.source}]`);
+              }
+            }
           }
           continue;
+        }
+        if (line.startsWith("!")) {
+          const toModel = line.startsWith("!!");
+          const command = line.slice(toModel ? 2 : 1).trim();
+          if (command.length === 0) {
+            print(ui.red("Pakai: !<command> atau !!<command>"));
+            continue;
+          }
+          const risky = /\brm\s+-[a-zA-Z]*[rf]|\bsudo\b|\bmkfs|\bdd\s+if=|\bshutdown\b|\breboot\b|>\s*\/dev\/sd|\bchmod\s+777/.test(command);
+          if (risky && permissionMode !== "trusted") {
+            const answer = (await editor.readLine(ui.yellow("perintah berisiko. jalankan? [y/N] "))).trim().toLowerCase();
+            if (answer !== "y" && answer !== "ya") {
+              print(ui.dim("dibatalkan"));
+              continue;
+            }
+          }
+          busy = true;
+          try {
+            const result = spawnSync("bash", ["-lc", command], {
+              cwd: process.cwd(),
+              encoding: "utf8",
+              timeout: 120_000,
+              maxBuffer: 10 * 1024 * 1024,
+              env: Object.fromEntries(Object.entries(process.env).filter(([name]) => !/(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i.test(name)))
+            });
+            const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+            const status = result.status ?? (result.error ? 1 : 0);
+            if (output.length > 100_000) {
+              const path = join(layout.artifactsDir, `shell-${Date.now()}.txt`);
+              writeFileSync(path, output, { mode: 0o600 });
+              print(output.slice(0, 6_000));
+              print(ui.dim(`output ${output.length} karakter, disimpan di ${path}`));
+            } else if (output.length > 0) {
+              process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+            }
+            print(ui.dim(`[shell] exit ${status}`));
+            if (toModel) {
+              const context = `Konteks dari perintah shell \`${command}\` (exit ${status}):\n\n${output.slice(0, 50_000)}`;
+              const resultTurn = await runStreaming(client, sessionId, outgoing(context), {
+                ...(model ? { model } : {}),
+                ...(permissionMode ? { permissionMode } : {}),
+                ...(onApproval ? { onApproval } : {})
+              });
+              await recordResult(resultTurn);
+            }
+          } catch (error) {
+            print(ui.red(`gagal menjalankan shell: ${error instanceof Error ? error.message : String(error)}`));
+          } finally {
+            busy = false;
+          }
+          continue;
+        }
+        if (line.startsWith("/")) {
+          const requested = commandName(line);
+          const customCommand = findCustom(requested);
+          if (customCommand) {
+            const rawArguments = line.slice(requested.length + 1).trim();
+            let promptText: string;
+            try {
+              promptText = expandCustomCommand(customCommand, rawArguments);
+            } catch (error) {
+              print(ui.red(error instanceof Error ? error.message : String(error)));
+              continue;
+            }
+            busy = true;
+            try {
+              const result = await runStreaming(client, sessionId, outgoing(promptText), {
+                ...(model ? { model } : {}),
+                ...(permissionMode ? { permissionMode } : {}),
+                ...(onApproval ? { onApproval } : {})
+              });
+              await recordResult(result);
+              if (!result.ok) print(ui.red("[command gagal]"));
+            } finally {
+              busy = false;
+            }
+            continue;
+          }
         }
         if (line.startsWith("/") && !findReplCommand(commandName(line))) {
           const suggestions = matchReplCommands(commandName(line)).slice(0, 3);
@@ -832,8 +963,13 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(renderGoal(goal));
           continue;
         }
-        if (line === "/status") {
+        if (line === "/status" || line === "/status --json" || line === "/st --json") {
           const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          if (line.includes("--json")) {
+            const goal = await client.request<GoalView | null>("goal.get", { sessionId });
+            print(JSON.stringify({ sessionId, model: model ?? data.model ?? null, permission: permissionMode ?? data.permission_mode ?? null, cwd: process.cwd(), status: data.status ?? "active", goal }, null, 2));
+            continue;
+          }
           print(`sesi     ${sessionId}`);
           print(`model    ${model ?? String(data.model ?? "default")}`);
           print(`izin     ${permissionMode ?? String(data.permission_mode ?? "default")}`);
@@ -953,8 +1089,12 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           header();
           continue;
         }
-        if (line === "/version" || line === "/v") {
+        if (line === "/version" || line === "/v" || line === "/version --json" || line === "/v --json") {
           const health = await client.request<Record<string, unknown>>("health");
+          if (line.includes("--json")) {
+            print(JSON.stringify({ cli: packageVersion(), node: process.version, platform: process.platform, arch: process.arch, daemon: health.status ?? "ok", protocol: health.protocol ?? "1" }));
+            continue;
+          }
           print(`rann-code ${packageVersion()}  node ${process.version}  ${process.platform}/${process.arch}`);
           print(`daemon ${String(health.status ?? "ok")}  protokol ${String(health.protocol ?? "1")}`);
           continue;

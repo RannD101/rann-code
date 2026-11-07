@@ -12,6 +12,12 @@ export type CommandCategory =
 
 export type CommandPermission = "read" | "write" | "exec" | "net" | "admin" | "secret";
 
+export interface CommandArgument {
+  name: string;
+  required: boolean;
+  description?: string;
+}
+
 export interface ReplCommand {
   name: string;
   aliases?: string[];
@@ -19,11 +25,26 @@ export interface ReplCommand {
   description: string;
   category: CommandCategory;
   permission?: CommandPermission;
-  output?: Array<"text" | "json" | "markdown">;
+  arguments: CommandArgument[];
+  optionalParams: string[];
+  output: Array<"text" | "json" | "markdown">;
+  errors: string[];
+  handler: string;
+  docs: string;
   available?: boolean;
   unavailableReason?: string;
   hidden?: boolean;
   source?: "builtin" | "project" | "plugin";
+}
+
+function usageArguments(usage: string): CommandArgument[] {
+  const output: CommandArgument[] = [];
+  for (const match of usage.matchAll(/<([^>]+)>|\[([^\]]+)\]/g)) {
+    const raw = (match[1] ?? match[2] ?? "").trim();
+    if (raw.length === 0) continue;
+    output.push({ name: raw, required: match[1] !== undefined });
+  }
+  return output;
 }
 
 function cmd(
@@ -43,7 +64,14 @@ function cmd(
     description,
     category,
     permission,
+    arguments: usageArguments(usage),
+    optionalParams: (usage.match(/--[a-z][a-z0-9-]*/g) ?? []).map((flag) => flag.slice(2)),
+    output: ["text", "json", "markdown"],
+    errors: ["E_INVALID_PARAMS", "E_PERMISSION_DENIED"],
+    handler: name,
+    docs: `${usage}  ${description}`,
     available,
+    source: "builtin",
     ...(unavailableReason ? { unavailableReason } : {})
   };
 }

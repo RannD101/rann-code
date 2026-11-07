@@ -77,6 +77,10 @@ const KEY_SEQUENCES: Array<{ sequence: string; action: string }> = [
   { sequence: "\u001b[8~", action: "end" },
   { sequence: "\u001b[3~", action: "delete" },
   { sequence: "\u001b[Z", action: "backtab" },
+  { sequence: "\u001b[1;3A", action: "line-up" },
+  { sequence: "\u001b[1;3B", action: "line-down" },
+  { sequence: "\u001b[1;5A", action: "line-up" },
+  { sequence: "\u001b[1;5B", action: "line-down" },
   { sequence: "\u001b[1;5D", action: "word-left" },
   { sequence: "\u001b[1;5C", action: "word-right" },
   { sequence: "\u001b[1;3D", action: "word-left" },
@@ -95,6 +99,8 @@ const CONTROL_KEYS: Record<number, string> = {
   15: "ctrl-o",
   18: "ctrl-r",
   21: "ctrl-u",
+  14: "ctrl-n",
+  16: "ctrl-p",
   23: "ctrl-w",
   25: "ctrl-y"
 };
@@ -110,6 +116,8 @@ function commonPrefix(items: string[]): string {
   }
   return prefix;
 }
+
+const MAX_INPUT_CHARS = 100_000;
 
 function fuzzyScore(haystack: string, needle: string): number {
   if (needle.length === 0) return 1;
@@ -179,8 +187,7 @@ export class LineEditor {
   async readLine(prompt?: string): Promise<string> {
     if (this.closed) throw new Error("editor sudah ditutup");
     if (!this.tty()) return this.fallbackReadLine(prompt);
-    if (prompt !== undefined) this.promptText = prompt;
-    if (this.promptText.length === 0) this.promptText = this.promptValue();
+    this.promptText = prompt ?? this.promptValue();
     this.buffer = "";
     this.cursor = 0;
     this.overlay = undefined;
@@ -417,6 +424,14 @@ export class LineEditor {
       case "ctrl-e":
         void this.openEditor();
         return;
+      case "ctrl-p":
+      case "line-up":
+        this.moveLine(-1);
+        return;
+      case "ctrl-n":
+      case "line-down":
+        this.moveLine(1);
+        return;
       case "ctrl-k":
         this.openPalette();
         return;
@@ -448,6 +463,24 @@ export class LineEditor {
       default:
         return;
     }
+  }
+
+  private moveLine(delta: -1 | 1): void {
+    const start = this.lineStart();
+    const column = this.cursor - start;
+    if (delta < 0) {
+      if (start === 0) return;
+      const previousStart = this.buffer.lastIndexOf("\n", start - 2) + 1;
+      const previousEnd = start - 1;
+      this.cursor = Math.min(previousStart + column, previousEnd);
+    } else {
+      const nextStart = this.buffer.indexOf("\n", this.cursor);
+      if (nextStart === -1) return;
+      const nextEnd = this.buffer.indexOf("\n", nextStart + 1);
+      const end = nextEnd === -1 ? this.buffer.length : nextEnd;
+      this.cursor = Math.min(nextStart + 1 + column, end);
+    }
+    this.render();
   }
 
   private lineStart(): number {
@@ -485,6 +518,11 @@ export class LineEditor {
   }
 
   private insert(text: string): void {
+    if (this.buffer.length + text.length > MAX_INPUT_CHARS) {
+      process.stdout.write("\n[input melebihi 100.000 karakter, pakai lampiran berkas]\n");
+      this.render();
+      return;
+    }
     this.overlay = undefined;
     this.buffer = `${this.buffer.slice(0, this.cursor)}${text}${this.buffer.slice(this.cursor)}`;
     this.cursor += text.length;
