@@ -1,0 +1,350 @@
+[
+  {
+    "id": "RC-FR-020",
+    "title": "Help dan error contract",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1212-1251 /help dan /help <command> membaca REPL_COMMANDS dan matchReplCommands, termasuk penanda perintah yang belum tersedia.",
+      "packages/cli/src/repl-commands.ts:197-211 registerCommands mendaftarkan perintah kustom ke registry yang sama dan mencatat konflik nama.",
+      "packages/cli/src/main.ts:20-56 teks bantuan `rann --help` adalah string HELP statis, terpisah dari registry REPL.",
+      "packages/shared/src/errors.ts:1-43 daftar kode error stabil; packages/shared/src/errors.ts:174-177 toRpcError menambahkan trace_id ke data error.",
+      "packages/cli/src/main.ts:3839-3844 mencetak kode, pesan, saran dari data.hint, trace id, dan stack hanya bila process.argv memuat --debug.",
+      "packages/cli/src/main.ts:2814-2818 perintah tak dikenal mencetak E_UNKNOWN_COMMAND dan tiga saran dari nearestCommands; packages/cli/src/repl-commands.ts:264-277 menghitung jarak Levenshtein."
+    ],
+    "gaps": [
+      "Butir 1: `rann --help` memakai string statis (main.ts:20-56), bukan registry REPL_COMMANDS (repl-commands.ts:197), jadi kedua dokumentasi bisa berbeda isi.",
+      "Butir 2: tidak semua error membawa saran tindakan; error tanpa data.hint dan tanpa entri failure-analysis hanya menampilkan kode dan pesan (main.ts:3839-3843).",
+      "Butir 3: --debug hanya menambah stack pada penangan error tingkat atas (main.ts:3844); error yang dicetak di dalam REPL tidak berubah detailnya.",
+      "Butir 4: jalur izin ditolak hanya mencetak `Izin ditolak user untuk <tool>` tanpa cara mengubah izin (agent.ts:1124-1126).",
+      "Butir 5: tidak ada lapisan i18n atau locale; seluruh pesan berupa literal bahasa Indonesia dan tidak ada sakelar ke bahasa Inggris."
+    ]
+  },
+  {
+    "id": "RC-FR-021",
+    "title": "Agent reasoning loop",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:596 loop berjalan dari langkah 1 sampai config.maxSteps.",
+      "packages/runtime/src/agent.ts:469-472 planDecision menentukan perlu plan dan mencatat alasan saat planner dilewati.",
+      "packages/runtime/src/agent.ts:497-512 plan disimpan lewat persistPlan lalu startFirstTask dijalankan.",
+      "packages/runtime/src/agent.ts:846-880 setiap tool call dijalankan berurutan, checkpoint DB dibuat, lalu tool.start diumumkan.",
+      "packages/runtime/src/agent.ts:789-805 verifyPlanLive dipanggil saat model berhenti tanpa tool call, dengan maksimal dua percobaan premature.",
+      "packages/runtime/src/agent.ts:832-835 finishPlan dan turn.end berstatus done setelah verifikasi."
+    ],
+    "gaps": [
+      "Butir 1: tidak ada fase eksplisit understand, plan, act, observe, evaluate, verify, report; yang ada hanya plan.update, tool.start, tool.end, message, dan turn.end (agent.ts:596-1170).",
+      "Butir 2: turn tetap difinalisasi done setelah dua kegagalan verifikasi dengan gap masih tersisa (agent.ts:793-832), dan turn tanpa plan langsung done saat model berhenti tanpa tool call.",
+      "Butir 3: tidak ada event observe, evaluate, atau verify tersendiri; hasil tool hanya ditulis sebagai pesan tool (agent.ts:955-969).",
+      "Butir 5: kelanjutan otomatis saat model berhenti tanpa tool call hanya berlaku bila ada plan aktif (agent.ts:789-805); tanpa plan tidak ada pertanyaan atau aksi lanjutan."
+    ]
+  },
+  {
+    "id": "RC-FR-022",
+    "title": "Perencanaan otomatis",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:81-94 planDecision memicu planner untuk ≥3 penanda langkah, ≥2 penanda urutan, ≥3 file, operasi besar, atau task class modify/operate/research/incident.",
+      "packages/runtime/src/planner.ts:19-48 PlanTask dan PlanDraft memuat goal, task, dependensi, agen, file, risiko, estimasi, kriteria, dan asumsi.",
+      "packages/runtime/src/planner.ts:219-281 validatePlan memeriksa duplikasi id, acceptance kosong, dependensi hilang, siklus, dan file yang dipakai task paralel.",
+      "packages/runtime/src/agent.ts:497-512 persistPlan dijalankan sebelum startFirstTask.",
+      "packages/runtime/src/agent.ts:469-472 keputusan melewati planner dicatat lewat publish log level debug dengan reasons.",
+      "packages/runtime/src/planner.test.ts:36-45 menguji klasifikasi dan needsPlan; packages/runtime/src/planner.test.ts:58-74 menguji penolakan siklus dan acceptance kosong."
+    ],
+    "gaps": [
+      "Butir 1: tidak ada deteksi dependensi eksternal (paket, layanan, API); planDecision hanya melihat langkah, file, operasi besar, dan task class (planner.ts:81-93).",
+      "Butir 3: validasi bukan skema ketat; normalizePlan mengisi agen `coding`, risiko `low`, dan estimasi `[5,15]` saat field hilang (planner.ts:183-197).",
+      "Butir 3: task tanpa agen atau tanpa file tetap lolos karena validatePlan hanya mewajibkan judul dan acceptance (planner.ts:224-231).",
+      "AC: jumlah task minimal tiga tidak divalidasi; validatePlan menerima plan dengan satu task (planner.ts:221), sehingga goal kompleks bisa menghasilkan plan satu task."
+    ]
+  },
+  {
+    "id": "RC-FR-023",
+    "title": "Mode plan eksplisit",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2793-2810 `/plan <tugas>` mengirim turn dengan planOnly true.",
+      "packages/runtime/src/agent.ts:505-543 saat planOnly, agent menulis plan ke pesan dan langsung finalize done tanpa menjalankan tool.",
+      "packages/cli/src/main.ts:2769-2786 `/execute <tugas>` menjalankan turn baru dengan forcePlan true.",
+      "packages/cli/src/main.ts:846 hasil plan hanya dimasukkan ke payload JSON bila output-format JSON dipakai.",
+      "packages/runtime/src/planner.ts:100-119 workspaceBrief hanya membaca package.json dan nama entri direktori, bukan isi file."
+    ],
+    "gaps": [
+      "Butir 2: tidak ada persetujuan, penolakan, atau pengeditan per task sebelum eksekusi; yang ada hanya approval boolean untuk plan berisiko tinggi (agent.ts:483-497).",
+      "Butir 3: `--plan-only` menghasilkan JSON hanya jika `--json` juga diberikan (main.ts:846); mode teks default mencetak markdown.",
+      "Butir 4: mode plan tidak bisa membaca file atau mencari informasi karena agent kembali sebelum loop tool (agent.ts:505-543) dan planner hanya menerima workspaceBrief (planner.ts:100-119).",
+      "Butir 5: `/execute <tugas>` menyusun plan baru dari prompt baru (main.ts:2769-2786), bukan melanjutkan plan yang baru dibuat; `/plan` tanpa argumen tidak punya handler, hanya `/plan <tugas>` (main.ts:2793)."
+    ]
+  },
+  {
+    "id": "RC-FR-024",
+    "title": "Dekomposisi tugas dan DAG",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:19-28 PlanTask memuat id, title, description opsional, agent, dependsOn, files, risk, dan acceptance.",
+      "packages/runtime/src/planner.ts:232-257 dependensi diperiksa dan topological sort dijalankan dengan urutan id dan dependensi yang di-sort.",
+      "packages/runtime/src/planner.ts:245-247 siklus dilaporkan sebagai rantai edge, misalnya `a -> b -> a`.",
+      "packages/runtime/src/planner.ts:227 task tanpa acceptance ditolak; packages/runtime/src/planner.test.ts:58-74 menguji siklus dan acceptance.",
+      "packages/runtime/src/plan-runtime.ts:248-300 revisePlan menaikkan versi plan menjadi versi sebelumnya + 1; packages/runtime/src/plan-runtime.test.ts:163-214 menguji versi 2 dan task selesai yang dipertahankan."
+    ],
+    "gaps": [
+      "Butir 1: tujuan task (description) opsional dan tidak divalidasi; agen serta file juga tidak wajib di validatePlan (planner.ts:224-231).",
+      "Butir 4: tidak ada penanda task paralel dan tidak ada eksekusi bersamaan; plan task dijalankan satu per satu berdasarkan created_at (plan-runtime.ts:182-235, agent.ts:846).",
+      "Butir 4: tidak ada penjadwalan yang mempertimbangkan konflik lease antar task paralel.",
+      "AC: plan enam task dengan task tanpa agen atau tanpa file tetap lolos validasi selama judul dan acceptance ada (planner.ts:224-231)."
+    ]
+  },
+  {
+    "id": "RC-FR-025",
+    "title": "Deteksi dependensi dan urutan eksekusi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:232-237 dependensi eksplisit dari task.dependsOn diperiksa terhadap id yang ada.",
+      "packages/runtime/src/planner.ts:239-257 topological sort deterministik dengan kunci id yang di-sort dan dependensi yang di-sort.",
+      "packages/runtime/src/plan-runtime.ts:144-175 blockRunningTask menandai task berjalan dan task turunannya `blocked`, bukan `failed`.",
+      "packages/runtime/src/plan-runtime.test.ts:75-98 menguji urutan DAG A ke B ke C; packages/runtime/src/plan-runtime.test.ts:100-118 menguji task blocked karena dependensi tidak pernah selesai.",
+      "packages/runtime/src/plan-runtime.ts:294-299 revisePlan memanggil validatePlan pada DAG baru sebelum menyimpan."
+    ],
+    "gaps": [
+      "Butir 1: dependensi implisit dari file atau modul tidak dideteksi; hanya task.dependsOn eksplisit yang dipakai (planner.ts:232-237).",
+      "Butir 4: tidak ada konsep dependensi non-kritis; semua dependensi diperlakukan sebagai prasyarat keras (plan-runtime.ts:214-215).",
+      "Butir 2: urutan topologis dari validatePlan tidak dipakai saat eksekusi; advancePlanTask memilih task pertama berstatus queued yang dependensinya selesai berdasarkan created_at (plan-runtime.ts:182-215)."
+    ]
+  },
+  {
+    "id": "RC-FR-026",
+    "title": "Penilaian risiko",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:19-28 setiap PlanTask membawa risk low, medium, atau high.",
+      "packages/runtime/src/planner.ts:30-34 PlanRisk menyimpan taskId, level, dan reason.",
+      "packages/runtime/src/planner.ts:279 highRisk dihitung dari task berisiko high, risks high, atau lebih dari 20 file.",
+      "packages/runtime/src/agent.ts:483-497 plan berisiko tinggi memanggil approvePlan dan menolak eksekusi bila tidak disetujui.",
+      "packages/runtime/src/planner.ts:350-360 planToMarkdown menampilkan level risiko per task dan status risiko tinggi plan."
+    ],
+    "gaps": [
+      "Butir 1: tidak ada klasifikasi risiko dari kategori perubahan skema, migrasi, penghapusan file, Git destruktif, auth, dependency baru, atau deploy; risiko berasal dari JSON model (planner.ts:183-192).",
+      "Butir 2: task hanya menyimpan level, tidak menyimpan alasan; reason hanya ada pada array risks yang opsional (planner.ts:30-34, 199-207).",
+      "Butir 4: normalizeRisk menurunkan nilai tak dikenal menjadi `low` (planner.ts:151-153), sehingga model bisa menghilangkan level tinggi tanpa penilaian independen.",
+      "Butir 5: ringkasan approval tidak memuat alasan risiko, hanya level dan daftar task (planner.ts:350-360).",
+      "AC: task migrasi database tidak otomatis ditandai high karena tidak ada detektor kategori migrasi (planner.ts:58-94)."
+    ]
+  },
+  {
+    "id": "RC-FR-027",
+    "title": "Estimasi eksekusi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:36-39 PlanEstimate memakai pasangan menit dan biaya.",
+      "packages/runtime/src/planner.ts:143-149 asNumberPair menormalkan dua angka menjadi rentang terurut.",
+      "packages/runtime/src/planner.ts:350-355 planToMarkdown mencetak rentang menit dan dolar.",
+      "packages/runtime/src/planner.ts:76-90 menguji plan dengan estimasi tunggal dan hasil estimasi menjadi [5,15]."
+    ],
+    "gaps": [
+      "Butir 2: tidak ada label historical atau heuristic dan tidak ada pembacaan data historis task; estimasi sepenuhnya dari model.",
+      "Butir 3: revisePlan mempertahankan estimasi lama bila revision.estimate tidak diisi (plan-runtime.ts:289), jadi estimasi tidak diperbarui otomatis saat plan berubah.",
+      "Butir 4: nilai hilang diganti angka palsu [5,15] menit dan [0,0] dolar (planner.ts:196-197), bukan `tidak tersedia`.",
+      "Butir 5: tidak ada pencatatan aktual versus estimasi setelah task selesai; tabel tasks tidak punya kolom aktual (schema-v3.ts:127-142)."
+    ]
+  },
+  {
+    "id": "RC-FR-028",
+    "title": "Persetujuan rencana",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:483-497 approval plan memuat goal, highRisk, dan teks markdown yang berisi task, risiko, file, dan estimasi.",
+      "packages/runtime/src/rpc.ts:1598-1605 approval plan memakai requestApproval dan mengembalikan keputusan boolean.",
+      "packages/runtime/src/rpc.ts:1247-1301 requestApproval mencatat audit actor user, waktu, alasan, dan keputusan allow atau deny.",
+      "packages/runtime/src/rpc.ts:131 timeout approval 10 menit, setelah itu keputusan dianggap deny dengan alasan timeout."
+    ],
+    "gaps": [
+      "Butir 2: hanya ada setuju atau tolak seluruh plan; tidak ada persetujuan sebagian task dan tidak ada permintaan revisi dengan catatan.",
+      "Butir 3: tidak ada status pending per task; setelah plan disetujui, startFirstTask langsung menjalankan task pertama (agent.ts:512).",
+      "Butir 4: masa berlaku hanya timeout permintaan approval 10 menit (rpc.ts:131); plan yang sudah disetujui tidak punya kedaluwarsa dan tidak perlu disetujui ulang.",
+      "Butir 5: audit mencatat aktor dan waktu, tetapi tidak mengikat keputusan ke versi plan atau daftar task yang disetujui (rpc.ts:1272-1285)."
+    ]
+  },
+  {
+    "id": "RC-FR-029",
+    "title": "Persistensi dan versi rencana",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:97-109 tabel plans menyimpan id, session_id, turn_id, goal, status, version, metadata_json, dan waktu.",
+      "packages/runtime/src/plan-runtime.ts:248-320 revisePlan menaikkan version dan menyimpan riwayat revisi di metadata_json.",
+      "packages/runtime/src/plan-runtime.test.ts:163-214 menguji versi plan menjadi 2 dan task selesai tetap done setelah koneksi dibuka ulang.",
+      "packages/cli/src/main.ts:2510-2518 `/tasks` menampilkan plan dan status task dari plan.list.",
+      "packages/storage/src/work-repos.ts:315-317 listTasks mengurutkan task per sesi."
+    ],
+    "gaps": [
+      "Butir 2: plan lama tidak disimpan sebagai baris tersendiri dan status `superseded` tidak ada di CHECK status plans (schema-v3.ts:102); revisi menimpa baris yang sama (plan-runtime.ts:300-320).",
+      "Butir 3: `/plan show` tidak ada; hanya `/plan <tugas>` (main.ts:2793) dan `/tasks` yang tidak menampilkan nomor versi atau riwayat versi.",
+      "Butir 4: tidak ada perintah atau RPC untuk ekspor dan impor plan ke JSON; pencarian plan.export dan plan.import tidak menemukan implementasi.",
+      "Butir 1: versi tersimpan, tetapi status plan setelah revisit hanya satu baris sehingga versi lama tidak bisa dibuka ulang sebagai plan utuh."
+    ]
+  },
+  {
+    "id": "RC-FR-030",
+    "title": "Replanning dinamis",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/plan-runtime.ts:248-300 revisePlan membuat plan baru dengan version + 1 dan reason.",
+      "packages/runtime/src/plan-runtime.ts:301-320 metadata.revisions menyimpan alasan perubahan.",
+      "packages/runtime/src/agent.ts:1021-1085 plan_revise meminta approval ulang bila goal berubah atau ada task high baru.",
+      "packages/runtime/src/plan-runtime.ts:264-281 task yang sudah done dikeluarkan dari daftar task revisi sehingga tidak diulang.",
+      "packages/runtime/src/plan-runtime.test.ts:163-214 menguji versi 2, alasan revisi, dan task selesai yang dipertahankan."
+    ],
+    "gaps": [
+      "Butir 1: tidak ada trigger otomatis untuk task gagal permanen, file target hilang, atau dependensi berubah; hanya model yang memanggil tool plan_revise, sementara kegagalan task hanya menandai blocked (plan-runtime.ts:144-175).",
+      "Butir 3: approval ulang hanya untuk perubahan goal atau penambahan task high (agent.ts:1040-1052); perubahan besar lain tidak memicu approval.",
+      "Butir 4: perubahan kecil seperti urutan task low tidak bisa otomatis dan tidak dicatat sebagai revisi terpisah; semua revisi harus lewat plan_revise.",
+      "Butir 2: plan lama tidak tersimpan sebagai versi terpisah, hanya metadata pada baris plan yang sama (plan-runtime.ts:300-320)."
+    ]
+  },
+  {
+    "id": "RC-FR-031",
+    "title": "Eksekusi multi-langkah dan pemilihan tool",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:583-590 daftar tool dikirim ke model setelah filter config.tools dan ketersediaan memori, skill, serta delegate.",
+      "packages/runtime/src/tools/index.ts:1802-1804 toolSpecs mengembalikan seluruh tool tanpa filter izin.",
+      "packages/runtime/src/tools/index.ts:131-154 lease path diambil sebelum menulis dan dilepas di blok finally.",
+      "packages/runtime/src/agent.ts:853-875 setiap tool call mendapat id, checkpoint, event tool.start, dan audit saat selesai.",
+      "packages/runtime/src/agent.ts:846-880 tool call dijalankan berurutan dalam satu loop, bukan paralel."
+    ],
+    "gaps": [
+      "Butir 2: tool yang tidak diizinkan tetap dikirim ke model; pemeriksaan izin baru terjadi saat eksekusi (agent.ts:583-590 vs tools/index.ts assertAllowed).",
+      "Butir 1: tidak ada pemilihan tool berdasarkan capability, biaya, atau konteks; model memilih sendiri dari seluruh kandidat.",
+      "Butir 4: tidak ada eksekusi tool paralel; semua call dijalankan berurutan (agent.ts:846-880).",
+      "AC: tidak ada alasan pemilihan tool yang dicatat atau ditampilkan; trace hanya memuat nama tool dan args (agent.ts:875-880).",
+      "Butir 3: timeout bergantung pada konfigurasi tiap tool, tidak ada batas waktu per tool call yang tercatat di metadata call (tools/index.ts:1093-1133)."
+    ]
+  },
+  {
+    "id": "RC-FR-032",
+    "title": "Observasi dan evaluasi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:955-969 hasil tool ditulis sebagai pesan role tool berisi JSON error atau output.",
+      "packages/runtime/src/agent.ts:789-805 evaluasi hanya dilakukan di akhir plan lewat verifyPlanLive, bukan per langkah.",
+      "packages/runtime/src/tools/index.ts:496-506 hasil shell menandai truncated; packages/runtime/src/tools/index.ts:548 dan 748 juga menandai daftar yang terpotong.",
+      "packages/runtime/src/agent.ts:1175-1186 error turn dianalisis dengan analyzeFailure dan action."
+    ],
+    "gaps": [
+      "Butir 1: tidak ada objek observation dengan status, ringkasan, data, dan artefak; hasil tool hanya JSON mentah di pesan tool (agent.ts:955-969).",
+      "Butir 2: tidak ada evaluasi per langkah terhadap kriteria task; verifikasi hanya di akhir plan (agent.ts:789-805).",
+      "Butir 3: hasil kosong tidak ditandai dan tetap dianggap sukses karena textResult selalu ok true (tools/index.ts:95-97).",
+      "Butir 4: tidak ada event evaluasi beserta alasan; trace hanya mencatat tool.start, tool.end, dan error (agent.ts:875-969).",
+      "Butir 5: tidak ada jalur `tidak tahu`; bila verifikasi tidak bisa dijalankan, turn tetap selesai dengan teks model."
+    ]
+  },
+  {
+    "id": "RC-FR-033",
+    "title": "Self-correction dan strategi retry",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:1092-1106 retry hanya untuk tool baca dengan maksimal tiga percobaan dan hanya pada E_TOOL_TIMEOUT, E_CONFLICT, atau E_DB.",
+      "packages/runtime/src/agent.ts:984-996 tanda tangan tool dan args yang sama dihitung; E_NO_PROGRESS baru muncul saat hitungan melewati 3.",
+      "packages/runtime/src/failure-analysis.ts:31-97 tabel kategori error tidak memuat E_NO_PROGRESS.",
+      "packages/runtime/src/agent.ts:1124-1126 error izin menghentikan turn tanpa opsi strategi alternatif."
+    ],
+    "gaps": [
+      "Butir 1: matriks retry di ARCHITECTURE bagian 13.3 tidak ada di repo; docs hanya berisi audit, prd, status.md, dan tutorial, tanpa ARCHITECTURE.md.",
+      "Butir 2: percobaan ketiga dengan args identik masih dijalankan; penghentian baru terjadi pada percobaan keempat karena kondisi `seen > 3` (agent.ts:990-996).",
+      "Butir 3: E_NO_PROGRESS tidak punya entri di tabel failure-analysis, jadi analisisnya jatuh ke kategori unknown dengan saran generik (failure-analysis.ts:101-105).",
+      "Butir 4: tidak ada catatan perubahan strategi atau parameter; retry mengulang args yang sama (agent.ts:1097-1105).",
+      "Butir 5: retry otomatis hanya pada tool baca yang idempoten, tetapi tidak ada mekanisme yang mencegah model memanggil ulang tool tulis secara identik sampai batas empat kali (agent.ts:984-996)."
+    ]
+  },
+  {
+    "id": "RC-FR-034",
+    "title": "Pemulihan error",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/failure-analysis.ts:3-15 mengklasifikasikan provider, auth, rate_limit, timeout, budget, permission, context, stream, plan, tool, cancelled, dan unknown.",
+      "packages/runtime/src/failure-analysis.ts:31-97 tabel memberi retryable dan action per kode error; packages/runtime/src/failure-analysis.test.ts:6-25 menguji kategori auth, rate limit, timeout, dan unknown.",
+      "packages/runtime/src/agent.ts:1092-1106 error transient pada tool baca diretry hingga tiga kali.",
+      "packages/runtime/src/tools/index.ts:131-154 lease path dilepas di blok finally setelah tool selesai atau gagal.",
+      "packages/runtime/src/agent.ts:853-875 checkpoint DB dibuat sebelum setiap tool call dan checkpoint file sebelum tool mutasi pertama."
+    ],
+    "gaps": [
+      "Butir 2: conflict tidak memicu replan dan budget hanya menghentikan turn; tidak ada pemetaan transient, permanent, conflict, budget, policy ke aksi berbeda (failure-analysis.ts:31-97).",
+      "Butir 4: checkpoint file hanya dibuat sekali per turn sebelum tool mutasi pertama (agent.ts:853-860); perubahan file berikutnya tidak punya titik rollback.",
+      "Butir 5: tidak ada pilihan pengguna retry, skip, replan, atau abort saat error bisa dipulihkan; agent langsung retry atau menghentikan turn (agent.ts:1092-1186).",
+      "AC: setelah tool timeout, state disimpan tetapi turn tidak bisa dilanjutkan otomatis dari langkah terakhir; /resume hanya meneruskan percakapan, bukan state tool (main.ts:2287-2312)."
+    ]
+  },
+  {
+    "id": "RC-FR-035",
+    "title": "Prioritas task",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:136 kolom priority bertipe INTEGER pada tabel tasks.",
+      "packages/storage/src/work-repos.ts:315-317 listTasks mengurutkan task dengan `ORDER BY priority DESC, created_at`.",
+      "packages/storage/src/job-repos.ts:113 dan 128 antrean job memakai priority dan next_run_at untuk memilih job.",
+      "packages/runtime/src/plan-runtime.ts:182-184 eksekusi plan memilih task berdasarkan created_at, bukan priority."
+    ],
+    "gaps": [
+      "Butir 1: prioritas tersimpan dan diurutkan di listTasks, tetapi eksekusi plan mengabaikannya dan memakai urutan created_at (plan-runtime.ts:182-215).",
+      "Butir 2: tidak ada API atau perintah untuk mengubah prioritas task yang sedang berjalan atau antre.",
+      "Butir 3: tidak ada antrean terpisah untuk task high dengan concurrency lebih besar; plan task selalu dijalankan berurutan (agent.ts:846).",
+      "Butir 4: task yang menunggu approval plan memblokir seluruh turn, termasuk task lain yang tidak butuh approval (agent.ts:483-512).",
+      "Butir 5: perubahan prioritas tidak dicatat karena tidak ada operasi perubahan prioritas."
+    ]
+  },
+  {
+    "id": "RC-FR-036",
+    "title": "Goal tracking dan state",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/goal-repos.ts:90-121 setGoal menyimpan goal, kriteria, asumsi, versi, dan pembuat goal.",
+      "packages/storage/src/goal-repos.ts:131-158 updateGoalProgress menandai kriteria selesai hanya dengan bukti dan menaikkan langkah.",
+      "packages/storage/src/goal-repos.ts:92 menolak goal yang dibuat oleh agent; packages/storage/src/goal-repos.test.ts:46-70 menguji penolakan tersebut.",
+      "packages/runtime/src/agent.ts:880-890 progres goal diperbarui setiap tool selesai atau gagal.",
+      "packages/cli/src/main.ts:1892-1911 `/status` menampilkan goal, kriteria, dan daftar kriteria yang belum terpenuhi.",
+      "packages/storage/src/goal-repos.test.ts:72-90 menguji goal tetap ada setelah koneksi database dibuka ulang."
+    ],
+    "gaps": [
+      "AC: runTurn tidak memanggil finishGoal, jadi turn bisa berstatus done meski kriteria goal belum terpenuhi (agent.ts:832); finishGoal hanya dipanggil dari /goal finish (main.ts:1511).",
+      "Butir 2: progres bertambah pada setiap tool, termasuk tool yang gagal (agent.ts:880-890), sehingga angka langkah tidak mencerminkan kemajuan task.",
+      "Butir 4: kriteria hanya punya status done boolean dan bukti; tidak ada status gagal atau alasan kegagalan per kriteria (goal-repos.ts:4-10).",
+      "Butir 1: goal disimpan di tabel goals per sesi, bukan di state task; task hanya menyimpan plan_id dan metadata (schema-v3.ts:127-142)."
+    ]
+  },
+  {
+    "id": "RC-FR-037",
+    "title": "Dukungan task panjang",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:1433-1437 startTurnRuntime dipanggil dan heartbeat ditulis setiap config.agent.heartbeat_ms.",
+      "packages/shared/src/config.ts:53-57 heartbeat_ms default 5.000 ms dan max_runtime_ms default 7.200.000 ms.",
+      "packages/storage/src/turn-runtime-repos.ts:60-95 findStalledTurns dan markStalledTurns memakai ambang 60.000 ms dan max runtime.",
+      "packages/runtime/src/rpc.ts:321-347 watchdog 15 detik memanggil markStalledTurns dan menyiarkan event heartbeat state stalled.",
+      "packages/runtime/src/dashboard-data.ts:177-... halaman logs menyediakan data log untuk dashboard; packages/cli/src/main.ts:1892-1911 menyediakan /status."
+    ],
+    "gaps": [
+      "Butir 2: turn yang stalled hanya ditandai dan diberi event; tidak ada pemulihan otomatis, dan turn yang terputus saat restart justru ditandai failed (repos.ts:259-283).",
+      "Butir 3: checkpoint tidak berkala; checkpoint file hanya dibuat sekali sebelum tool mutasi pertama (agent.ts:853-860), bukan setiap N langkah atau setelah test lulus.",
+      "Butir 4: progress dan log tersedia di CLI dan dashboard, tetapi messaging hanya mengirim hasil akhir turn.end (messaging.ts:392-428), bukan progres berkala.",
+      "AC: setelah 10 menit heartbeat memang tetap di bawah 10 detik, tetapi tidak ada bukti pemulihan task yang stalled karena /resume hanya aktif setelah pembatalan manual (main.ts:2287-2291)."
+    ]
+  },
+  {
+    "id": "RC-FR-038",
+    "title": "Checkpoint dan kelanjutan task",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:853-875 checkpoint file dibuat sebelum tool mutasi pertama dan checkpoint DB dibuat sebelum setiap tool call.",
+      "packages/runtime/src/checkpoint-files.ts:10-26 manifest menyimpan path, sha256, ukuran, dan lokasi backup tiap file.",
+      "packages/runtime/src/checkpoint-files.ts:51-...",
+      "packages/runtime/src/checkpoint-files.test.ts:20-33 menguji snapshot dan restore seluruh berkas; packages/runtime/src/checkpoint-files.test.ts:35-41 menguji penolakan rollback bila file berubah tanpa force.",
+      "packages/runtime/src/agent-wiring.test.ts:176-... menguji checkpoint otomatis sebelum tool mengubah workspace.",
+      "packages/cli/src/main.ts:2389-2393 `/checkpoint` hanya menampilkan daftar checkpoint."
+    ],
+    "gaps": [
+      "Butir 1: checkpoint file hanya dibuat sekali per turn sebelum tool mutasi pertama; tidak ada checkpoint setelah test lulus atau setiap N langkah (agent.ts:853-860).",
+      "Butir 2: manifest tidak menyimpan Git ref, dan checkpoint DB tidak menyimpan status task lengkap, hanya step, plan_id, tool, args, dan file_checkpoint_id (agent.ts:863-875).",
+      "Butir 3: setelah crash, recoverInterruptedTurns menandai turn failed dan menambah pesan pemulihan, bukan melanjutkan dari checkpoint (repos.ts:259-283).",
+      "Butir 4: checkpoint.restore hanya mengembalikan file, tidak mengembalikan state task (rpc.ts:821-835); /undo memakai force true sehingga melewati pemeriksaan file yang berubah (main.ts:2547).",
+      "Butir 5: `/checkpoint` tidak punya aksi hapus; hanya daftar (main.ts:2389-2393), dan tidak ada RPC checkpoint.delete."
+    ]
+  }
+]
