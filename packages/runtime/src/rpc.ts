@@ -71,6 +71,8 @@ import { SkillStore } from "./skills.js";
 import { McpManager } from "./mcp.js";
 import { BackgroundQueue, type JobContext } from "./background.js";
 import { SchedulerEngine, nextRunFor } from "./scheduler.js";
+import { GatewayServer } from "./gateway.js";
+import { dashboardData } from "./dashboard-data.js";
 
 export interface RpcServerOptions {
   layout: Layout;
@@ -115,6 +117,8 @@ export class RpcServer {
   private readonly mcp: McpManager;
   private readonly background: BackgroundQueue;
   private readonly scheduler: SchedulerEngine;
+  private readonly gateway: GatewayServer;
+  private readonly eventListeners = new Set<(event: EventEnvelope) => void>();
   private readonly startedAt = Date.now();
   private watchdog?: NodeJS.Timeout;
   recoveredTurns: ReturnType<typeof recoverInterruptedTurns> = [];
@@ -154,6 +158,19 @@ export class RpcServer {
       }
     });
     this.server = createServer((socket) => this.attach(socket));
+    this.gateway = new GatewayServer({
+      db: this.db,
+      config: options.config.config,
+      version: options.version,
+      profile: options.layout.profile,
+      artifactsDir: options.layout.artifactsDir,
+      invoke: (method, params) =>
+        this.handleRequest({ jsonrpc: "2.0", id: `gw-${Date.now()}`, method, params }),
+      subscribe: (listener) => {
+        this.eventListeners.add(listener);
+        return () => this.eventListeners.delete(listener);
+      }
+    });
   }
 
   get database(): Db {
@@ -189,6 +206,9 @@ export class RpcServer {
     this.watchdog.unref();
     this.background.start();
     this.scheduler.start();
+    if (this.options.config.config.gateway.enabled) {
+      await this.gateway.start();
+    }
   }
 
   private sweepStalledTurns(): void {
@@ -218,6 +238,13 @@ export class RpcServer {
     const line = JSON.stringify({ jsonrpc: "2.0", method: "event", params: event }) + "\n";
     for (const socket of this.sockets) {
       if (!socket.destroyed) socket.write(line);
+    }
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // listener gateway tidak boleh memutus broadcast RPC
+      }
     }
   }
 
@@ -537,6 +564,35 @@ export class RpcServer {
         if (!row) throw new RannError("E_NOT_FOUND", `Jadwal tidak ditemukan: ${input.id}`);
         return listSchedulerRuns(this.db, row.id, input.limit as number);
       }
+      case "dashboard.data": {
+        const result = dashboardData(this.db, this.options.config, this.options.layout, input.page as string, {
+          ...(input.sessionId ? { sessionId: input.sessionId as string } : {}),
+          limit: input.limit as number
+        });
+        return input.page === "gateway" ? { ...result, status: this.gateway.status() } : result;
+      }
+      case "gateway.status":
+        return this.gateway.status();
+      case "gateway.start":
+        await this.gateway.start();
+        return this.gateway.status();
+      case "gateway.stop":
+        await this.gateway.stop();
+        return this.gateway.status();
+      case "gateway.pair": {
+        const result = this.gateway.pairCode();
+        return { ...result, expires_in_ms: result.expiresAt - Date.now() };
+      }
+      case "gateway.devices":
+        return this.gateway.devices();
+      case "gateway.revoke":
+        return { revoked: this.gateway.revoke(input.id as string) };
+      case "gateway.role":
+        return (
+          this.gateway.setRole(input.id as string, input.role as "owner" | "operator" | "viewer" | "approver") ?? null
+        );
+      case "gateway.stats":
+        return this.gateway.stats();
       case "checkpoint.list": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) return [];
@@ -1395,6 +1451,7 @@ export class RpcServer {
     if (this.closing) return;
     this.closing = true;
     if (this.watchdog) clearInterval(this.watchdog);
+    await this.gateway.stop();
     this.scheduler.stop();
     await this.background.stop();
     for (const controller of this.activeTurns.values()) controller.abort();

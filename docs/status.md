@@ -26,18 +26,18 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | --- | --- | --- |
 | M1 | Storage, backup, restore, migrasi | selesai |
 | M2 | Provider, router, kapabilitas model | berjalan |
-| M3 | CLI, command registry, streaming | belum |
+| M3 | CLI, command registry, streaming | hampir selesai |
 | M4 | Agent core, planner, verifier, checkpoint | berjalan |
-| M5 | Coding tools, Git, project map | belum |
-| M6 | Tool broker, sandbox, approval | belum |
-| M7 | Memory dan instruction | belum |
-| M8 | Skill | belum |
-| M9 | MCP, plugin, hook | belum |
+| M5 | Coding tools, Git, project map | sebagian besar |
+| M6 | Tool broker, sandbox, approval | sebagian besar |
+| M7 | Memory dan instruction | sebagian besar |
+| M8 | Skill | sebagian besar |
+| M9 | MCP, plugin, hook | berjalan |
 | M10 | Subagent dan parallel orchestration | belum |
-| M11 | Background daemon, scheduler, recovery | belum |
-| M12 | Context, compaction, budget | belum |
-| M13 | Gateway REST/WS dan dashboard | belum |
-| M14 | Keamanan, secret, audit, RBAC | belum |
+| M11 | Background daemon, scheduler, recovery | selesai |
+| M12 | Context, compaction, budget | berjalan |
+| M13 | Gateway REST/WS dan dashboard | berjalan, messaging belum |
+| M14 | Keamanan, secret, audit, RBAC | berjalan |
 | M15 | Distribusi, operability, rilis 1.0.0 | belum |
 
 ## Yang sudah dikerjakan
@@ -91,7 +91,22 @@ Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan he
 - `packages/cli/src/stream.ts`: menampilkan saran tindakan saat turn gagal.
 - Tes: `planner.test.ts`, `plan-runtime.test.ts`, `failure-analysis.test.ts`, `rpc.test.ts` lulus. Total 109 tes (23 berkas).
 
-Sisa M4: goal tracking eksplisit dan pemulihan task setelah kill -9.
+Sisa M4: replan otomatis setelah turn gagal. Goal tracking sudah dikerjakan (`schema-v6`, repo, 5 RPC, 26 tool, `/goal`).
+
+### M5 background, scheduler, dan gateway
+
+- `packages/storage/src/job-repos.ts`: antrean job persisten, klaim transaksional, lease dan heartbeat, dead letter, repo scheduler dan riwayat.
+- `packages/runtime/src/background.ts` dan `scheduler.ts`: worker, eksekusi shell/prompt, sanitisasi env, cron `croner`, zona waktu, dan `recoverStaleJobs`.
+- `packages/cli/src/main.ts`: `/background` dan `/scheduler` lengkap dengan opsi, `--json`, dan `needs`/`after`.
+- `packages/storage/src/schema-v8.ts`: tabel `gateway_devices`, `gateway_pair_codes`, `gateway_users`, `gateway_sessions`, `gateway_messages`.
+- `packages/storage/src/gateway-repos.ts`: kode pairing 8 karakter TTL 10 menit sekali pakai, token opaque ber-hash SHA-256, role ke scope, revoke, pemetaan sesi per kanal, statistik.
+- `packages/runtime/src/gateway.ts`: server HTTP/HTTPS, WebSocket `/v1/events`, auth Bearer, pembatasan pairing 5 kali per 15 menit per IP, REST sesi, chat, approval, lampiran, background, scheduler, usage, perangkat, aset statis dengan proteksi traversal.
+- `packages/runtime/src/dashboard.ts`: halaman satu berkas, login pairing, 18 halaman data, chat dengan polling dan event WebSocket, tombol approval.
+- `packages/runtime/src/dashboard-data.ts`: perakitan data 18 halaman dari tabel nyata, `redactDeep`.
+- `packages/runtime/src/rpc.ts`: `gateway.*`, `dashboard.data`, event gateway, start/stop otomatis.
+- `packages/cli/src/main.ts`: `rann gateway status|start|stop|pair|devices|revoke|role|stats|enable|disable` dan `/gateway` di REPL.
+- Tes: `gateway-repos.test.ts` (5), `gateway.test.ts` (4), `job-repos.test.ts` (7), `scheduler.test.ts`, `background.test.ts`. `pnpm check` lulus 206 tes (41 berkas).
+- Belum: adapter messaging Telegram/Discord/Slack, audit otorisasi gateway ke `audit_log`, dan uji WebSocket reconnect lewat koneksi nyata.
 
 ## Aturan
 

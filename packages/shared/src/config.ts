@@ -152,7 +152,40 @@ export const configSchema = z.object({
     .object({
       enabled: z.boolean().default(false),
       host: z.string().default("127.0.0.1"),
-      port: z.number().int().positive().max(65535).default(8787)
+      port: z.number().int().positive().max(65535).default(8787),
+      public_url: z.string().url().optional(),
+      tls_cert: z.string().optional(),
+      tls_key: z.string().optional(),
+      heartbeat_ms: z.number().int().min(5_000).max(120_000).default(20_000),
+      allow_origins: z.array(z.string()).default([]),
+      profile: z.string().default("default")
+    })
+    .default({}),
+  messaging: z
+    .object({
+      telegram: z
+        .object({
+          enabled: z.boolean().default(false),
+          token_env: z.string().default("TELEGRAM_BOT_TOKEN"),
+          allowed_chats: z.array(z.string()).default([])
+        })
+        .default({}),
+      discord: z
+        .object({
+          enabled: z.boolean().default(false),
+          token_env: z.string().default("DISCORD_BOT_TOKEN"),
+          public_key: z.string().optional(),
+          allowed_channels: z.array(z.string()).default([])
+        })
+        .default({}),
+      slack: z
+        .object({
+          enabled: z.boolean().default(false),
+          token_env: z.string().default("SLACK_BOT_TOKEN"),
+          signing_secret_env: z.string().default("SLACK_SIGNING_SECRET"),
+          allowed_channels: z.array(z.string()).default([])
+        })
+        .default({})
     })
     .default({})
 });

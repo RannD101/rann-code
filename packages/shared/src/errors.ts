@@ -28,6 +28,8 @@ export const ERROR_CODES = [
   "E_DB",
   "E_DAEMON_DOWN",
   "E_GATEWAY_AUTH",
+  "E_RATE_LIMITED",
+  "E_INPUT_TOO_LARGE",
   "E_RECOVERY_FAILED",
   "E_RUNTIME_EXCEEDED",
   "E_JOB_FAILED",
@@ -70,6 +72,8 @@ const EXIT_CODES: Record<ErrorCode, number> = {
   E_DB: 1,
   E_DAEMON_DOWN: 4,
   E_GATEWAY_AUTH: 4,
+  E_RATE_LIMITED: 5,
+  E_INPUT_TOO_LARGE: 2,
   E_RECOVERY_FAILED: 1,
   E_RUNTIME_EXCEEDED: 7,
   E_JOB_FAILED: 1,
@@ -89,7 +93,8 @@ const RETRYABLE = new Set<ErrorCode>([
   "E_TOOL_TIMEOUT",
   "E_DAEMON_DOWN",
   "E_TIMEOUT",
-  "E_CONFLICT"
+  "E_CONFLICT",
+  "E_RATE_LIMITED"
 ]);
 
 export interface RannErrorOptions {

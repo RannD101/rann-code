@@ -261,6 +261,43 @@ export const schedulerHistoryParams = z.object({
   limit: z.number().int().positive().max(200).default(30)
 });
 
+export const dashboardDataParams = z.object({
+  page: z
+    .enum([
+      "overview",
+      "sessions",
+      "tasks",
+      "agents",
+      "plans",
+      "models",
+      "providers",
+      "skills",
+      "memory",
+      "tools",
+      "mcp",
+      "plugins",
+      "scheduler",
+      "gateway",
+      "usage",
+      "logs",
+      "permissions",
+      "settings"
+    ])
+    .default("overview"),
+  sessionId: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(500).default(100)
+});
+
+export const gatewayPairParams = z.object({
+  name: z.string().min(1).max(80).optional(),
+  ttl_ms: z.number().int().min(60_000).max(600_000).optional()
+});
+export const gatewayDeviceParams = z.object({ id: z.string().min(1) });
+export const gatewayRoleParams = z.object({
+  id: z.string().min(1),
+  role: z.enum(["owner", "operator", "viewer", "approver"])
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -314,7 +351,16 @@ export const methodParams = {
   "scheduler.run": schedulerIdParams,
   "scheduler.update": schedulerUpdateParams,
   "scheduler.remove": schedulerIdParams,
-  "scheduler.history": schedulerHistoryParams
+  "scheduler.history": schedulerHistoryParams,
+  "dashboard.data": dashboardDataParams,
+  "gateway.status": empty,
+  "gateway.start": empty,
+  "gateway.stop": empty,
+  "gateway.pair": gatewayPairParams,
+  "gateway.devices": empty,
+  "gateway.revoke": gatewayDeviceParams,
+  "gateway.role": gatewayRoleParams,
+  "gateway.stats": empty
 } as const;
 
 export type MethodName = keyof typeof methodParams;

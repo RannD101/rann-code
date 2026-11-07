@@ -7,6 +7,7 @@ import { SCHEMA_V4 } from "./schema-v4.js";
 import { SCHEMA_V5 } from "./schema-v5.js";
 import { SCHEMA_V6 } from "./schema-v6.js";
 import { SCHEMA_V7 } from "./schema-v7.js";
+import { SCHEMA_V8 } from "./schema-v8.js";
 
 export type Db = Database.Database;
 
@@ -246,6 +247,11 @@ END;
     version: 7,
     name: "turn-runtime",
     sql: SCHEMA_V7
+  },
+  {
+    version: 8,
+    name: "gateway",
+    sql: SCHEMA_V8
   }
 ];
 

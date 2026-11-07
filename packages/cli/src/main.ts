@@ -44,6 +44,7 @@ Pemakaian:
   rann config explain <kunci>   asal nilai config
   rann config set <kunci> <v>   tulis config global
   rann daemon start|stop|status kelola daemon
+  rann gateway status|start|stop|pair|devices  kelola gateway web
   rann doctor [--json]          periksa instalasi
   rann init                     siapkan folder .rann di project
 
@@ -82,7 +83,8 @@ const KNOWN_COMMANDS = new Set([
   "config",
   "init",
   "memory",
-  "skill"
+  "skill",
+  "gateway"
 ]);
 
 async function main(argv: string[]): Promise<number> {
@@ -126,6 +128,8 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case "daemon":
       return await daemonCommand(args);
+    case "gateway":
+      return await gatewayCommand(args);
     case "doctor":
       return await doctorCommand(args);
     case "sessions":
@@ -231,6 +235,129 @@ async function daemonCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
   throw new RannError("E_INVALID_PARAMS", `Subcommand daemon tidak dikenal: ${args.subcommand}`);
+}
+
+interface GatewayDevice {
+  id: string;
+  name: string;
+  role: string;
+  scopes: string[];
+  last_seen_at: number | null;
+  revoked_at: number | null;
+}
+
+interface GatewayStatus {
+  running: boolean;
+  host: string;
+  port: number;
+  public_url: string | null;
+  tls: boolean;
+  clients: number;
+  devices: number;
+  started_at: number | null;
+}
+
+async function gatewayCommand(args: ParsedArgs): Promise<number> {
+  const sub = args.subcommand ?? "status";
+  if (sub === "enable" || sub === "disable") {
+    const home = resolveHome();
+    mkdirSync(join(home, "config"), { recursive: true });
+    setConfigValue(home, "gateway.enabled", sub === "enable" ? "true" : "false");
+    print(`gateway.enabled ${sub === "enable" ? "true" : "false"} ditulis ke config global.`);
+    if (sub === "enable") {
+      return withClient(async (client) => {
+        const status = await client.request<GatewayStatus>("gateway.start", {});
+        printGatewayStatus(status);
+        return 0;
+      });
+    }
+    print("Gateway yang sedang berjalan tetap hidup sampai daemon di-restart.");
+    return 0;
+  }
+  return withClient(async (client) => {
+    if (sub === "status") {
+      const status = await client.request<GatewayStatus>("gateway.status", {});
+      printGatewayStatus(status);
+      if (flagBool(args, "json")) print(JSON.stringify(status, null, 2));
+      return 0;
+    }
+    if (sub === "start") {
+      printGatewayStatus(await client.request<GatewayStatus>("gateway.start", {}));
+      return 0;
+    }
+    if (sub === "stop") {
+      printGatewayStatus(await client.request<GatewayStatus>("gateway.stop", {}));
+      return 0;
+    }
+    if (sub === "pair") {
+      const status = await client.request<GatewayStatus>("gateway.status", {});
+      const result = await client.request<{ code: string; expiresAt: number }>("gateway.pair", {});
+      const url = status.public_url ?? `http://${status.host}:${String(status.port)}`;
+      print(`Kode pairing : ${result.code}`);
+      print(`Dashboard    : ${url}`);
+      print(`Berlaku      : ${Math.max(1, Math.round((result.expiresAt - Date.now()) / 60_000))} menit`);
+      print("Buka dashboard, masukkan kode dan nama perangkat.");
+      return 0;
+    }
+    if (sub === "devices") {
+      const devices = await client.request<GatewayDevice[]>("gateway.devices", {});
+      if (flagBool(args, "json")) {
+        print(JSON.stringify(devices, null, 2));
+        return 0;
+      }
+      if (devices.length === 0) {
+        print("Belum ada perangkat terdaftar.");
+        return 0;
+      }
+      print(
+        table(
+          ["id", "nama", "role", "scope", "terakhir", "status"],
+          devices.map((device) => [
+            device.id,
+            device.name,
+            device.role,
+            device.scopes.join(","),
+            device.last_seen_at ? relativeTime(device.last_seen_at) : "-",
+            device.revoked_at ? "dicabut" : "aktif"
+          ])
+        )
+      );
+      return 0;
+    }
+    if (sub === "revoke") {
+      const id = args.positionals[0];
+      if (!id) throw new RannError("E_INVALID_PARAMS", "Pakai: rann gateway revoke <id>");
+      const result = await client.request<{ revoked: boolean }>("gateway.revoke", { id });
+      print(result.revoked ? `Perangkat ${id} dicabut.` : `Perangkat ${id} tidak ditemukan atau sudah dicabut.`);
+      return result.revoked ? 0 : 1;
+    }
+    if (sub === "role") {
+      const id = args.positionals[0];
+      const role = args.positionals[1];
+      if (!id || !role) throw new RannError("E_INVALID_PARAMS", "Pakai: rann gateway role <id> owner|operator|viewer|approver");
+      const device = await client.request<GatewayDevice | null>("gateway.role", { id, role });
+      if (!device) throw new RannError("E_NOT_FOUND", `Perangkat tidak ditemukan: ${id}`);
+      print(`${device.name}: role ${device.role}, scope ${device.scopes.join(",")}`);
+      return 0;
+    }
+    if (sub === "stats") {
+      const stats = await client.request<Record<string, number>>("gateway.stats", {});
+      print(JSON.stringify(stats, null, 2));
+      return 0;
+    }
+    throw new RannError(
+      "E_INVALID_PARAMS",
+      "Pakai: rann gateway status|start|stop|pair|devices|revoke|role|stats|enable|disable"
+    );
+  });
+}
+
+function printGatewayStatus(status: GatewayStatus): void {
+  print(`status   ${status.running ? "aktif" : "mati"}`);
+  print(`alamat   ${status.public_url ?? `${status.host}:${String(status.port)}`}${status.tls ? " (TLS)" : ""}`);
+  print(`klien    ${status.clients}`);
+  print(`perangkat ${status.devices}`);
+  if (status.started_at) print(`uptime   ${Math.round((Date.now() - status.started_at) / 1000)} detik`);
 }
 
 interface Check {
@@ -1051,6 +1178,54 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             createdBy: "user"
           });
           print(renderGoal(goal));
+          continue;
+        }
+        if (line === "/gateway" || line === "/gw" || line.startsWith("/gateway ") || line.startsWith("/gw ")) {
+          const argument = line.replace(/^\/(?:gateway|gw)\s*/, "").trim();
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "status").toLowerCase();
+          if (sub === "status" || sub === "start" || sub === "stop") {
+            const status =
+              sub === "start"
+                ? await client.request<GatewayStatus>("gateway.start", {})
+                : sub === "stop"
+                  ? await client.request<GatewayStatus>("gateway.stop", {})
+                  : await client.request<GatewayStatus>("gateway.status", {});
+            printGatewayStatus(status);
+            continue;
+          }
+          if (sub === "pair") {
+            const status = await client.request<GatewayStatus>("gateway.status", {});
+            const result = await client.request<{ code: string; expiresAt: number }>("gateway.pair", {});
+            print(`kode    ${result.code}`);
+            print(`buka    ${status.public_url ?? `http://${status.host}:${String(status.port)}`}`);
+            print(`berlaku ${Math.max(1, Math.round((result.expiresAt - Date.now()) / 60_000))} menit`);
+            continue;
+          }
+          if (sub === "devices") {
+            const devices = await client.request<GatewayDevice[]>("gateway.devices", {});
+            if (devices.length === 0) print("belum ada perangkat");
+            else
+              print(
+                table(
+                  ["id", "nama", "role", "scope", "status"],
+                  devices.map((device) => [
+                    device.id,
+                    device.name,
+                    device.role,
+                    device.scopes.join(","),
+                    device.revoked_at ? "dicabut" : "aktif"
+                  ])
+                )
+              );
+            continue;
+          }
+          if (sub === "revoke" && tokens[1]) {
+            const result = await client.request<{ revoked: boolean }>("gateway.revoke", { id: tokens[1] });
+            print(result.revoked ? `perangkat ${tokens[1]} dicabut` : "perangkat tidak ditemukan");
+            continue;
+          }
+          print("pakai: /gateway status|start|stop|pair|devices|revoke <id>");
           continue;
         }
         if (line === "/background" || line === "/bg" || line.startsWith("/background ") || line.startsWith("/bg ")) {

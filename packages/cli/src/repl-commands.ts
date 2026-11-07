@@ -169,6 +169,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("devices", [], "/devices", "Kelola perangkat terhubung", "infra", "admin", false, NOT_YET),
   cmd("pair", [], "/pair", "Pasangkan perangkat baru", "infra", "admin", false, NOT_YET),
   cmd("scheduler", ["cron"], "/scheduler <list|add|run|enable|disable|remove|history>", "Kelola job terjadwal", "infra", "admin"),
+  cmd("gateway", ["gw"], "/gateway <status|start|stop|pair|devices|revoke|role>", "Kelola gateway web dan perangkat", "infra", "admin"),
   cmd("background", ["bg"], "/background <list|add|get|logs|cancel|retry>", "Kelola task latar", "infra", "exec"),
   cmd("queue", [], "/queue", "Kelola antrean job", "infra", "admin", false, NOT_YET),
   cmd("integrations", ["int"], "/integrations", "Kelola integrasi eksternal", "infra", "admin", false, NOT_YET),
