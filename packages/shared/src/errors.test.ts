@@ -8,8 +8,8 @@ describe("errors", () => {
     expect(exitCodeFor("E_PROVIDER_AUTH")).toBe(4);
     expect(exitCodeFor("E_PERMISSION")).toBe(5);
     expect(exitCodeFor("E_NOT_FOUND")).toBe(6);
-    expect(exitCodeFor("E_CANCELLED")).toBe(8);
-    expect(exitCodeFor("E_CONFLICT")).toBe(9);
+    expect(exitCodeFor("E_CANCELLED")).toBe(130);
+    expect(exitCodeFor("E_CONFLICT")).toBe(6);
     expect(exitCodeFor("E_INTERNAL")).toBe(1);
   });
 

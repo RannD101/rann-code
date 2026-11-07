@@ -57,6 +57,14 @@ export const sessionListParams = z.object({
 
 export const sessionGetParams = z.object({ sessionId: z.string().min(1) });
 
+export const sessionRenameParams = z.object({ sessionId: z.string().min(1), title: z.string().min(1).max(200) });
+
+export const sessionForkParams = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().min(1).max(200).optional(),
+  uptoMessageId: z.string().min(1).optional()
+});
+
 export const sessionSendParams = z.object({
   sessionId: z.string().min(1),
   text: z.string().min(1).max(200_000),
@@ -334,6 +342,8 @@ export const methodParams = {
   "project.list": empty,
   "session.list": sessionListParams,
   "session.get": sessionGetParams,
+  "session.rename": sessionRenameParams,
+  "session.fork": sessionForkParams,
   "session.send": sessionSendParams,
   "session.cancel": sessionCancelParams,
   "turn.get": turnGetParams,
@@ -352,6 +362,7 @@ export const methodParams = {
   "memory.update": memoryUpdateParams,
   "memory.remove": memoryRemoveParams,
   "skill.list": skillListParams,
+  "skill.conflicts": z.object({ projectPath: z.string().min(1).optional() }).default({}),
   "skill.view": skillViewParams,
   "skill.create": skillCreateParams,
   "skill.remove": skillRemoveParams,

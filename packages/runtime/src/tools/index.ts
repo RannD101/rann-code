@@ -78,6 +78,7 @@ export interface ToolContext {
 export interface ToolResult {
   ok: boolean;
   output: unknown;
+  code?: string;
   exitCode?: number;
   durationMs?: number;
 }
@@ -1340,7 +1341,7 @@ export const tools: ToolDefinition[] = [
         };
         const timer = setTimeout(() => {
           killTree();
-          finish({ ok: false, output: { error: "timeout", timeout_ms: timeoutMs, stdout: stdout.slice(0, MAX_OUTPUT_CHARS), stderr }, exitCode: 124 });
+          finish({ ok: false, output: { error: "timeout", timeout_ms: timeoutMs, stdout: stdout.slice(0, MAX_OUTPUT_CHARS), stderr }, code: "E_TOOL_TIMEOUT", exitCode: 124 });
         }, timeoutMs);
         const onAbort = (): void => {
           killTree();

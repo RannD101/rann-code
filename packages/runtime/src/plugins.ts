@@ -407,7 +407,7 @@ export class PluginManager {
   async invoke(name: string, method: string, params: unknown, timeoutMs = 30_000): Promise<ChildResult> {
     const plugin = this.get(name);
     if (!plugin) return { ok: false, error: `Plugin tidak ditemukan: ${name}` };
-    if (plugin.status !== "enabled" && plugin.status !== "installed") return { ok: false, error: `Plugin ${name} berstatus ${plugin.status}` };
+    if (plugin.status !== "enabled") return { ok: false, error: `Plugin ${name} belum aktif (status ${plugin.status}); jalankan plugin enable` };
     const manifest = this.readManifest(plugin.path);
     const entry = resolve(plugin.path, manifest.entry);
     if (!existsSync(entry)) return { ok: false, error: `Entry plugin tidak ditemukan: ${entry}` };

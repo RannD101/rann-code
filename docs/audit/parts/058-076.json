@@ -1,0 +1,370 @@
+[
+  {
+    "id": "RC-FR-058",
+    "title": "Konteks bersama dan terisolasi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:1739-1745 sesi anak dibuat baru tanpa riwayat pesan induk",
+      "packages/runtime/src/rpc.ts:1829-1836 systemExtra hanya berisi goal dan options.input.context",
+      "packages/runtime/src/tools/index.ts:1757 parameter context eksplisit pada tool task",
+      "packages/runtime/src/rpc.ts:766-778 agent.message hanya mencatat pesan, tanpa jalur persetujuan induk",
+      "packages/runtime/src/memory.ts:68-72 filter agent hanya aktif bila agentProfile diisi; rpc.ts:1811-1817 tidak mengisinya",
+      "packages/runtime/src/subagent-run.test.ts menjalankan subagent nyata dengan mock provider dan menyimpan hasil"
+    ],
+    "gaps": [
+      "Butir 1: mode shared tidak ada; keputusan dan artefak induk tidak dibagikan otomatis, hanya goal dan context manual (rpc.ts:1829-1836)",
+      "Butir 4: anak tidak bisa meminta konteks tambahan; agent.message hanya dipanggil dari RPC/REPL dan tidak meminta persetujuan induk (rpc.ts:766-778)",
+      "Butir 5: kebocoran memory antar agen tidak ditolak karena agentProfile tidak pernah diisi dan filter profil tidak dipakai (memory.ts:68-72, rpc.ts:1811-1817)",
+      "AC: keputusan dan artefak tidak ikut dibagikan, jadi hanya sebagian AC yang terpenuhi"
+    ]
+  },
+  {
+    "id": "RC-FR-059",
+    "title": "Hierarki agen",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:1715-1719 depth dihitung dari parent dan ditolak saat depth >= max_depth",
+      "packages/shared/src/errors.ts:25 daftar kode error tidak memuat E_AGENT_DEPTH",
+      "packages/shared/src/config.ts:78-79 max_depth default 2 dan max_children default 8",
+      "packages/runtime/src/rpc.ts:1761 path hierarki dibentuk dari path induk",
+      "packages/storage/src/agent-repos.ts:38-77 createSubagent menyimpan id, parent_id, depth, dan path",
+      "packages/storage/src/agent-repos.test.ts membuat pohon, menghitung anak aktif, dan menyusun forest"
+    ],
+    "gaps": [
+      "Butir 1: max_depth dapat diset 3 sehingga mengizinkan empat tingkat termasuk root (config.ts:78, rpc.ts:1717)",
+      "Butir 4: tidak ada cek agen menjadi parent bagi dirinya sendiri (agent-repos.ts:38-77 langsung insert parent_id)",
+      "Butir 5: tidak ada deteksi siklus parent-child saat spawn (tidak ada penelusuran parent_id di rpc.ts:1699-1765)",
+      "AC: spawn tingkat keempat melempar E_PERMISSION, bukan E_AGENT_DEPTH (rpc.ts:1717-1719)"
+    ]
+  },
+  {
+    "id": "RC-FR-060",
+    "title": "Pencegahan konflik file",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:126-149 acquireLeases sebelum tulis dan melempar E_LEASE_CONFLICT",
+      "packages/storage/src/work-repos.ts:437-461 TTL default 60 detik dan penolakan lease aktif",
+      "packages/storage/src/work-repos.ts:463-472 releasePathLease per path/sesi/agen",
+      "packages/runtime/src/tools/index.ts:109 TTL lease 300000 ms",
+      "packages/runtime/src/code-tools.ts:290-292 pemeriksaan expected_sha256 bila dikirim pemanggil",
+      "packages/runtime/src/code-tools.ts:330-335 verifikasi hash setelah penulisan",
+      "packages/runtime/src/tools.test.ts mencatat edit ke transaksi dan menolak lease milik sesi lain",
+      "packages/storage/src/work-repos.test.ts mencatat approval dan lease path"
+    ],
+    "gaps": [
+      "Butir 1: lease tidak punya heartbeat berkala; heartbeat_at hanya diisi saat acquire (work-repos.ts:454-458)",
+      "Butir 3: perubahan di luar agen hanya terdeteksi bila pemanggil mengirim expected_sha256, tidak ada hash acuan otomatis (code-tools.ts:290-292)",
+      "Butir 4: tidak ada merge queue untuk perubahan bentrok; konflik langsung ditolak E_LEASE_CONFLICT (tools/index.ts:135-145)"
+    ]
+  },
+  {
+    "id": "RC-FR-061",
+    "title": "Lifecycle dan monitoring agen",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:117 status agen memakai idle/running/blocked/waiting/done/failed/cancelled",
+      "packages/storage/src/agent-repos.ts:108-113 heartbeatSubagent menulis heartbeat_at",
+      "packages/runtime/src/rpc.ts:1798-1805 interval heartbeat memakai config.subagents.heartbeat_ms",
+      "packages/storage/src/agent-repos.ts:217-233 agen tanpa heartbeat 60 detik ditandai failed dengan error orphaned",
+      "packages/cli/src/main.ts:444-450 printAgentTree menampilkan id, profil, status, langkah, biaya, goal",
+      "packages/runtime/src/dashboard.ts:210 kolom dashboard agents hanya nama, peran, status, model",
+      "packages/runtime/src/dashboard-data.ts:100-102 dashboard mengambil seluruh baris agents",
+      "packages/storage/src/agent-repos.ts:115-129 finishSubagent menyimpan result_json",
+      "packages/storage/src/agent-repos.test.ts memperbarui status, heartbeat, dan hasil akhir"
+    ],
+    "gaps": [
+      "Butir 1: status starting tidak ada dan status orphaned tidak pernah dipakai; orphan ditulis sebagai failed (schema-v3.ts:117, agent-repos.ts:226-231)",
+      "Butir 2: /agents tidak menampilkan heartbeat (main.ts:444-448)",
+      "Butir 4: transcript ringkas tidak disimpan; result_json hanya berisi ringkasan teks hasil (agent-repos.ts:115-129, rpc.ts:1890-1902)",
+      "Butir 5: dashboard agents hanya nama, peran, status, model; langkah, biaya, dan heartbeat tidak tampil (dashboard.ts:210, dashboard-data.ts:100-102)"
+    ]
+  },
+  {
+    "id": "RC-FR-062",
+    "title": "Pembatalan dan pemulihan agen",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:759-764 agent.cancel memanggil cancelSubagentTree dan abort controller tiap agen",
+      "packages/runtime/src/rpc.ts:1768-1771 abort induk diteruskan ke controller anak",
+      "packages/runtime/src/rpc.ts:1914-1919 finally melepas lease agen dan slot",
+      "packages/runtime/src/tools/index.ts:1332-1349 killTree membunuh proses shell saat abort",
+      "packages/storage/src/agent-repos.ts:197-215 cancelSubagentTree menandai seluruh turunan cancelled",
+      "packages/storage/src/agent-repos.test.ts membatalkan seluruh pohon dan menandai heartbeat basi sebagai orphan"
+    ],
+    "gaps": [
+      "Butir 1: releaseAgentLeases menghapus berdasarkan owner_agent_id, sedangkan lease tool hanya menyimpan session_id sehingga lease tidak dilepas lewat jalur ini (tools/index.ts:130-134, agent-repos.ts:265-267)",
+      "Butir 2: session.cancel hanya abort controller induk dan tidak memanggil cancelSubagentTree, jadi status anak baru berubah saat turn anak gagal (rpc.ts:448-453)",
+      "Butir 4: recovery orphan hanya berjalan saat agent.list, bukan saat start, dan menandai failed tanpa catatan keputusan (rpc.ts:738, agent-repos.ts:217-233)",
+      "AC: tidak ada tes yang membuktikan semua anak berhenti <= 3 detik dan tidak ada proses yatim"
+    ]
+  },
+  {
+    "id": "RC-FR-063",
+    "title": "User memory",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:151-172 ekstraktor mengenali preference, rule, project, decision",
+      "packages/runtime/src/memory.ts:166 preferensi disimpan dengan scope global",
+      "packages/runtime/src/memory.ts:102-113 add menyimpan source dan expires_at; repos.ts:504-519 menyimpan created_at",
+      "packages/runtime/src/memory.ts:225-241 supersede menandai entri lama dan membuat pengganti",
+      "packages/storage/src/repos.ts:456-467 memoryFilter tidak memakai profile_id",
+      "packages/cli/src/main.ts:1352-1360 /memory menampilkan daftar/cari; main.ts:1378-1389 /forget menghapus",
+      "packages/runtime/src/memory-skills.test.ts mengekstrak preferensi eksplisit, melewati duplikat, dan menandai konflik"
+    ],
+    "gaps": [
+      "Butir 2: memory tidak terisolasi per profil; dua profil berbeda saling melihat entri karena memoryFilter tidak memakai profile_id (repos.ts:456-467)",
+      "Butir 3: sumber pesan tidak disimpan sebagai id pesan; rememberFromTurn menulis string 'auto-extract' (memory.ts:175,203, agent.ts:437)",
+      "Butir 4: preferensi bertentangan hanya mengembalikan daftar id konflik tanpa menandai entri lama superseded (memory.ts:184-190)"
+    ]
+  },
+  {
+    "id": "RC-FR-064",
+    "title": "Project memory",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:159-167 ekstraktor menyimpan kind project/decision/constraint",
+      "packages/storage/src/repos.ts:456-467 memory project difilter dengan project_path",
+      "packages/runtime/src/memory.ts:225-241 supersede menyimpan alasan pada tag entri lama",
+      "packages/runtime/src/memory.ts:94 batas 4.000 karakter; memory.ts:38,325 chunk knowledge maksimal 2.000 karakter",
+      "packages/runtime/src/memory.ts:243-258 export hanya mengeluarkan JSON",
+      "packages/runtime/src/memory-skills.test.ts mengambil memori global dan proyek yang relevan lalu membatasi ukuran prompt"
+    ],
+    "gaps": [
+      "Butir 3: keputusan yang diubah tidak membuat versi baru; updateMemory menimpa baris dan version tetap 1 (repos.ts:573-584)",
+      "Butir 4: tidak ada ekspor memory project ke RANN.md; CLI hanya mengekspor JSON (memory.ts:243-258, cli/main.ts:3140-3146)",
+      "Butir 3: alasan perubahan hanya tag reason pada entri lama, bukan catatan versi terstruktur (memory.ts:229-233)"
+    ]
+  },
+  {
+    "id": "RC-FR-065",
+    "title": "Session memory",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:338-353 summarizeSession menyimpan potongan pesan menjadi kind session_summary",
+      "packages/runtime/src/agent.ts:617-623 summarizeSession dipanggil saat compaction",
+      "packages/storage/src/repos.ts:456-467 scope session difilter dengan session_id",
+      "packages/runtime/src/rpc.ts:424-454 RPC sesi hanya create/list/get/send/cancel"
+    ],
+    "gaps": [
+      "Butir 1: ringkasan berisi potongan transkrip 300 karakter dari 40 pesan, bukan ringkasan keputusan/error/hasil (memory.ts:338-353)",
+      "Butir 2: tidak ada pemisahan transkrip dan ringkasan; potongan pesan mentah 300 karakter disimpan sebagai memory session_summary (memory.ts:338-353)",
+      "Butir 3: tidak ada penghapusan sesi atau promosi memory; RPC sesi tidak punya session.delete (rpc.ts:424-454)",
+      "AC: ringkasan hanya dibuat saat compaction di tengah turn, tidak dijamin tersimpan saat sesi berakhir (agent.ts:617-623)"
+    ]
+  },
+  {
+    "id": "RC-FR-066",
+    "title": "Agent memory",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/memory.ts:10 opsi agentProfile ada",
+      "packages/runtime/src/memory.ts:64-72 belongsToAgent memfilter tag agent bila profil diisi",
+      "packages/runtime/src/rpc.ts:1811-1817 MemoryService untuk subagent dibuat tanpa agentProfile",
+      "packages/shared/src/config.ts:60-66 config memory hanya enabled, prompt_chars, retrieve",
+      "tidak ada tes isolasi memory antar agen"
+    ],
+    "gaps": [
+      "Butir 1: memory agen tidak terikat profil; agentProfile tidak pernah diisi sehingga semua memory project/global terbaca agen lain (rpc.ts:1811-1817)",
+      "Butir 2: tidak ada penyaringan pengalaman berdasarkan peran agen saat menyimpan (memory.ts:151-172 hanya regex teks user)",
+      "Butir 3: tidak ada izin baca antar agen; batas hanya tag agent yang tidak dipakai (memory.ts:68-72)",
+      "Butir 4: tidak ada pelacakan efektivitas memory untuk menghapus yang tidak berguna",
+      "Butir 5: tidak ada saklar memory per profil agen; hanya config.memory.enabled global (config.ts:60-66)"
+    ]
+  },
+  {
+    "id": "RC-FR-067",
+    "title": "Knowledge memory",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:289-335 indexKnowledge memindai berkas dan menyimpan chunk kind knowledge",
+      "packages/runtime/src/memory.ts:294 direktori berawalan titik dilewati",
+      "packages/runtime/src/memory.ts:322-330 chunk disimpan dengan tag path dan lines serta source file#L",
+      "packages/runtime/src/memory.ts:378-413 chunkKnowledge menyimpan heading, startLine, endLine",
+      "packages/runtime/src/memory.ts:41-44 renderEntry tidak menampilkan source/path",
+      "packages/cli/src/main.ts:3164-3175 perintah manual memory index",
+      "packages/shared/src/config.ts:60-66 config memory tidak punya daftar pengecualian knowledge"
+    ],
+    "gaps": [
+      "Butir 1: `.rann/knowledge` tidak terindeks saat root project karena direktori berawalan titik dilewati (memory.ts:294)",
+      "Butir 3: path dan baris ada di source/tags tetapi tidak ditampilkan di prompt atau `/memory`, jadi sitasi tidak bisa dibuka dari hasil (memory.ts:41-44, cli/main.ts:1359)",
+      "Butir 4: tidak ada reindex saat berkas berubah; hanya perintah manual `rann memory index` (cli/main.ts:3164-3175)",
+      "Butir 5: tidak ada config pengecualian dokumen rahasia (config.ts:60-66)"
+    ]
+  },
+  {
+    "id": "RC-FR-068",
+    "title": "Procedural memory",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/memory.ts:151-172 ekstraktor hanya menghasilkan preference/rule/project/decision",
+      "packages/storage/src/schema-v3.ts:16-38 tabel memory tidak punya kolom trigger, prasyarat, langkah, verifikasi",
+      "packages/runtime/src/skills.ts:290-298 recordUse hanya mencatat uses/successes/failures skill",
+      "tidak ada tes procedural memory"
+    ],
+    "gaps": [
+      "Butir 1: tidak ada penyimpanan prosedur dengan nama, trigger, prasyarat, langkah, dan verifikasi",
+      "Butir 2: tidak ada aturan promosi setelah berhasil >= 3 kali atau persetujuan pengguna",
+      "Butir 3: tidak ada jalur mengubah prosedur menjadi skill; skill hanya dibuat manual lewat tool skill (tools/index.ts:1438-1462)",
+      "Butir 4: tidak ada penandaan stale untuk prosedur yang gagal berulang",
+      "Butir 5: tidak ada mekanisme prosedur sehingga prioritas terhadap instruksi eksplisit tidak diuji"
+    ]
+  },
+  {
+    "id": "RC-FR-069",
+    "title": "Ekstraksi otomatis dan review kandidat",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:435-450 rememberFromTurn dipanggil sebelum panggilan model",
+      "packages/runtime/src/memory.ts:151-172 kandidat berisi text, kind, scope, tags, confidence",
+      "packages/runtime/src/memory.ts:175-206 semua kandidat disimpan tanpa ambang keyakinan",
+      "packages/storage/src/schema-v3.ts:31 status pending ada tetapi tidak pernah dipakai",
+      "packages/runtime/src/rpc.ts:970-982 hanya ada update/remove entri final",
+      "packages/shared/src/config.ts:60-66 hanya ada saklar memory global",
+      "packages/runtime/src/memory-skills.test.ts mengekstrak preferensi eksplisit, melewati duplikat, dan menandai konflik"
+    ],
+    "gaps": [
+      "Butir 1: ekstraksi berjalan sebelum panggilan model, bukan setelah turn selesai (agent.ts:435-450)",
+      "Butir 2: semua kandidat langsung disimpan; tidak ada ambang keyakinan atau antrean review (memory.ts:180-204)",
+      "Butir 3: tidak ada penyaringan secret, data pribadi sensitif, atau instruksi sementara di ekstraktor (memory.ts:151-172)",
+      "Butir 4: tidak ada aksi menyetujui/menolak/mengedit kandidat; yang ada hanya update/remove entri final (rpc.ts:970-982)",
+      "Butir 5: ekstraksi tidak bisa dimatikan per profil atau per project; hanya config.memory.enabled global (config.ts:60-66)"
+    ]
+  },
+  {
+    "id": "RC-FR-070",
+    "title": "Retrieval dan pencarian semantik",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:126-148 penggabungan skor lexical, tag, dan recent dengan bobot 1/(60+rank)",
+      "packages/storage/src/repos.ts:552-569 pencarian FTS5 dengan fallback LIKE",
+      "packages/storage/src/repos.ts:456-467 filter scope/project/session tanpa profile_id",
+      "packages/runtime/src/memory.ts:355-375 prompt dibatasi promptChars",
+      "packages/cli/src/main.ts:2249-2258 /recall tanpa opsi --explain",
+      "packages/runtime/src/memory-skills.test.ts mengambil memori global dan proyek yang relevan lalu membatasi ukuran prompt"
+    ],
+    "gaps": [
+      "Butir 1: tidak ada vektor/embedding; penggabungan hanya FTS, tag, dan recent (memory.ts:126-148, repos.ts:552-569)",
+      "Butir 2: filter profil tidak diterapkan (repos.ts:456-467)",
+      "Butir 3: skor tidak dikembalikan ke pemanggil dan tidak ditampilkan (memory.ts:143-147)",
+      "Butir 4: tidak ada ambang relevansi; recent selalu digabung sehingga memory tidak relevan tetap diinjeksi (memory.ts:358-363)",
+      "Butir 5: tidak ada `/recall --explain` (cli/main.ts:2249-2258)",
+      "AC: tidak ada benchmark 10.000 memory dengan target < 80 ms p95"
+    ]
+  },
+  {
+    "id": "RC-FR-071",
+    "title": "Indeks dan prioritas memory",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v3.ts:30,33 kolom importance dan last_used_at ada",
+      "packages/storage/src/repos.ts:518 importance default 0.5 saat insert",
+      "packages/runtime/src/memory.ts:133-147 peringkat hanya memakai urutan lexical/tag/recent",
+      "packages/storage/src/schema-v3.ts:16-38 tidak ada kolom embedding atau status embedding",
+      "packages/cli/src/main.ts:3193 subcommand memory hanya list/export/import/index/supersede"
+    ],
+    "gaps": [
+      "Butir 1: last_used_at tidak pernah ditulis (repos.ts:484-524)",
+      "Butir 2: importance tidak dipengaruhi sumber, jenis, atau umpan balik; hanya nilai default 0.5 (repos.ts:518)",
+      "Butir 3: memory yang sering dipakai tidak naik peringkat karena ranking mengabaikan importance dan last_used_at (memory.ts:133-147)",
+      "Butir 4: tidak ada embedding asinkron maupun status pending/retry (schema-v3.ts:16-38)",
+      "Butir 5: tidak ada `/memory reindex` atau reindex penuh (cli/main.ts:3193)"
+    ]
+  },
+  {
+    "id": "RC-FR-072",
+    "title": "Konsolidasi dan deduplikasi",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:489-501 addMemory menggabungkan entri dengan teks persis sama",
+      "packages/runtime/src/memory.ts:192-201 dedup kemiripan token Jaccard >= 0.8",
+      "packages/runtime/src/memory.ts:184-190 kontradiksi dikembalikan sebagai daftar id",
+      "packages/storage/src/schema-v3.ts:34 kolom hash ada tetapi tidak pernah diisi",
+      "packages/runtime/src/memory.ts:243-258 dan cli/main.ts:3193 tidak ada stats konsolidasi",
+      "packages/runtime/src/memory-skills.test.ts mengekstrak preferensi eksplisit, melewati duplikat, dan menandai konflik"
+    ],
+    "gaps": [
+      "Butir 1: dedup memakai kesamaan teks persis dan Jaccard token, bukan hash isi + kemiripan vektor (repos.ts:489-501, memory.ts:192-201)",
+      "Butir 2: entri yang digabung tidak menyimpan versi lama; baris lama diperbarui di tempat (repos.ts:492-500)",
+      "Butir 3: tidak ada kolom atau penulisan contradicted_by; kontradiksi hanya dikembalikan ke pemanggil (memory.ts:184-190, schema-v3.ts:16-38)",
+      "Butir 4: tidak ada konsolidasi berkala atau pemicu manual (tidak ada job konsolidasi)",
+      "Butir 5: tidak ada laporan konsolidasi di `/memory stats` (cli/main.ts:3193)"
+    ]
+  },
+  {
+    "id": "RC-FR-073",
+    "title": "Expiry dan staleness",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:36 TTL default hanya transient 24 jam dan session 72 jam",
+      "packages/runtime/src/memory.ts:60-62 isExpired memfilter expires_at dan status expired",
+      "packages/runtime/src/memory.ts:116-120 visible hanya memakai status active dan tidak kedaluwarsa",
+      "packages/storage/src/schema-v3.ts:31 status yang diizinkan active/pending/expired/deleted",
+      "packages/storage/src/repos.ts:573-584 update tidak menyentuh last_used_at",
+      "packages/storage/src/gc.ts:15 gc menghapus dari tabel memories",
+      "packages/shared/src/config.ts:60-66 tidak ada konfigurasi TTL"
+    ],
+    "gaps": [
+      "Butir 1: TTL hanya hardcoded untuk transient/session dan tidak bisa diubah lewat config (memory.ts:36,100-101)",
+      "Butir 2: entri kedaluwarsa tetap berstatus active dan tidak pernah menjadi stale (memory.ts:60-62, schema-v3.ts:31)",
+      "Butir 3: last_used_at tidak diperbarui saat dirujuk dan TTL tidak diperpanjang (repos.ts:552-569)",
+      "Butir 5: job pembersihan harian menghapus dari tabel `memories` yang sudah di-drop sejak migrasi v3 (gc.ts:15, schema-v3.ts:51-55)"
+    ]
+  },
+  {
+    "id": "RC-FR-074",
+    "title": "Koreksi, update, dan hapus",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/repos.ts:573-584 updateMemory menimpa text/tags/kind",
+      "packages/storage/src/repos.ts:586-589 removeMemory menjalankan DELETE",
+      "packages/storage/src/schema-v3.ts:86-95 tabel memory_events tersedia",
+      "packages/storage/src/schema-v3.ts:70-73 trigger FTS memperbarui indeks saat update",
+      "packages/cli/src/main.ts:1378-1389 /forget memanggil memory.remove",
+      "probe: version tetap 1 setelah update dan memory_events tetap 0 baris"
+    ],
+    "gaps": [
+      "Butir 1: update tidak membuat versi baru dan tidak menyimpan alasan (repos.ts:573-584)",
+      "Butir 2: hapus selalu hard delete tanpa soft delete atau konfirmasi (repos.ts:586-589, cli/main.ts:1378-1389)",
+      "Butir 3: tidak ada vektor yang diperbarui; hanya trigger FTS dalam statement yang sama (schema-v3.ts:70-73)",
+      "Butir 4: memory_events tidak pernah ditulis sehingga aktor, waktu, dan perubahan tidak tercatat (schema-v3.ts:86-95)"
+    ]
+  },
+  {
+    "id": "RC-FR-075",
+    "title": "Import, export, dan inspeksi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/memory.ts:243-258 exportAll menghasilkan objek JSON version 1",
+      "packages/runtime/src/memory.ts:260-286 importAll hanya punya opsi replace",
+      "packages/cli/src/main.ts:3140-3146 export ditulis sebagai JSON pretty-print",
+      "packages/cli/src/main.ts:3149-3161 import membaca JSON dan mengirim flag replace",
+      "packages/cli/src/main.ts:1352-1360 /memory hanya list/search",
+      "packages/cli/src/repl-commands.ts:119 help /memory menjanjikan show/edit/rm/pin"
+    ],
+    "gaps": [
+      "Butir 1: export berupa satu objek JSON, bukan JSONL (memory.ts:243-258, cli/main.ts:3140-3146)",
+      "Butir 2: import tidak mendeteksi konflik dan tidak menawarkan strategi lewati/timpa/gabung; hanya ada replace (memory.ts:260-286)",
+      "Butir 3: `/memory` hanya daftar/cari, tanpa filter dan detail; show/edit/rm/pin tidak diimplementasikan (cli/main.ts:1352-1360)",
+      "Butir 5: tidak ada penyaringan secret saat export (memory.ts:247-256)"
+    ]
+  },
+  {
+    "id": "RC-FR-076",
+    "title": "Instruction system",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/instructions.ts:36-57 memuat SOUL.md, USER.md, MEMORY.md, RANN.md global/project, AGENTS.md, CLAUDE.md, .rann/instructions.md, .rann/rules/*.md",
+      "packages/runtime/src/instructions.ts:96 label prioritas ditulis di header",
+      "packages/runtime/src/instructions.ts:69-99 berkas digabung sesuai urutan sources",
+      "packages/runtime/src/instructions.ts:87-93 konflik hanya mendeteksi pola 'jangan' vs 'selalu'",
+      "packages/runtime/src/agent.ts:451,547 loadInstructions dipakai dan hanya instructions.text yang masuk prompt",
+      "packages/cli/src/repl-commands.ts:136 /context berstatus NOT_YET"
+    ],
+    "gaps": [
+      "Butir 2: prioritas hanya label; isi digabung sesuai urutan push, aturan `.rann/rules` prioritas 50 justru paling akhir (instructions.ts:36-57,96)",
+      "Butir 3: tidak ada instruksi spesifik per path yang mengalahkan file umum (instructions.ts tidak membaca aturan per direktori)",
+      "Butir 4: konflik tidak menyebut pemenang dan hasil conflicts tidak dipakai saat membangun prompt (instructions.ts:87-93, agent.ts:451,547)",
+      "Butir 4: `/context` belum tersedia sehingga pemenang tidak bisa dilihat (repl-commands.ts:136)"
+    ]
+  }
+]

@@ -141,6 +141,41 @@ export function listSessions(db: Db, options: { status?: string; projectPath?: s
     .all(...values) as SessionRow[];
 }
 
+export function renameSession(db: Db, id: string, title: string): SessionRow {
+  const session = getSession(db, id);
+  if (!session) throw new Error(`Sesi tidak ditemukan: ${id}`);
+  touchSession(db, id, { title });
+  return getSession(db, id)!;
+}
+
+export function forkSession(db: Db, id: string, title?: string, uptoMessageId?: string): SessionRow {
+  const session = getSession(db, id);
+  if (!session) throw new Error(`Sesi tidak ditemukan: ${id}`);
+  const project = session.project_id
+    ? (db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)
+    : undefined;
+  const forked = createSession(db, {
+    ...(project?.path ? { projectPath: project.path } : {}),
+    parentId: id,
+    title: title ?? `${session.title} (fork)`,
+    model: session.model,
+    permissionMode: session.permission_mode
+  });
+  const messages = db.prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(id) as MessageRow[];
+  const cutoff = uptoMessageId ? messages.findIndex((message) => message.id === uptoMessageId) : messages.length - 1;
+  for (const message of messages.slice(0, cutoff + 1)) {
+    addMessage(db, {
+      sessionId: forked.id,
+      ...(message.turn_id ? { turnId: message.turn_id } : {}),
+      role: message.role,
+      content: message.content,
+      ...(message.content_json ? { contentJson: JSON.parse(message.content_json) as unknown } : {}),
+      ...(message.token_count === null ? {} : { tokenCount: message.token_count })
+    });
+  }
+  return getSession(db, forked.id)!;
+}
+
 export function touchSession(db: Db, id: string, patch: Partial<Pick<SessionRow, "title" | "model" | "status">> = {}): void {
   const sets: string[] = ["updated_at = ?"];
   const values: unknown[] = [now()];

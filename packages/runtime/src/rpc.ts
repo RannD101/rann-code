@@ -36,6 +36,8 @@ import {
   getTurnRuntime,
   listGoals,
   listMessages,
+  renameSession,
+  forkSession,
   listProjects,
   listPlans,
   listSessions,
@@ -439,6 +441,10 @@ export class RpcServer {
           : undefined;
         return { ...session, project_path: project?.path ?? null, messages: listMessages(this.db, session.id, 200) };
       }
+      case "session.rename":
+        return renameSession(this.db, input.sessionId as string, input.title as string);
+      case "session.fork":
+        return forkSession(this.db, input.sessionId as string, input.title as string | undefined, input.uptoMessageId as string | undefined);
       case "session.send":
         return this.sessionSend(input);
       case "turn.get":
@@ -1000,6 +1006,8 @@ export class RpcServer {
         );
       case "skill.list":
         return this.skillStore(input.projectPath as string | undefined).list(input.limit as number);
+      case "skill.conflicts":
+        return this.skillStore(input.projectPath as string | undefined).conflicts();
       case "skill.view": {
         const skill = this.skillStore(input.projectPath as string | undefined).view(input.name as string);
         if (!skill) throw new RannError("E_NOT_FOUND", `Skill tidak ditemukan: ${input.name}`);

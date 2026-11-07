@@ -1,0 +1,340 @@
+[
+  {
+    "id": "RC-FR-077",
+    "title": "Discovery dan metadata skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:9-21 (SkillInfo: name, description, triggers, version, dependencies, path, active)",
+      "packages/runtime/src/skills.ts:92-115 (parser frontmatter trigger/dependencies)",
+      "packages/runtime/src/skills.ts:184-192 (all() memindai builtin, global, project)",
+      "packages/runtime/src/skills.ts:207-225 (list tanpa body, katalog metadata)",
+      "packages/cli/src/main.ts:1439-1448 (handler /skills)"
+    ],
+    "gaps": [
+      "Bentrok nama antar scope tidak pernah dilaporkan ke pengguna: conflicts() ada di skills.ts:195-205 tetapi tidak dipanggil /skills maupun saat load.",
+      "/skills hanya mencetak nama, scope, dan deskripsi (main.ts:1439-1448); trigger, versi, dan status aktif tidak tampil, sehingga AC juga tidak terpenuhi."
+    ]
+  },
+  {
+    "id": "RC-FR-078",
+    "title": "Progressive loading",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:207-212 (list membuang body)",
+      "packages/runtime/src/skills.ts:214-225 (katalog metadata untuk prompt)",
+      "packages/runtime/src/skills.ts:278-288 (body penuh dimuat saat skill dipilih)",
+      "packages/runtime/src/tools/index.ts:1442-1446 (body dibaca lewat action=view)"
+    ],
+    "gaps": [
+      "Tahap 3 tidak ada: tidak ada pembacaan folder references/ atau scripts/ di skills.ts.",
+      "Tidak ada pencatatan jumlah token per tahap, baik di katalog, loadForTask, maupun log.",
+      "Tidak ada budget referensi atau mekanisme melewati referensi opsional dengan catatan.",
+      "Tidak ada penanda bagian wajib; parser hanya membaca name/description/version/source/trigger/dependencies (skills.ts:104-113)."
+    ]
+  },
+  {
+    "id": "RC-FR-079",
+    "title": "Aktivasi dan pemilihan skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:236-276 (skor trigger, kecocokan deskripsi, riwayat keberhasilan, default max 3)",
+      "packages/runtime/src/skills.ts:271-274 (alasan pemilihan per skill)",
+      "packages/runtime/src/skills.ts:283-286 (alasan ikut di blok prompt)",
+      "packages/runtime/src/skills.ts:290-300 (recordUse mencatat sukses/gagal)",
+      "packages/runtime/src/agent.ts:451-460 (pemilihan di awal turn)"
+    ],
+    "gaps": [
+      "Pengguna tidak bisa memaksa atau melarang skill lewat /skill: perintah itu hanya mencetak body (main.ts:1452-1462), sementara include/exclude hanya tersedia di RPC skill.select tanpa jalur CLI."
+    ]
+  },
+  {
+    "id": "RC-FR-080",
+    "title": "Eksekusi skill",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/skills.ts:278-288 (skill disuntik sebagai teks prompt)",
+      "packages/runtime/src/tools/index.ts:1416-1479 (aksi skill: list, view, create, remove, select, edit, history, rollback, validate)",
+      "packages/runtime/src/agent.ts:451-465 (tidak ada eksekusi skrip skill)"
+    ],
+    "gaps": [
+      "Tidak ada eksekusi skrip skill: tidak ada folder scripts/ maupun runner per skill.",
+      "Tidak ada cwd project, env terbatas, timeout, atau sandbox khusus skill; skill hanya teks yang masuk prompt.",
+      "Tidak ada broker tool untuk skill dan tidak ada pencatatan output/error skill di trace.",
+      "Tidak ada error terstruktur untuk kegagalan skill karena tidak ada eksekusi."
+    ]
+  },
+  {
+    "id": "RC-FR-081",
+    "title": "Pembuatan dan validasi skill",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2397-2416 (handler /create-skill)",
+      "packages/runtime/src/skills.ts:343-363 (validator nama, deskripsi, body, dependensi, referensi)",
+      "packages/runtime/src/skills.ts:393-405 (create dryRun mengembalikan pratinjau)",
+      "packages/runtime/src/rpc.ts:1014-1022 (skill.create dryRun hanya memanggil validate)",
+      "packages/runtime/src/skills.ts:406-432 (create langsung menulis SKILL.md)"
+    ],
+    "gaps": [
+      "/create-skill hanya meminta nama dan deskripsi; trigger, langkah, dependensi, dan contoh tidak ditanyakan (main.ts:2397-2406).",
+      "Dry-run tidak dipanggil dari CLI, dan RPC dryRun hanya menjalankan validate, bukan menampilkan isi yang akan ditulis (rpc.ts:1008-1017).",
+      "Skill baru langsung aktif setelah create; tidak ada status draft atau syarat disetujui/diuji (skills.ts:393-405, 432).",
+      "Pembuatan skill oleh agent tidak punya persetujuan khusus, hanya mengikuti permission mode lewat assertAllowed (tools/index.ts:1462-1467)."
+    ]
+  },
+  {
+    "id": "RC-FR-082",
+    "title": "Edit dan versioning skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:392 (semverBump saat overwrite)",
+      "packages/runtime/src/skills.ts:407-417 (versi lama disalin ke versions/ dan changelog aktor/alasan)",
+      "packages/runtime/src/skills.ts:454-466 (history versi)",
+      "packages/runtime/src/skills.ts:483-502 (rollback ke versi lama)",
+      "packages/cli/src/main.ts:1452-1462 (handler /skill)"
+    ],
+    "gaps": [
+      "`/skill info` tidak ada; /skill <nama> hanya mencetak body tanpa versi, riwayat, atau changelog (main.ts:1452-1462)."
+    ]
+  },
+  {
+    "id": "RC-FR-083",
+    "title": "Dependensi skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:105-112 (dependencies dari frontmatter)",
+      "packages/runtime/src/skills.ts:320-341 (dependensi dimuat lebih dulu, siklus ditolak, dependensi hilang melempar error)",
+      "packages/runtime/src/skills.ts:278-288 (hasil withDependencies masuk prompt)",
+      "packages/runtime/src/agent.ts:455-464 (pemanggilan loadForTask dibungkus try/catch)"
+    ],
+    "gaps": [
+      "Batas versi dependensi dibuang tanpa dicek: dependency.replace(/[@^~].*$/, \"\") di skills.ts:330.",
+      "Dependensi hilang tidak menggagalkan aktivasi secara terlihat: error loadForTask ditelan agent.ts:462-464 dan turn lanjut tanpa pesan dependensi."
+    ]
+  },
+  {
+    "id": "RC-FR-084",
+    "title": "Registry dan instalasi skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:516-549 (install folder lokal dan Git HTTPS dengan approve)",
+      "packages/runtime/src/skills.ts:524-525 (tarball HTTPS ditolak)",
+      "packages/runtime/src/skills.ts:551-589 (update memakai source)",
+      "packages/runtime/src/rpc.ts:1061-1071 (RPC skill.install dan skill.update)",
+      "packages/runtime/src/skills.ts:133-135,159 (checksum sha256 hanya untuk informasi)"
+    ],
+    "gaps": [
+      "Sumber HTTPS tarball tidak didukung; install() melempar E_TOOL_INVALID_ARGS untuk URL non-Git (skills.ts:524-525).",
+      "Tidak ada verifikasi checksum atau signature untuk paket skill; checksum di SkillInfo hanya hash isi untuk informasi (skills.ts:133-135).",
+      "Tidak ada pratinjau manifest, permission, atau skrip sebelum instalasi (skills.ts:516-549).",
+      "Persetujuan eksplisit hanya untuk Git; folder lokal dan URL lain tidak dinilai sebagai sumber tidak tepercaya (skills.ts:521-523).",
+      "Sumber instalasi tidak dicatat: install() tidak menulis source, sehingga update() gagal bila frontmatter tidak memuat source (skills.ts:546-548, 554-555)."
+    ]
+  },
+  {
+    "id": "RC-FR-085",
+    "title": "Hapus dan update skill",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/skills.ts:591-601 (remove menghapus folder)",
+      "packages/runtime/src/skills.ts:551-589 (update)",
+      "packages/runtime/src/skills.ts:568-588 (perbandingan versi dan penulisan ulang)",
+      "packages/runtime/src/skills.ts:483-502 (rollback)",
+      "packages/cli/src/repl-commands.ts:126-127 (install-skill/update-skill NOT_YET)"
+    ],
+    "gaps": [
+      "Hapus tidak menyimpan audit: remove hanya rmSync lalu mengembalikan boolean (skills.ts:591-601).",
+      "Update tidak menolak versi lokal yang lebih baru; ia hanya berhenti bila versi sama, selain itu menimpa (skills.ts:568-588).",
+      "Update tidak menampilkan changelog atau konflik sebelum menimpa (skills.ts:577-588).",
+      "Tidak ada penundaan untuk skill yang sedang dipakai; tidak ada lock atau status in-use (skills.ts:551-589).",
+      "CLI /install-skill dan /update-skill berstatus NOT_YET sehingga alur update tidak bisa dijalankan dari sesi (repl-commands.ts:126-127)."
+    ]
+  },
+  {
+    "id": "RC-FR-086",
+    "title": "Registry tool bawaan",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:465-520 (definisi tool dan registry ToolDefinition)",
+      "packages/runtime/src/tools/index.ts:1301-1344 (shell_run), 1416-1479 (skill), 1595-1780 (database sampai messaging)",
+      "packages/runtime/src/providers/types.ts:24-28 (ToolSpec: name, description, parameters)",
+      "packages/runtime/src/policy.ts:5 (ToolRisk read/write/exec/net/admin)",
+      "packages/runtime/src/tools/index.ts:1301 (timeout default shell_run 120000)",
+      "packages/cli/src/main.ts:1887-1890 (/tools string statis)"
+    ],
+    "gaps": [
+      "ToolSpec tidak punya skema output, permission, dan timeout default; hanya name, description, parameters (providers/types.ts:24-28).",
+      "Tidak ada penanda tool tidak tersedia per platform; semua tool selalu didaftarkan (tools/index.ts:1801-1803).",
+      "/tools mencetak string statis tanpa kategori, status, izin, atau skema (main.ts:1887-1890).",
+      "Tidak ada konfigurasi project untuk mematikan tool bawaan; allowlist hanya AgentConfig.tools dari profil subagent (agent.ts:585-591, rpc.ts:788)."
+    ]
+  },
+  {
+    "id": "RC-FR-087",
+    "title": "Tool kustom dan eksternal",
+    "status": "missing",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:465-1780 (hanya definisi tool bawaan)",
+      "packages/runtime/src/tools/index.ts:1801-1827 (toolSpecs/findTool/executeTool dari array statis)",
+      "packages/cli/src/main.ts:2588-2612 (/tool list dan info)",
+      "packages/cli/src/repl-commands.ts:129 (perintah /tool terdaftar)"
+    ],
+    "gaps": [
+      "Tidak ada pemuatan modul TypeScript dari .rann/tools/; grep seluruh packages tidak menemukan referensi .rann/tools.",
+      "Tidak ada tool eksternal berbasis perintah dengan skema JSON; registry hanya array statis di tools/index.ts:465.",
+      "Tidak ada deklarasi permission dan timeout untuk tool kustom karena tidak ada mekanisme registrasi.",
+      "Tidak ada validasi skema saat registrasi tool.",
+      "`/tool test` tidak ada, dan `/tool list` memanggil RPC tool.list yang tidak terdaftar di rpc.ts (main.ts:2592)."
+    ]
+  },
+  {
+    "id": "RC-FR-088",
+    "title": "Validasi skema dan chaining",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:457-463 (parse Zod, pesan menyertakan path dan issue)",
+      "packages/runtime/src/tools.test.ts:117-121 (tes \"memvalidasi argumen dan tool tak dikenal\")",
+      "packages/runtime/src/tools/index.ts:1809-1827 (executeTool satu panggilan)",
+      "packages/runtime/src/providers/types.ts:24-28 (tidak ada skema output)"
+    ],
+    "gaps": [
+      "Output tool tidak divalidasi Zod dan ToolSpec tidak punya skema output (providers/types.ts:24-28).",
+      "Tidak ada chaining tool; executeTool hanya menjalankan satu tool (tools/index.ts:1809-1827).",
+      "Permission per langkah chaining tidak dinilai karena chaining tidak ada.",
+      "Output antara tidak disimpan sebagai artefak; addArtifact di work-repos.ts:543 tidak pernah dipanggil dari runtime."
+    ]
+  },
+  {
+    "id": "RC-FR-089",
+    "title": "Permission, timeout, retry, dan log tool",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1301-1344 (timeout shell, detached, kill process group)",
+      "packages/runtime/src/agent.ts:1095-1109 (retry whitelist read-only)",
+      "packages/runtime/src/agent.ts:862 (addToolCall dengan args ter-redaksi)",
+      "packages/runtime/src/agent.ts:892-897 (status, output, exit code, durasi)",
+      "packages/storage/src/db.ts:124-136 (tabel tool_calls tanpa trace id)",
+      "packages/runtime/src/tools/index.ts:91-92 (MAX_OUTPUT_CHARS 100000)"
+    ],
+    "gaps": [
+      "Timeout default per tool tidak ada; hanya shell_run yang punya default 120000 ms (tools/index.ts:1301).",
+      "Timeout mengembalikan {error:\"timeout\"} dengan exit 124, bukan error E_TOOL_TIMEOUT seperti AC (tools/index.ts:1341-1344).",
+      "Retry hanya daftar tool read-only di agent, bukan matriks retry per tool (agent.ts:1095-1109).",
+      "Log tool_calls tidak punya trace id; kolomnya id, session_id, turn_id, tool_name, args_json, status, exit_code, duration_ms (db.ts:124-136).",
+      "Output besar dipotong tetapi tidak disimpan sebagai artefak; addArtifact tidak dipanggil (tools/index.ts:1316-1319, work-repos.ts:543)."
+    ]
+  },
+  {
+    "id": "RC-FR-090",
+    "title": "Cakupan kategori tool",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1595 (database_query)",
+      "packages/runtime/src/tools/index.ts:1615 (document_extract)",
+      "packages/runtime/src/tools/index.ts:1631,1647 (image_info, image_transform)",
+      "packages/runtime/src/tools/index.ts:1671 (package_run), 1694 (system_info), 1705 (schedule_task), 1728 (messaging_send)",
+      "packages/runtime/src/system-tools.ts:10-29 (query read-only dan penolakan write)",
+      "packages/runtime/src/system-tools.ts:51-90 (PDF via pdftotext, DOCX/XLSX via unzip)",
+      "packages/runtime/src/system-tools.ts:92-126 (OCR tesseract, resize/crop ImageMagick)",
+      "packages/runtime/src/system-tools.test.ts:10-31 (tes database dan dokumen .md)"
+    ],
+    "gaps": [
+      "Tidak semua kategori punya tes end-to-end: image, messaging, package, scheduling, browser, web_search, dan http_request tidak diuji lewat tool.run.",
+      "Ekstraksi PDF, DOCX, dan XLSX tidak diuji; tes dokumen hanya memakai berkas .md (system-tools.test.ts:23-31).",
+      "OCR, resize, dan crop tidak diuji dan bergantung pada binary tesseract/ImageMagick (system-tools.ts:92-126).",
+      "Tidak ada tes messaging_send yang membuktikan pemakaian adapter gateway (messaging.test.ts tidak menyentuh tool)."
+    ]
+  },
+  {
+    "id": "RC-FR-091",
+    "title": "Konfigurasi dan transport MCP",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:124-146 (skema mcp.servers)",
+      "packages/runtime/src/mcp.ts:136-186 (transport stdio)",
+      "packages/runtime/src/mcp.ts:188-202 (transport HTTP)",
+      "packages/shared/src/config.ts:355-359 (config project di-merge)",
+      "packages/runtime/src/agent.ts:574-581 (kegagalan MCP tidak menjatuhkan turn)",
+      "packages/cli/src/main.ts:2418-2476 (handler /mcp add/remove/list/reload)",
+      "packages/cli/src/repl-commands.ts:130 (/mcp available=false)"
+    ],
+    "gaps": [
+      "Konfigurasi per server tidak punya field permission (config.ts:129-143).",
+      "SSE bukan transport terpisah: nilai sse diperlakukan sebagai HTTP POST dengan header Accept, bukan aliran event (mcp.ts:139-140, 204-214).",
+      "/mcp didaftarkan available=false sehingga handler add/remove/list/reload tidak bisa dipanggil dari sesi (repl-commands.ts:130, main.ts:1345-1350).",
+      "/mcp add hanya menulis command/args atau url, tanpa env, header, timeout, atau permission; /mcp remove hanya set enabled=false (main.ts:2440-2471).",
+      "Tidak ada validasi skema sebelum menyimpan; setConfigValue menulis TOML langsung dan skema baru dicek saat config dibaca (config-store.ts:49-66, config.ts:385-390)."
+    ]
+  },
+  {
+    "id": "RC-FR-092",
+    "title": "Discovery tool, resource, dan prompt",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/mcp.ts:96-134 (loadTools memanggil tools/list)",
+      "packages/runtime/src/mcp.ts:101 (prefix mcp__<server>__)",
+      "packages/runtime/src/mcp.ts:110-119 (nama, deskripsi, inputSchema)",
+      "packages/runtime/src/mcp.ts:356-378 (callTool)",
+      "packages/runtime/src/mcp.test.ts:58-70 (tes discovery dan call tool stdio)"
+    ],
+    "gaps": [
+      "Tidak ada pemanggilan resources/list atau prompts/list; hanya tools/list (mcp.ts:104).",
+      "Resource dan prompt tidak disimpan dengan metadata dan tidak bisa dibaca saat dibutuhkan.",
+      "Namespace memakai mcp__server__tool, bukan format server.tool (mcp.ts:101).",
+      "Tidak ada penanganan notifikasi perubahan daftar; hasil discovery di-cache dan hanya direset saat reload (mcp.ts:87-94, 132).",
+      "Skema tool tidak divalidasi; inputSchema yang bukan objek diganti {type:\"object\",properties:{}} dan tool tetap didaftarkan (mcp.ts:115-118)."
+    ]
+  },
+  {
+    "id": "RC-FR-093",
+    "title": "Autentikasi dan lifecycle MCP",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:136-138 (headers dan timeout_ms default 20000)",
+      "packages/runtime/src/mcp.ts:204-214 (header auth dari config atau env:)",
+      "packages/runtime/src/mcp.ts:235-256 (timeout request HTTP)",
+      "packages/runtime/src/mcp.ts:332-343 (timeout request stdio)",
+      "packages/runtime/src/mcp.ts:178-182 (proses exit menghapus state)"
+    ],
+    "gaps": [
+      "OAuth 2.1 tidak ada; tidak ada alur browser/device flow maupun penyimpanan token di secret store.",
+      "Tidak ada restart otomatis dengan backoff; proses yang exit hanya menghapus state dan tidak dicoba ulang (mcp.ts:178-182).",
+      "Tidak ada status connecting/ready/degraded/failed/disabled; mcp.list hanya melaporkan enabled dari config (rpc.ts:695-702).",
+      "Default timeout 20 detik, bukan 30 detik seperti requirement (config.ts:138)."
+    ]
+  },
+  {
+    "id": "RC-FR-094",
+    "title": "Permission dan isolasi MCP",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1810-1822 (tool MCP selalu risk exec)",
+      "packages/runtime/src/mcp.ts:142-151 (env whitelist PATH/HOME/TEMP/LANG)",
+      "packages/runtime/src/mcp.ts:153-158 (server stdio proses terpisah)",
+      "packages/runtime/src/mcp.ts:368-377 (output dikembalikan apa adanya)",
+      "packages/runtime/src/mcp.ts:380-388 (close seluruh server)"
+    ],
+    "gaps": [
+      "Permission tool MCP tidak ditentukan konfigurasi server; executeTool selalu memakai risk exec (tools/index.ts:1812-1819).",
+      "Tidak ada pembatasan filesystem untuk server MCP; cwd diset tetapi server tetap bisa membaca path absolut (mcp.ts:153-155).",
+      "Output MCP tidak ditandai sebagai konten tidak tepercaya; teks dikembalikan apa adanya ke model (mcp.ts:368-377).",
+      "Tidak ada cara mematikan satu server tanpa menghentikan sesi; mcp.reload menutup seluruh manager (mcp.ts:380-388, rpc.ts:710-712)."
+    ]
+  },
+  {
+    "id": "RC-FR-095",
+    "title": "Instalasi dan registrasi plugin",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/plugins.ts:9-20 (manifest name, version, apiVersion, entry, permissions)",
+      "packages/runtime/src/plugins.ts:108-139 (validateManifest)",
+      "packages/runtime/src/plugins.ts:267-291 (instalasi folder)",
+      "packages/runtime/src/plugins.ts:293-325 (tarball HTTPS dengan checksum)",
+      "packages/runtime/src/plugins.ts:259-265 (penolakan nama bentrok)",
+      "packages/cli/src/main.ts:1391-1398 (/plugins menampilkan status, versi, permission)",
+      "packages/runtime/src/plugins.test.ts:52-64 (tes \"memasang plugin nonaktif lalu bisa diaktifkan\")"
+    ],
+    "gaps": [
+      "Plugin berstatus installed masih bisa dipanggil karena invoke menerima installed atau enabled (plugins.ts:410), jadi tidak benar-benar nonaktif sampai diaktifkan."
+    ]
+  }
+]

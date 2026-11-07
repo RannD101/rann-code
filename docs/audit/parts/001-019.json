@@ -1,0 +1,336 @@
+[
+  {
+    "id": "RC-FR-001",
+    "title": "REPL interaktif",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:124-130 tanpa argumen memilih chatCommand hanya jika stdin dan stdout TTY, selain itu jatuh ke help",
+      "packages/cli/src/main.ts:1142-1145 header mencetak cwd, branch, session id 8 karakter, model, dan mode izin",
+      "packages/cli/src/main.ts:1035-1057 prompt memakai LineEditor dengan palette, completer, history, dan statusPrompt",
+      "packages/cli/src/main.ts:901-913 ekstraksi @path, main.ts:1264-1310 shell ! dan !!, main.ts:2106-2115 lampiran /attach",
+      "packages/cli/src/stream.ts:74-84 spinner mengirim dan menunggu model, stream.ts:262-284 spinner tool",
+      "packages/cli/src/line-editor.ts:684-705 Ctrl+D menutup hanya saat buffer kosong; line-editor.ts:678-682 menangani Ctrl+D saat sibuk",
+      "packages/cli/src/main.ts:1110-1115 pilihan Ctrl+D saat sibuk: tunggu, batalkan, keluar"
+    ],
+    "gaps": [
+      "Butir 1: `rann` tanpa argumen dengan stdout bukan TTY mencetak help (main.ts:128-130), bukan menjalankan mode non-interaktif.",
+      "Butir 4: fase status hanya mengirim, menunggu model, dan blok tool (stream.ts:74, 84, 262); tidak ada fase memverifikasi dan selesai.",
+      "Butir 5: Ctrl+D saat turn berjalan hanya menawarkan tunggu, batalkan, atau keluar (main.ts:1110-1115); tidak ada pilihan membiarkan turn berjalan di background.",
+      "AC: header baru dicetak setelah ensureDaemon dan session.create (main.ts:918-960), sehingga tampil dalam 1 detik tidak dijamin dan tidak diuji."
+    ]
+  },
+  {
+    "id": "RC-FR-002",
+    "title": "Slash command registry",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/repl-commands.ts:17-32 ReplCommand menyimpan nama, alias, usage, deskripsi, kategori, permission, arguments, optionalParams, output, errors, handler, docs, available, source",
+      "packages/cli/src/repl-commands.ts:44-77 arguments dan optionalParams diturunkan dari usage, output dan errors diisi per registry",
+      "packages/cli/src/repl-commands.ts:195-207 registerCommands mencatat konflik nama dan menimpa entri lama",
+      "packages/cli/src/custom-commands.ts:132-158 loadCustomCommands membaca global dan project, project menang atas global, nama inti ditolak",
+      "packages/cli/src/main.ts:945-955 direktori ~/.rann/commands dan .rann/commands dimuat ulang saat pindah project",
+      "packages/cli/src/main.ts:1037-1050 palette dibangun dari REPL_COMMANDS yang tersedia dan command kustom",
+      "packages/cli/src/line-editor.ts:484-486 Ctrl+K membuka palette; line-editor.ts:754-768 palette memakai fuzzy dan dibatasi 12 item",
+      "packages/cli/src/custom-commands.test.ts:57-70 memuat global dan project dengan prioritas project",
+      "packages/cli/src/custom-commands.test.ts:72-78 menolak nama yang bentrok dengan command inti"
+    ],
+    "gaps": [
+      "Butir 2: mengetik `/` tidak membuka palette; palette hanya dibuka Ctrl+K (line-editor.ts:484-486), sedangkan `/` hanya disisipkan sebagai karakter biasa.",
+      "Butir 3: palette menyaring command tidak tersedia (main.ts:1038) dan opsi `hideUnavailable` tidak ada; daftar lengkap dengan alasan hanya muncul di `/help` (main.ts:1236-1250).",
+      "Butir 4: command project tidak bisa menimpa command bawaan karena loader menolak nama inti (custom-commands.ts:143-146), sehingga prioritas project di atas bawaan tidak berlaku.",
+      "AC: palette tidak muncul saat `/` ditekan, jadi AC palette < 100 ms tidak terpenuhi meskipun pencarian fuzzy di palette berfungsi."
+    ]
+  },
+  {
+    "id": "RC-FR-003",
+    "title": "Autocomplete dan fuzzy search",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/repl-commands.ts:230-255 scoreCommand mencocokkan nama, alias, deskripsi, kategori, dan subsequence dengan typo",
+      "packages/cli/src/repl-commands.ts:251-254 hasil difilter skor dan diurutkan relevansi, lalu dibatasi 50",
+      "packages/cli/src/main.ts:1068-1098 completer kontekstual untuk model, provider, permission, theme, resume/history, skill, dan path",
+      "packages/cli/src/line-editor.ts:820-875 panah memindahkan pilihan overlay, Tab melengkapi, Enter memilih, Esc menutup",
+      "packages/cli/src/main.ts:1339-1342 command slash tak dikenal menampilkan tiga saran terdekat",
+      "packages/cli/src/repl-commands.test.ts:20-28 mencari perintah dengan typo dan sinonim",
+      "packages/cli/src/repl-commands.test.ts:30-34 melengkapi nama perintah untuk readline"
+    ],
+    "gaps": [
+      "Butir 2: autocomplete tidak mencakup task dan MCP server; cabang kontekstual hanya model, provider, permission, theme, resume/history, skill, attach/files/export (main.ts:1068-1098).",
+      "Butir 5: saat Tab tidak menemukan kandidat, line editor hanya render ulang tanpa saran terdekat (line-editor.ts:829-833); saran terdekat hanya untuk command slash tak dikenal (main.ts:1339-1342)."
+    ]
+  },
+  {
+    "id": "RC-FR-004",
+    "title": "Keyboard shortcuts",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/line-editor.ts:412-515 handleAction menangani Enter, newline, Ctrl+C, Ctrl+D, Ctrl+L, Ctrl+R, Ctrl+O, Ctrl+E, Ctrl+K, panah, dan scroll",
+      "packages/cli/src/line-editor.ts:80-105 peta escape sequence untuk Enter, Shift+Enter, Ctrl+J, Ctrl+R, Ctrl+O, Ctrl+E, Ctrl+K, PgUp, PgDn",
+      "packages/cli/src/main.ts:1215-1232 `/help keys` menampilkan tabel shortcut dan status",
+      "packages/cli/src/main.ts:1015-1025 disabledShortcuts dibaca dari config atau RANN_DISABLED_SHORTCUTS",
+      "packages/cli/src/line-editor.ts:39 opsi disabledShortcuts tersedia di LineEditor"
+    ],
+    "gaps": [
+      "Butir 3: PgUp dan PgDn ditandai \"pakai scrollback terminal\" (main.ts:1229) tetapi tidak dideteksi sebagai tidak tersedia; tidak ada penanda terminal yang tidak mendukung.",
+      "Butir 4: `disabledShortcuts` dibaca (main.ts:1015-1025) tetapi tidak pernah diperiksa di handleAction (line-editor.ts:412-515), sehingga menonaktifkan shortcut tidak berpengaruh."
+    ]
+  },
+  {
+    "id": "RC-FR-005",
+    "title": "Multiline input dan editor eksternal",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/line-editor.ts:121 batas MAX_INPUT_CHARS 100.000",
+      "packages/cli/src/line-editor.ts:565-574 input di atas batas ditolak dengan pesan memakai lampiran berkas",
+      "packages/cli/src/line-editor.ts:460-463 newline menambah baris tanpa submit",
+      "packages/cli/src/line-editor.ts:340-350 dan 360-380 bracketed paste dan input multi-baris tidak langsung submit",
+      "packages/cli/src/line-editor.ts:878-916 Ctrl+E membuka RANN_EDITOR/VISUAL/EDITOR, membatalkan bila exit bukan 0, dan menyimpan hasil ke buffer",
+      "packages/cli/src/line-editor.ts:922-990 render multi-baris dengan prefix dua spasi untuk baris lanjutan"
+    ],
+    "gaps": [
+      "Butir 4: multiline hanya diberi prefix dua spasi (line-editor.ts:978); tidak ada syntax highlight dasar untuk blok kode di editor."
+    ]
+  },
+  {
+    "id": "RC-FR-006",
+    "title": "Input history",
+    "status": "done",
+    "evidence": [
+      "packages/cli/src/history.ts:42 maxEntries 1.000 dan file per project dari hash cwd",
+      "packages/cli/src/history.ts:27-29 prompt private dan pola secret ditolak sebelum disimpan",
+      "packages/cli/src/history.ts:90-95 add menolak private/secret, menghindari duplikat, dan memotong ke 1.000 entri",
+      "packages/cli/src/history.ts:97-110 search memfilter tanggal dan fuzzy",
+      "packages/cli/src/line-editor.ts:452-458 panah atas/bawah menelusuri riwayat; line-editor.ts:496-497 Ctrl+R membuka pencarian fuzzy",
+      "packages/cli/src/main.ts:2055-2081 `/history` menampilkan daftar, clear, limit, search, since, dan until",
+      "packages/runtime/src/paths.ts:52 historyDir berada di profileDir, sehingga terpisah antar profil",
+      "packages/cli/src/history.test.ts:20-33 menyimpan dan memuat ulang per proyek serta memisahkan folder",
+      "packages/cli/src/history.test.ts:35-48 tidak menyimpan prompt privat atau rahasia",
+      "packages/cli/src/history.test.ts:50-56 mencari dengan fuzzy dan batas waktu"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-007",
+    "title": "Streaming response",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/stream.ts:113-134 buffer teks dan flush setiap 33 ms",
+      "packages/cli/src/stream.ts:219-224 message.delta masuk queueText",
+      "packages/cli/src/stream.ts:233-240 reasoning.delta ditampilkan sebagai blok [reasoning]",
+      "packages/cli/src/stream.ts:160-180 onClose mencetak [stream terputus] dan menyelesaikan turn gagal",
+      "packages/cli/src/markdown.ts:33-56 MarkdownStream hanya merender baris yang sudah lengkap",
+      "packages/cli/src/markdown.test.ts:20-24 hanya mengeluarkan baris yang sudah selesai"
+    ],
+    "gaps": [
+      "Butir 2: koneksi putus hanya mencetak `[stream terputus]` dan saran `/resume` (stream.ts:166-178); tidak ada pilihan lanjut atau ulangi.",
+      "Butir 3: reasoning ditampilkan sebagai blok `[reasoning]` (stream.ts:233-240) tanpa mekanisme lipat.",
+      "Butir 5: tidak ada reconnect; onClose langsung menyelesaikan turn gagal (stream.ts:160-180), jadi perilaku saat reconnect tidak diimplementasikan."
+    ]
+  },
+  {
+    "id": "RC-FR-008",
+    "title": "Live tool execution display",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/stream.ts:255-265 tool.start menampilkan nama, args ringkas, dan diff edit",
+      "packages/cli/src/stream.ts:276-284 tool.end menampilkan status, durasi, exit code, dan ringkasan 240 karakter",
+      "packages/cli/src/main.ts:1118-1135 Ctrl+O mengambil pesan tool turn terakhir, menyimpan output > 20.000 karakter sebagai artefak",
+      "packages/cli/src/edit-preview.ts:1-80 menghitung diff dan jumlah baris tambah/hapus",
+      "packages/cli/src/edit-preview.test.ts:20-35 menghitung baris tambah dan hapus untuk fs_edit dan write_file"
+    ],
+    "gaps": [
+      "Butir 2: output tool tidak ditampilkan dalam keadaan terlipat; yang tampil hanya ringkasan 240 karakter (stream.ts:278-284), output penuh baru diambil saat Ctrl+O dan artefak hanya dibuat jika > 20.000 karakter (main.ts:1128-1134).",
+      "Butir 3: blok shell menampilkan args dan exit code (stream.ts:276-284), tetapi tidak menampilkan working directory.",
+      "Butir 5: tool yang ditolak hanya mengirim status error dan error_code (agent.ts:964), tanpa alasan policy; blok tool.end tidak menampilkan pesan penolakan."
+    ]
+  },
+  {
+    "id": "RC-FR-009",
+    "title": "Task dan agent progress",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/stream.ts:303-311 plan.update mencetak status dan jumlah langkah",
+      "packages/cli/src/stream.ts:313-322 task.update menghitung selesai, aktif, counter x/y, dan waktu berjalan",
+      "packages/runtime/src/plan-runtime.ts:81-100 task queued dan running dipublikasikan",
+      "packages/runtime/src/plan-runtime.ts:180-199 task selesai dipublikasikan sebagai done",
+      "packages/cli/src/main.ts:2482-2493 `/tasks` menampilkan plan dan status tiap task",
+      "packages/runtime/src/plan-runtime.test.ts:75-98 menjalankan task sesuai dependensi DAG dan menandai blocked",
+      "packages/runtime/src/plan-runtime.test.ts:121-137 memverifikasi perintah dan file, lalu melaporkan gap"
+    ],
+    "gaps": [
+      "Butir 3: tidak ada penanda `replan`; plan.update hanya menerima status draft, active, blocked, done, failed, atau cancelled (stream.ts:303-311).",
+      "Butir 4: counter task done mencapai x/y sebelum verifyPlanLive dijalankan (stream.ts:306-310, agent.ts:790), sehingga 100 persen bisa tampil sebelum verifikasi.",
+      "Butir 5: task background tidak punya notifikasi; `/tasks` hanya membaca plan.list (main.ts:2482-2493)."
+    ]
+  },
+  {
+    "id": "RC-FR-010",
+    "title": "Status bar",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:990-1005 statusPrompt menampilkan model, provider:status, branch, durasi, token, in/out, persen ctx, biaya turn, biaya hari, dan mode izin",
+      "packages/cli/src/main.ts:1003 model tanpa harga memakai `$?`",
+      "packages/cli/src/main.ts:1000 zona ctx hijau < 50, kuning 50-89, merah >= 90",
+      "packages/cli/src/main.ts:1164-1168 status provider diambil dari provider.list",
+      "packages/cli/src/main.ts:1005 status bar disembunyikan saat lebar < 64"
+    ],
+    "gaps": [
+      "Butir 3: hanya tiga zona warna; 50-74 dan 75-89 sama-sama kuning (main.ts:1000), zona oranye tidak ada.",
+      "Butir 4: status provider ditampilkan (main.ts:1164-1168), tetapi fallback yang sedang aktif tidak ditampilkan.",
+      "Butir 5: tidak ada pembacaan config untuk mematikan status bar; yang ada hanya pemendekan saat width < 64 (main.ts:1005)."
+    ]
+  },
+  {
+    "id": "RC-FR-011",
+    "title": "Approval dialog",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:866-886 dialog menampilkan tool, args, target, dampak, dan diff",
+      "packages/cli/src/main.ts:888-898 pilihan izinkan sekali, selalu izinkan pola dalam sesi, dan tolak; Enter jatuh ke tolak",
+      "packages/cli/src/ui.ts:211-230 chooseWith memakai fallback deny dan menerima n atau Esc sebagai tolak",
+      "packages/runtime/src/agent.ts:1115-1129 appendAudit mencatat approval.decision, args, dan remember",
+      "packages/runtime/src/rpc.ts:1443-1455 pola approval disimpan per sesi",
+      "packages/runtime/src/daemon.test.ts:71-131 meminta izin lewat event dan mengingat pilihan selalu"
+    ],
+    "gaps": [
+      "Butir 1: args dipotong 2.000 karakter di dialog (main.ts:877), jadi args lengkap tidak selalu tampil.",
+      "Butir 2: shell menampilkan perintah tetapi tidak cwd; jaringan hanya menampilkan target, bukan metode (main.ts:866-886).",
+      "Butir 4: audit approval.decision mencatat args dan remember (agent.ts:1119-1128), tetapi tidak mencatat alasan keputusan."
+    ]
+  },
+  {
+    "id": "RC-FR-012",
+    "title": "Interrupt, cancel, dan resume",
+    "status": "done",
+    "evidence": [
+      "packages/cli/src/line-editor.ts:684-705 Ctrl+C sekali mengosongkan buffer, dua kali dalam 2 detik membatalkan, tiga kali exit 130",
+      "packages/cli/src/main.ts:1107-1112 onCancel memanggil session.cancel",
+      "packages/runtime/src/rpc.ts:1191-1200 abort mengirim SIGTERM lalu SIGKILL ke process group shell",
+      "packages/runtime/src/tools/index.ts:1335-1338 killTree mematikan process group tool shell",
+      "packages/runtime/src/agent.ts:863-877 checkpoint pre_tool menyimpan langkah, plan, tool, dan args sebelum tool",
+      "packages/cli/src/main.ts:2260-2294 `/resume` membaca checkpoint.latest dan mengirim lanjutan turn yang dibatalkan",
+      "packages/runtime/src/rpc.ts:592-596 background.cancel membatalkan job tanpa menghentikan daemon",
+      "packages/runtime/src/tools.test.ts:46-72 menolak lease milik sesi lain dan mencatat edit dalam transaksi"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-013",
+    "title": "Terminal resize dan fallback",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/line-editor.ts:254-260 event resize dipasang dan dilepas",
+      "packages/cli/src/line-editor.ts:922-1006 layout menghitung ulang baris, lebar, dan posisi cursor dari process.stdout.rows/columns",
+      "packages/cli/src/line-editor.ts:192 mode interaktif dimatikan untuk TERM=dumb atau screen reader",
+      "packages/cli/src/line-editor.ts:294-305 fallback readline untuk non-TTY, TERM=dumb, atau screen reader",
+      "packages/cli/src/main.ts:1004-1005 status prompt disembunyikan saat lebar < 64",
+      "packages/cli/src/ui.ts:135-160 displayWidth menghitung CJK, emoji, dan karakter lebar",
+      "packages/cli/src/ui.test.ts:5-10 menghitung lebar karakter lebar dan escape"
+    ],
+    "gaps": [
+      "Butir 3: `NO_COLOR` hanya mematikan warna (ui.ts:39-41), tetapi LineEditor tetap menulis escape cursor seperti `\\u001b[0J` dan `\\u001b[C` (line-editor.ts:992-1006), termasuk saat `--no-color`.",
+      "Butir 4: tidak ada jalur fallback saat renderer TUI gagal dimuat; LineEditor hanya memakai readline untuk non-TTY, TERM=dumb, atau screen reader (line-editor.ts:192, 294)."
+    ]
+  },
+  {
+    "id": "RC-FR-014",
+    "title": "Non-interactive mode",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:124-128 `rann -p` dan prompt posisional memanggil runPrompt tanpa chatCommand",
+      "packages/cli/src/main.ts:768-790 runPrompt membaca stdin dan mengirim satu turn",
+      "packages/cli/src/main.ts:792-795 resolveOutputFormat menerima text, json, stream-json, dan ndjson",
+      "packages/cli/src/main.ts:802-825 payload json berisi text, result, sessionId, taskId, status, steps, usage, dan error",
+      "packages/cli/src/stream.ts:71 ndjson dipetakan ke stream-json; stream.ts:136 menulis satu objek JSON per baris",
+      "packages/cli/src/main.ts:850 dan 1187 hasil turn dikembalikan sebagai 0 atau 1",
+      "packages/shared/src/errors.ts:48-77 pemetaan exit code per ErrorCode"
+    ],
+    "gaps": [
+      "Butir 5: exit code turn hanya 0 atau 1 (main.ts:850, 1187); tabel ARCHITECTURE 13.4 tidak dipakai, misalnya E_PERMISSION dipetakan 5 dan E_BUDGET_EXHAUSTED 4 di errors.ts:55,77, sedangkan tabel meminta 3 dan 5."
+    ]
+  },
+  {
+    "id": "RC-FR-015",
+    "title": "Piped input dan output",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:758-765 readPipedStdin membaca stdin non-TTY, menolak byte NUL, dan mengembalikan teks",
+      "packages/cli/src/main.ts:769-770 isi stdin ditempel sebagai konteks tambahan setelah prompt argumen",
+      "packages/cli/src/main.ts:1179-1188 chatCommand membaca stdin sebagai prompt bila stdin bukan TTY",
+      "packages/cli/src/main.ts:3780-3786 EPIPE pada stdout dan stderr keluar tanpa stack trace",
+      "packages/cli/src/stream.ts:126-136 output teks dan stream-json ditulis ke stdout, log tool ke stderr"
+    ],
+    "gaps": [
+      "Butir 1: isi stdin dipotong 200.000 karakter tanpa peringatan (main.ts:770), sehingga konteks besar hilang diam-diam.",
+      "Butir 4: deteksi biner hanya `buffer.includes(0)` (main.ts:764); berkas biner tanpa byte NUL lolos sebagai teks, sedangkan gambar tetap didukung lewat @path."
+    ]
+  },
+  {
+    "id": "RC-FR-016",
+    "title": "Tema dan aksesibilitas",
+    "status": "done",
+    "evidence": [
+      "packages/cli/src/ui.ts:20-43 tema dark, light, auto, custom dan NO_COLOR/FORCE_COLOR/RANN_NO_COLOR",
+      "packages/cli/src/ui.ts:72-93 loadThemeFile memvalidasi token warna custom",
+      "packages/cli/src/ui.ts:24-35 contrastRatio menghitung kontras WCAG",
+      "packages/cli/src/ui.test.ts:24-29 tema gelap dan terang memenuhi kontras teks utama di atas 7:1",
+      "packages/cli/src/main.ts:110-116 `--no-color` dan `--theme` diterapkan sebelum render",
+      "packages/cli/src/ui.ts:242-262 Spinner menulis label statis tanpa animasi saat NO_COLOR, screen reader, atau non-TTY",
+      "packages/cli/src/main.ts:1215-1229 `/help keys` memakai teks status, bukan hanya warna"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-017",
+    "title": "Shell passthrough",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1264-1271 `!` dan `!!` dipisahkan; perintah kosong ditolak",
+      "packages/cli/src/main.ts:1275-1284 shell dijalankan dengan cwd process.cwd dan timeout 120 detik",
+      "packages/cli/src/main.ts:1286-1295 output > 100.000 karakter dipotong 6.000 karakter dan disimpan sebagai artefak",
+      "packages/cli/src/main.ts:1298-1310 exit code dicetak; `!!` mengirim output ke model, `!` tidak",
+      "packages/cli/src/main.ts:1271-1274 regex perintah berbahaya meminta konfirmasi kecuali mode trusted"
+    ],
+    "gaps": [
+      "Butir 3: `!` tidak memakai policy izin tool shell; mode read-only tidak dicek dan yang diperiksa hanya regex perintah berbahaya (main.ts:1271-1274).",
+      "Butir 5: deteksi perintah berbahaya hanya regex terbatas (main.ts:1271), sehingga perintah berisiko di luar pola itu tidak meminta konfirmasi."
+    ]
+  },
+  {
+    "id": "RC-FR-018",
+    "title": "Project dan session switching",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2317-2329 `/project` menampilkan project dari project.list dan menandai project aktif",
+      "packages/cli/src/main.ts:2338-2358 `/project switch` membuat sesi baru, chdir, memuat ulang history, command kustom, dan tema",
+      "packages/runtime/src/agent.ts:451-452 RANN.md dimuat dari workspaceRoot saat turn berjalan",
+      "packages/cli/src/main.ts:2260-2314 `/resume` berganti sessionId tanpa menutup sesi lama",
+      "packages/cli/src/main.ts:2477-2481 `/sessions` mencetak id dan title",
+      "packages/runtime/src/daemon.ts:51 config dimuat sekali saat daemon start"
+    ],
+    "gaps": [
+      "Butir 2: config project tidak dimuat ulang saat pindah project; daemon memuat config sekali saat start (daemon.ts:51) dan session.create memakai config global (rpc.ts:1326-1336).",
+      "Butir 3: `/sessions` hanya mencetak id dan title (main.ts:2477-2481), tanpa status dan waktu terakhir.",
+      "Butir 5: draft input hilang karena command `/project` atau `/resume` dikirim sebagai satu baris dan buffer editor di-reset (line-editor.ts:597-610); tidak ada penyimpanan draft."
+    ]
+  },
+  {
+    "id": "RC-FR-019",
+    "title": "Lampiran dan multimodal input",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/attachments.ts:24-25 batas 20 MB per lampiran dan 50 MB total",
+      "packages/runtime/src/attachments.ts:72-105 validasi path, folder, symlink, ukuran, dan total",
+      "packages/runtime/src/attachments.ts:83-92 path di luar workspace ditolak dengan E_PERMISSION",
+      "packages/runtime/src/attachments.ts:108-120 hash sha256 dan salinan artefak dengan nama hash",
+      "packages/runtime/src/rpc.ts:1399-1406 model non-vision menolak gambar dengan E_UNSUPPORTED dan saran /model",
+      "packages/runtime/src/agent.ts:221-232 gambar dikirim sebagai base64 ke provider; database menyimpan AttachmentRef di content_json (agent.ts:382)",
+      "packages/cli/src/main.ts:901-913 `@path` diekstrak dari prompt",
+      "packages/runtime/src/attachments.test.ts:18-64 menguji artefak berhash, gambar magic bytes, path luar workspace, dan batas 50 MB"
+    ],
+    "gaps": [
+      "Butir 1: `@path` yang tidak ada dilewati diam-diam di CLI (main.ts:909), sehingga path tidak divalidasi dan prompt tetap dikirim tanpa lampiran.",
+      "AC: `@path` tidak menampilkan konfirmasi lampiran; hanya `/attach` yang mencetak status (main.ts:2114), sedangkan extractAttachments tidak mencetak apa pun (main.ts:901-913)."
+    ]
+  }
+]

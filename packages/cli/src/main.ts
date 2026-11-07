@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { RannError, loadConfig, providerFor, toRannError } from "@rann/shared";
+import { RannError, exitCodeFor, loadConfig, providerFor, toRannError, type ErrorCode } from "@rann/shared";
 import { destructiveReason } from "@rann/runtime";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
 import { createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
@@ -847,7 +847,8 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
       };
       process.stdout.write(`${JSON.stringify(payload)}\n`);
     }
-    return result.ok ? 0 : 1;
+    if (result.ok) return 0;
+    return result.error ? (exitCodeFor(result.error.code as ErrorCode) ?? 1) : 1;
   } finally {
     client.close();
   }
@@ -1184,7 +1185,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         ...(permissionMode ? { permissionMode } : {}),
         ...(onApproval ? { onApproval } : {})
       });
-      return result.ok ? 0 : 1;
+      if (result.ok) return 0;
+      return result.error ? (exitCodeFor(result.error.code as ErrorCode) ?? 1) : 1;
     }
 
     header();
@@ -1446,19 +1448,36 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             for (const skill of skills) {
               print(`${String(skill.name)}  [${String(skill.scope)}] ${String(skill.description).slice(0, 70)}`);
             }
+            const conflicts = await client.request<Array<Record<string, unknown>>>("skill.conflicts", { projectPath: process.cwd() });
+            for (const conflict of conflicts) print(ui.yellow(`bentrok ${String(conflict.name)}: ${(conflict.scopes as string[]).join(" + ")} (project menang)`));
           }
           continue;
         }
         if (line.startsWith("/skill ")) {
-          const name = line.slice(7).trim();
-          if (name.length === 0) {
-            print("Pakai: /skill <nama>");
+          const parts = line.slice(7).trim().split(/\s+/);
+          const sub = parts[0] ?? "";
+          if (sub === "info") {
+            const name = parts[1];
+            if (!name) {
+              print("Pakai: /skill info <nama>");
+              continue;
+            }
+            const skill = await client.request<Record<string, unknown>>("skill.view", { projectPath: process.cwd(), name });
+            const info = await client.request<Record<string, unknown>>("skill.history", { projectPath: process.cwd(), name });
+            print(`${String(skill.name)}  versi ${String(skill.version)}  scope ${String(skill.scope)}  aktif ${skill.active === true ? "ya" : "tidak"}`);
+            print(`deskripsi: ${String(skill.description)}`);
+            print(`trigger: ${(skill.triggers as string[] | undefined)?.join(", ") ?? "-"}`);
+            print(`dependensi: ${(skill.dependencies as string[] | undefined)?.join(", ") ?? "-"}`);
+            print(`checksum: ${String(skill.checksum ?? "-")}`);
+            print(`riwayat: ${((info.versions as unknown[] | undefined) ?? []).length} versi`);
             continue;
           }
-          const skill = await client.request<Record<string, unknown>>("skill.view", {
-            projectPath: process.cwd(),
-            name
-          });
+          const name = sub;
+          if (name.length === 0) {
+            print("Pakai: /skill <nama> atau /skill info <nama>");
+            continue;
+          }
+          const skill = await client.request<Record<string, unknown>>("skill.view", { projectPath: process.cwd(), name });
           print(String(skill.body ?? ""));
           continue;
         }
@@ -2717,6 +2736,23 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const file = join(resolveHome(), "feedback.jsonl");
           writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), text })}\n`, { flag: "a", mode: 0o600 });
           print(ui.green(`masukan disimpan lokal di ${file}`));
+          continue;
+        }
+        if (line === "/rename" || line.startsWith("/rename ")) {
+          const title = line.slice(7).trim();
+          if (title.length === 0) {
+            print(ui.yellow("Pakai: /rename <judul baru>"));
+            continue;
+          }
+          const result = await client.request<Record<string, unknown>>("session.rename", { sessionId, title });
+          print(ui.green(`sesi diganti nama: ${String(result.title)}`));
+          continue;
+        }
+        if (line === "/fork" || line.startsWith("/fork ")) {
+          const title = line.slice(5).trim();
+          const result = await client.request<Record<string, unknown>>("session.fork", { sessionId, ...(title.length > 0 ? { title } : {}) });
+          sessionId = String(result.id);
+          print(ui.green(`sesi dicabang ke ${sessionId}`));
           continue;
         }
         if (line === "/cancel") {

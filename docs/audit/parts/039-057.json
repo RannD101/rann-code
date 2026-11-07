@@ -1,0 +1,339 @@
+[
+  {
+    "id": "RC-FR-039",
+    "title": "Analisis kegagalan dan verifikasi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/planner.ts:10 mendefinisikan CriterionType test, build, runtime, file, diff, dan manual.",
+      "packages/runtime/src/agent.ts:791 memanggil verifyPlanLive sebelum turn difinalisasi.",
+      "packages/runtime/src/agent.ts:794 membatasi penolakan premature hanya dua kali, lalu packages/runtime/src/agent.ts:828 tetap finalize(\"done\") meski gap verifikasi ada.",
+      "packages/runtime/src/plan-runtime.ts:530-558 memeriksa file, diff di file_changes, dan menjalankan perintah verifikasi.",
+      "packages/runtime/src/failure-analysis.ts:17-22 hanya memuat category, retryable, cause, dan action.",
+      "packages/storage/src/db.ts:81 status turn hanya queued, running, done, failed, cancelled."
+    ],
+    "gaps": [
+      "Verifikasi hanya berjalan jika ada plan aktif; turn tanpa plan bisa selesai tanpa menjalankan kriteria apa pun.",
+      "Setelah dua percobaan premature, turn tetap berstatus done meski gap verifikasi masih ada; tidak ada status verifying.",
+      "Laporan kegagalan tidak memuat langkah yang sudah dicoba dan hipotesis, hanya cause dan action.",
+      "Laporan sukses tidak merangkum file yang berubah, perintah verifikasi, dan hasil perintahnya.",
+      "Tidak ada status unverified; gap verifikasi hanya ditempel sebagai teks 'Belum diverifikasi'."
+    ]
+  },
+  {
+    "id": "RC-FR-040",
+    "title": "Eksplorasi repository",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/project-map.ts:266-306 buildProjectMap memindai berkas dan menghasilkan direktori, bahasa, package manager, framework, entry point, serta perintah.",
+      "packages/runtime/src/project-map.ts:4-23 mengecualikan node_modules, .git, dist, build, dan direktori artefak lain.",
+      "packages/runtime/src/project-map.ts:182-188 mendeteksi package manager dari lockfile.",
+      "packages/runtime/src/project-map.test.ts:31 tes 'mendeteksi bahasa, package manager, perintah, dan entry point'.",
+      "packages/runtime/src/project-map.test.ts:45 tes 'menyimpan dan memuat peta, lalu membangun ulang saat refresh'.",
+      "packages/cli/src/main.ts:3763-3774 initCommand menulis peta ke .rann/project-map.json."
+    ],
+    "gaps": [
+      "README tidak dibaca atau diringkas; .md hanya dihitung sebagai bahasa Markdown di packages/runtime/src/project-map.ts:56.",
+      "Tidak ada pembaruan incremental; packages/runtime/src/project-map.ts:332-337 memakai cache atau membangun ulang seluruh peta.",
+      "Saat deteksi ambigu, packages/runtime/src/project-map.ts:285-288 hanya mencatat asumsi tanpa meminta konfirmasi ke pengguna.",
+      "Tidak ada uji atau bukti waktu pemindaian 5.000 berkas dalam 30 detik."
+    ]
+  },
+  {
+    "id": "RC-FR-041",
+    "title": "Pencarian kode semantik",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/code-tools.ts:99-191 searchCode memindai teks dan mengembalikan path, line, column, text, serta reason.",
+      "packages/runtime/src/code-tools.ts:116 memperlakukan query sebagai literal kecuali regex=true.",
+      "packages/runtime/src/code-tools.ts:137 hanya memakai IGNORED hardcoded, bukan .gitignore.",
+      "packages/runtime/src/code-tools.ts:180-182 memberi note saat hasil kosong.",
+      "packages/runtime/src/code-tools.test.ts:19 tes 'mencari teks, menghormati ignore, dan membatasi hasil'.",
+      "packages/cli/src/repl-commands.ts:148 perintah /index masih berstatus NOT_YET."
+    ],
+    "gaps": [
+      "Tidak ada indeks simbol tree-sitter atau vektor knowledge chunk; pencarian hanya grep/substring, jadi AC pencarian semantik tidak terpenuhi.",
+      "Pencarian tidak menghormati .gitignore; hanya daftar direktori hardcoded di packages/runtime/src/code-tools.ts:7-26.",
+      "Hasil tidak diberi skor relevansi; urutan hanya urutan berkas dan baris.",
+      "/index rebuild belum tersedia sehingga indeks tidak bisa dibangun ulang."
+    ]
+  },
+  {
+    "id": "RC-FR-042",
+    "title": "Operasi file dasar",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1792-1798 mendaftarkan read_file, write_file, edit_file, delete_file, list_dir, dan stat_file sebagai alias tool fs_*.",
+      "packages/runtime/src/policy.ts:127-134 resolveInsideWorkspace menolak path keluar workspace setelah realpath.",
+      "packages/runtime/src/tools/index.ts:470-509 fs_read mengembalikan sha256 isi berkas.",
+      "packages/runtime/src/tools/index.ts:754-780 fs_delete memindahkan target ke .rann/trash.",
+      "packages/runtime/src/tools/index.ts:165-186 recordChanges menulis hash dan diff ke file_changes.",
+      "packages/runtime/src/tools.test.ts:74 tes 'menolak path keluar workspace' dan packages/runtime/src/tools.test.ts:237 tes 'memindahkan berkas ke trash dan menemukan berkas lewat glob'."
+    ],
+    "gaps": [
+      "write_file/fs_write tidak menerbitkan expected_sha256 di skema publik, sehingga penolakan menimpa berkas yang berubah tidak otomatis terikat pada hasil baca.",
+      "Tidak ada mode hard untuk delete_file; fs_delete selalu memindahkan ke trash.",
+      "Audit file_changes hanya mencakup fs_write, fs_edit, dan apply_patch; fs_delete, fs_read, fs_list, dan fs_stat tidak mencatat hash sebelum dan sesudah."
+    ]
+  },
+  {
+    "id": "RC-FR-043",
+    "title": "Patch editing yang aman",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:617-686 fs_edit menerima old dan new, menghitung kemunculan, lalu menulis lewat transaksi.",
+      "packages/runtime/src/tools/index.ts:643-649 menggagalkan edit jika old tidak ada atau muncul lebih dari sekali tanpa all=true.",
+      "packages/runtime/src/code-tools.ts:327-333 membaca ulang setiap berkas yang ditulis dan membandingkan hash.",
+      "packages/runtime/src/code-tools.ts:310 menghasilkan unified diff; packages/runtime/src/tools/index.ts:657-666 menyimpannya lewat recordChanges.",
+      "packages/runtime/src/tools.test.ts:46 tes 'mencatat edit ke transaksi dan menolak lease milik sesi lain'.",
+      "packages/runtime/src/code-tools.test.ts:75 tes 'menghasilkan diff minimal dan menyertakan teks bila diminta'."
+    ],
+    "gaps": [
+      "Opsi all=true meloloskan old yang muncul lebih dari sekali, padahal requirement mewajibkan edit gagal pada kemunculan ganda.",
+      "Skema publik edit_file memakai old dan new, bukan old_string dan new_string seperti yang diminta requirement."
+    ]
+  },
+  {
+    "id": "RC-FR-044",
+    "title": "Modifikasi multi-file dan transaksi",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:1056-1120 apply_patch mengubah banyak berkas dalam satu transaksi.",
+      "packages/runtime/src/code-tools.ts:265-318 mencatat hash semua target sebelum penulisan dan menolak expected_sha256 yang tidak cocok.",
+      "packages/runtime/src/code-tools.ts:320-345 menulis lewat berkas sementara dan mengembalikan semua berkas yang sudah ditulis jika ada kegagalan.",
+      "packages/runtime/src/code-tools.test.ts:43 tes 'menulis beberapa berkas dan melaporkan status'.",
+      "packages/runtime/src/code-tools.test.ts:56 tes 'menolak transaksi bila hash berubah sebelum eksekusi'.",
+      "packages/runtime/src/code-tools.test.ts:67 tes 'dry run tidak menyentuh berkas'."
+    ],
+    "gaps": [
+      "Penolakan berkas yang berubah di luar transaksi hanya aktif jika caller mengirim expected_sha256; tanpa itu berkas tetap ditimpa.",
+      "Hasil transaksi hanya memuat lines_before dan lines_after, tidak menghitung jumlah baris yang berubah.",
+      "Tidak ada tes rollback tiga berkas saat penulisan berkas kedua gagal; yang diuji hanya transaksi sukses dan penolakan hash."
+    ]
+  },
+  {
+    "id": "RC-FR-045",
+    "title": "Code generation dan refactoring",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:554-612 fs_write dan packages/runtime/src/tools/index.ts:617-686 fs_edit menyediakan penulisan serta penggantian kode.",
+      "packages/runtime/src/subagent-profiles.ts:50-58 profil coder memicu kata refactor dan meminta perubahan kecil.",
+      "packages/runtime/src/plan-runtime.ts:518-566 bisa menjalankan perintah tes sebagai kriteria verifikasi.",
+      "package.json:18 menyediakan skrip prettier --check, tetapi bukan tool agent."
+    ],
+    "gaps": [
+      "Tidak ada operasi rename simbol yang memperbarui semua referensi lintas berkas.",
+      "Tidak ada indeks simbol atau pemeriksaan simbol publik yang hilang.",
+      "Tidak ada bukti grep wajib sebelum kode dianggap tidak terpakai lalu dihapus.",
+      "Gaya kode tidak dijalankan otomatis lewat tool; Prettier, ESLint, gofmt, dan rustfmt tidak terintegrasi ke alur edit.",
+      "Tidak ada pemecahan otomatis perubahan besar menjadi patch yang bisa direview."
+    ]
+  },
+  {
+    "id": "RC-FR-046",
+    "title": "Debugging dan diagnosis error",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2641-2654 /debug hanya membentuk prompt debugging dan mengirimkannya ke model.",
+      "packages/runtime/src/skills.ts:50-62 skill debug-sistematis meminta reproduksi, hipotesis, dan verifikasi.",
+      "packages/runtime/src/failure-analysis.ts:17-22 menyediakan kategori kegagalan dan saran, bukan state hipotesis."
+    ],
+    "gaps": [
+      "Tidak ada pengumpulan otomatis error, stack trace, log, dan langkah reproduksi ke artefak.",
+      "Hipotesis tidak dicatat sebagai state sebelum perubahan dan tidak diuji satu per satu oleh runtime.",
+      "Tidak ada kewajiban tes regresi yang gagal sebelum perbaikan dan lulus sesudahnya.",
+      "Tidak ada laporan terstruktur tentang area yang belum diperiksa saat penyebab tidak ditemukan.",
+      "Tidak ada guard terhadap try/catch kosong atau any; larangan hanya ada di teks prompt."
+    ]
+  },
+  {
+    "id": "RC-FR-047",
+    "title": "Generasi dan eksekusi tes",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:2631-2641 /test menjalankan package manager test dan melaporkan lulus atau gagal.",
+      "packages/runtime/src/tools/index.ts:1140-1165 project_check menjalankan test, lint, build, atau typecheck dari peta proyek.",
+      "packages/runtime/src/project-map.ts:224-260 mendeteksi perintah test dari package.json, pytest, go, atau Cargo.",
+      "packages/runtime/src/plan-runtime.ts:561-566 memakai parseTestFailures untuk mengambil nama tes yang gagal."
+    ],
+    "gaps": [
+      "Tidak ada deteksi framework atau generasi tes; /test hanya menjalankan perintah test yang sudah ada.",
+      "Hasil tidak menampilkan jumlah lulus, gagal, dan skip; hanya status lulus atau gagal.",
+      "Tidak ada penandaan flaky atau eksekusi ulang maksimal dua kali.",
+      "Tidak ada guard agar tes lama tidak dihapus atau dilemahkan untuk membuat hasil lulus."
+    ]
+  },
+  {
+    "id": "RC-FR-048",
+    "title": "Code review",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1201-1209 /review mengubah perintah menjadi prompt review diff dengan path dan baris.",
+      "packages/runtime/src/skills.ts:65-77 skill review-kode meminta bug, keamanan, kompatibilitas, dan temuan berpath serta baris."
+    ],
+    "gaps": [
+      "Temuan tidak divalidasi terhadap skema path, baris, severity blocker/major/minor/nit, penjelasan, dan saran.",
+      "Tidak ada filter yang membuang temuan tanpa lokasi atau tanpa alasan.",
+      "Cakupan performa tidak diminta secara eksplisit oleh prompt /review maupun skill review-kode.",
+      "Ringkasan tidak memisahkan temuan pasti dan dugaan secara terstruktur."
+    ]
+  },
+  {
+    "id": "RC-FR-049",
+    "title": "Analisis arsitektur dan dependensi",
+    "status": "missing",
+    "evidence": [
+      "package.json:19 menyediakan skrip depcruise, tetapi hanya untuk pemeriksaan repo ini.",
+      ".dependency-cruiser.cjs:1-33 memuat aturan layer untuk packages, bukan tool agent.",
+      "packages/runtime/src/tools/index.ts:1027 hanya mendaftarkan search_code; tidak ada tool analisis arsitektur atau dependensi."
+    ],
+    "gaps": [
+      "Tidak ada tool agent yang mendeteksi siklus dependensi dan layer yang dilanggar.",
+      "Tidak ada import graph untuk JavaScript/TypeScript atau parser bahasa lain di runtime.",
+      "Tidak ada laporan package tidak terpakai, lisensi, dan ukuran dependency baru.",
+      "Tidak ada ekspor hasil analisis ke Markdown atau JSON."
+    ]
+  },
+  {
+    "id": "RC-FR-050",
+    "title": "Build, lint, typecheck, dan dependency",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/project-map.ts:182-188 mendeteksi package manager dari lockfile.",
+      "packages/runtime/src/project-map.ts:224-260 mendeteksi perintah test, lint, build, dan typecheck dari package.json serta beberapa konfigurasi bahasa.",
+      "packages/runtime/src/tools/index.ts:1140-1165 project_check menjalankan perintah yang terdeteksi.",
+      "packages/runtime/src/tools/index.ts:1672-1690 package_run menjalankan install, add, remove, test, run, dan audit.",
+      "packages/runtime/src/system-tools.ts:135-137 menolak flag global dan registry.",
+      "packages/runtime/src/project-map.test.ts:31 tes 'mendeteksi bahasa, package manager, perintah, dan entry point'."
+    ],
+    "gaps": [
+      "Makefile tidak dibaca sebagai sumber perintah.",
+      "Jika perintah tidak terdeteksi, project_check melempar E_TOOL_FAILED; tidak bertanya dan tidak memakai perintah standar berlabel asumsi.",
+      "Instalasi dependency tidak mencatat lockfile yang berubah.",
+      "Tidak ada uji build atau lint nyata pada project non-Node, termasuk exit code asli."
+    ]
+  },
+  {
+    "id": "RC-FR-051",
+    "title": "Integrasi Git",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:787-826 git_read menyediakan status, diff, log, show, blame, branch, dan remote.",
+      "packages/runtime/src/tools/index.ts:829-934 git_write menyediakan stage, commit, branch, worktree, merge, pull, dan push.",
+      "packages/runtime/src/git.ts:63-67 menambahkan trailer Rann-Code-Session saat sessionId tersedia.",
+      "packages/runtime/src/tools.test.ts:256 tes 'membaca status git dan commit dengan trailer sesi'.",
+      "packages/runtime/src/tools.test.ts:280 tes 'menolak commit saat masih ada konflik'."
+    ],
+    "gaps": [
+      "Working tree kotor tidak dicatat sebagai baseline saat task dimulai; tidak ada snapshot diff awal.",
+      "/commit di packages/cli/src/main.ts:2169-2177 memanggil git commit langsung tanpa trailer Rann-Code-Session."
+    ]
+  },
+  {
+    "id": "RC-FR-052",
+    "title": "Dokumentasi dan inisialisasi project",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:3763-3774 initCommand membuat .rann, config, RANN.md, dan project map.",
+      "packages/cli/src/main.ts:3767 menulis .rann/config.toml, bukan .rann/config.json.",
+      "packages/cli/src/main.ts:3769-3771 menulis RANN.md berisi placeholder 'Tulis aturan yang harus diikuti agent di repo ini'.",
+      "packages/runtime/src/project-map.ts:266-306 menyediakan fakta repo yang bisa dipakai untuk dokumentasi."
+    ],
+    "gaps": [
+      "RANN.md hanya placeholder dan tidak memuat perintah, konvensi, atau batasan project.",
+      "File config dibuat sebagai .rann/config.toml, tidak sesuai acceptance .rann/config.json.",
+      "Tidak ada mekanisme memperbarui dokumentasi setelah perubahan besar.",
+      "Tidak ada pilihan bahasa dokumentasi."
+    ]
+  },
+  {
+    "id": "RC-FR-053",
+    "title": "Spawn subagent dan profil",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/subagent-profiles.ts:4-15 profil memuat model, systemPrompt, tools, permission, maxSteps, dan triggers.",
+      "packages/runtime/src/subagent-profiles.ts:160-174 memuat profil dari ~/.rann/agents dan .rann/agents.",
+      "packages/runtime/src/rpc.ts:1742-1743 memakai permission profil dan maxSteps sebagai batas langkah.",
+      "packages/runtime/src/rpc.ts:1760-1771 mencatat session, turn, parentTurnId, profile, goal, depth, path, dan model.",
+      "packages/runtime/src/rpc.ts:1888-1901 mengembalikan status, text, steps, usage, cost_usd, dan files_changed.",
+      "packages/runtime/src/subagent-run.test.ts:49 tes 'menjalankan subagent nyata dengan mock provider dan menyimpan hasil'."
+    ],
+    "gaps": [
+      "Konteks dari parent tidak disimpan di record spawn; hanya dikirim ke system prompt.",
+      "Izin anak tidak diiris dengan permissionMode parent; packages/runtime/src/rpc.ts:1740-1742 hanya memakai flag read-only global."
+    ]
+  },
+  {
+    "id": "RC-FR-054",
+    "title": "Specialisasi agent",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/subagent-profiles.ts:29-120 mendefinisikan profil explore, planner, coder, debugger, reviewer, tester, researcher, writer, dan security.",
+      "packages/runtime/src/subagent-profiles.ts:4-15 setiap profil memuat description, when, systemPrompt, tools, permission, maxSteps, dan triggers.",
+      "packages/runtime/src/subagent-profiles.ts:160-174 memuat profil kustom dari ~/.rann/agents dan .rann/agents.",
+      "packages/runtime/src/subagent-profiles.ts:176-190 memilih profil dari trigger saat profile tidak disebut, dan menolak nama asing.",
+      "packages/runtime/src/subagent-profiles.test.ts:33 tes 'memilih profil eksplisit dan menolak nama asing'."
+    ],
+    "gaps": [
+      "Profil architect, frontend, dan backend tidak ada.",
+      "Tidak ada field output yang diharapkan pada SubagentProfile; hanya description/when/systemPrompt.",
+      "Hasil dua agen specialisasi tidak digabung; task mengembalikan hasil per anak tanpa agregasi.",
+      "Tidak ada uji yang menjalankan agen frontend dan backend lalu menggabungkan hasilnya."
+    ]
+  },
+  {
+    "id": "RC-FR-055",
+    "title": "Eksekusi paralel",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:1664-1695 acquireSubagentSlot membatasi concurrency per kunci provider/model.",
+      "packages/runtime/src/rpc.ts:1858 memakai kunci provider/model dan config.subagents.max_concurrent.",
+      "packages/runtime/src/rpc.ts:1509-1513 membatasi jumlah spawn per turn.",
+      "packages/runtime/src/rpc.ts:1514-1549 menjalankan subagent background secara paralel dan mengembalikan agent_id.",
+      "packages/runtime/src/agent.ts:555-575 delegate meneruskan task ke runtime."
+    ],
+    "gaps": [
+      "Concurrency tidak dibatasi per sesi; hanya ada max_per_turn dan max_children.",
+      "Tidak ada pemeriksaan dependensi atau konflik lease sebelum task paralel dijadwalkan.",
+      "Budget parent tidak mencakup anak; tiap anak memakai budget turn global di packages/runtime/src/rpc.ts:1874-1878.",
+      "Tidak ada agregasi hasil paralel dengan status dan bukti masing-masing.",
+      "Tidak ada uji 8 tugas independen yang membuktikan waktu paralel di bawah 60 persen waktu serial."
+    ]
+  },
+  {
+    "id": "RC-FR-056",
+    "title": "Delegasi dan agregasi hasil",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:77-84 DelegateInput hanya memuat goal, context, label, profile, background, dan maxSteps.",
+      "packages/runtime/src/tools/index.ts:1750-1774 tool task meneruskan goal, context, label, profile, background, dan max_steps.",
+      "packages/runtime/src/rpc.ts:1888-1901 hasil subagent memuat status, text, steps, usage, cost_usd, dan files_changed.",
+      "packages/runtime/src/subagent-run.test.ts:49 tes 'menjalankan subagent nyata dengan mock provider dan menyimpan hasil'."
+    ],
+    "gaps": [
+      "Delegasi tidak menyertakan kriteria selesai, daftar file target, dan batas waktu.",
+      "Hasil subagent tidak memuat evidence terstruktur; hanya text bebas.",
+      "Klaim tanpa bukti tidak ditandai unverified dan tetap dianggap selesai.",
+      "Konflik antar hasil tidak dideteksi atau dilaporkan.",
+      "Tidak ada agregasi yang disimpan di task parent; hasil hanya tersimpan per agent."
+    ]
+  },
+  {
+    "id": "RC-FR-057",
+    "title": "Komunikasi antar agen",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/rpc.ts:766-779 agent.message menerima type, subject, body, refs, dan priority.",
+      "packages/storage/src/agent-repos.ts:235-251 recordSubagentMessage menyimpan pesan ke tabel subagent_messages.",
+      "packages/storage/src/agent-repos.ts:254-263 listSubagentMessages membaca inbox dan outbox agent.",
+      "packages/storage/src/schema-v10.ts:17-27 skema tabel subagent_messages.",
+      "packages/storage/src/agent-repos.test.ts:109 tes 'mencatat pesan dan melepas lease saat agent selesai'."
+    ],
+    "gaps": [
+      "Tidak ada tool agent untuk mengirim atau menerima pesan; agent.message hanya RPC yang dipanggil CLI di packages/cli/src/main.ts:516.",
+      "Tidak ada pemeriksaan parent, anak, atau peer tim; field from di packages/runtime/src/rpc.ts:771 adalah string bebas.",
+      "Tidak ada mekanisme balasan atau pengiriman pesan ke konteks subagent yang sedang berjalan.",
+      "Tidak ada eskalasi ke pengguna setelah konflik tiga pertukaran.",
+      "Tabel bernama subagent_messages, bukan agent_messages seperti yang diminta requirement."
+    ]
+  }
+]
