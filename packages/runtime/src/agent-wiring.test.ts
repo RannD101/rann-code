@@ -2,7 +2,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { addMemory, createSession, createTurn, openDatabase, recordUsage, type Db } from "@rann/storage";
+import { addMemory, createSession, createTurn, listMessages, openDatabase, recordUsage, type Db } from "@rann/storage";
+import { RannError } from "@rann/shared";
 import { runTurn, type AgentConfig } from "./agent.js";
 import { MemoryService } from "./memory.js";
 import { SkillStore } from "./skills.js";
@@ -18,6 +19,16 @@ class CaptureProvider implements Provider {
     yield { type: "text", text: "selesai" };
     yield { type: "usage", inputTokens: 5, outputTokens: 2 };
     yield { type: "done", finishReason: "stop" };
+  }
+}
+
+class PartialProvider implements Provider {
+  readonly name = "partial";
+  readonly kind = "mock";
+
+  async *chat(_request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    yield { type: "text", text: "jawaban sebagian" };
+    throw new RannError("E_STREAM_TRUNCATED", "stream terputus");
   }
 }
 
@@ -113,6 +124,30 @@ describe("runTurn dengan memori dan skill lokal", () => {
         })
       ).rejects.toMatchObject({ code: "E_BUDGET_EXHAUSTED" });
       expect(provider.requests).toHaveLength(0);
+    } finally {
+      close();
+    }
+  });
+
+  it("menyimpan teks parsial saat stream terputus", async () => {
+    const { db, close, project } = setup();
+    try {
+      const session = createSession(db, { projectPath: project, model: "partial", permissionMode: "trusted" });
+      const turn = createTurn(db, { sessionId: session.id });
+      await expect(
+        runTurn({
+          db,
+          session,
+          turnId: turn.id,
+          userText: "halo",
+          provider: new PartialProvider(),
+          model: "partial",
+          workspaceRoot: project,
+          config
+        })
+      ).rejects.toMatchObject({ code: "E_STREAM_TRUNCATED" });
+      const messages = listMessages(db, session.id, 10);
+      expect(messages.at(-1)).toMatchObject({ role: "assistant", content: "jawaban sebagian" });
     } finally {
       close();
     }

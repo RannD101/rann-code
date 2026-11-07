@@ -67,9 +67,15 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 - `packages/runtime/src/providers/`: adapter memetakan `cache_read_input_tokens`/`cache_creation_input_tokens` (Anthropic), `prompt_tokens_details.cached_tokens` (OpenAI), `input_tokens_details.cached_tokens` (OpenAI Responses), dan `cachedContentTokenCount` (Gemini) ke usage.
 - `packages/runtime/src/agent.ts`: usage menyimpan token cache, `costFor` menerima empat angka, dan kegagalan `runTurn` selalu menghasilkan `turn.failed` supaya CLI tidak menggantung.
 - `packages/runtime/src/rpc.ts`: `routing.mode = auto` memilih model lewat router, alias dan `provider/model` memindahkan provider, dan `route.explain` memakai config routing.
-- Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 90 tes (19 berkas).
+- `packages/runtime/src/providers/mock.ts`: skenario sukses, timeout, 429, 500, tool call invalid, dan stream terpotong.
+- `packages/runtime/src/agent.ts`: teks parsial disimpan saat stream terputus, argumen tool diredaksi sebelum masuk DB, checkpoint, dan event.
+- `packages/shared/src/redact.ts`: penyamaran nilai berdasarkan nama kunci, pola token (`sk-`, `rd-`, `Bearer`), dan kredensial di URL proxy.
+- `packages/runtime/src/rpc.ts`: keputusan izin dicatat ke `audit_log` (allow/deny, alasan user/timeout/cancelled), argumen diredaksi, `provider.list` menampilkan `key_hint`, health, dan `retry_after_ms`.
+- `packages/cli/src/main.ts`: `/model`, `/models`, `/provider`, `/cost`, `/budget`, `rann provider list` dengan kolom STATUS, `rann provider login` (vault + `api_key_ref`).
+- `packages/cli/src/config-store.ts`: `unsetConfigValue` untuk `provider remove`.
+- Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `providers/mock.test.ts`, `secrets.test.ts`, `redact.test.ts`, `config-store.test.ts` lulus. `pnpm check` lulus 102 tes (21 berkas).
 
-Sisa M2: perintah `/provider`, `/model`, `/models` di REPL dan bukti tidak ada API key di log atau database.
+Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan health probe periodik 60 detik.
 
 ## Aturan
 

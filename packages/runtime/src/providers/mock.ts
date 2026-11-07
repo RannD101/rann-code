@@ -42,6 +42,12 @@ export class MockProvider implements Provider {
       yield { type: "text", text: "sebagian" };
       throw new RannError("E_STREAM_TRUNCATED", "Mock stream terpotong");
     }
+    if (scenario === "invalid-tool") {
+      yield { type: "tool_call", id: `call_${Date.now()}`, name: "tool_yang_tidak_ada", args: { apa: "saja" } };
+      yield { type: "usage", inputTokens: estimateTokens(text), outputTokens: 9 };
+      yield { type: "done", finishReason: "tool_calls" };
+      return;
+    }
     const hadToolResult = request.messages.slice(lastUserIndex + 1).some((message) => message.role === "tool");
     const match = hadToolResult ? null : TOOL_PATTERN.exec(text.trim());
 

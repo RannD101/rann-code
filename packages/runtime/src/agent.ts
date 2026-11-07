@@ -13,7 +13,7 @@ import {
   sumCostSince,
   touchSession
 } from "@rann/storage";
-import { RannError, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
+import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
@@ -556,6 +556,16 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           lastProviderError = error;
           const err = toRannError(error);
           providerHealth.recordFailure(candidate.provider.name, err);
+          if (text.length > 0) {
+            addMessage(db, {
+              sessionId: session.id,
+              turnId,
+              role: "assistant",
+              content: text
+            });
+            publish("message.end", { chars: text.length, finish_reason: finishReason, partial: true });
+            publish("error", { code: err.code, message: err.message, partial: true });
+          }
           if (text.length > 0 || err.code === "E_CANCELLED" || err.code === "E_BUDGET_EXHAUSTED") throw err;
         }
       }
@@ -629,7 +639,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
       for (const call of calls) {
         if (signal?.aborted) throw new RannError("E_CANCELLED", "Turn dibatalkan");
-        const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: call.args });
+        const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: redactSecrets(call.args) });
         createCheckpoint(db, {
           sessionId: session.id,
           turnId,
@@ -639,11 +649,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             step: steps,
             plan_id: activePlan?.id ?? null,
             tool: call.name,
-            args: call.args,
+            args: redactSecrets(call.args),
             premature_count: prematureCount
           }
         });
-        publish("tool.start", { tool: call.name, args: call.args, call_id: call.id, tool_call_id: toolRow.id });
+        publish("tool.start", { tool: call.name, args: redactSecrets(call.args), call_id: call.id, tool_call_id: toolRow.id });
 
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
           completeToolCall(db, toolRow.id, {

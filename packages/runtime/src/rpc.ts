@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
-import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
+import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
   appendAudit,
   appendEvent,
@@ -47,6 +47,10 @@ interface PendingApproval {
   timer: NodeJS.Timeout;
   onAbort: () => void;
   signal?: AbortSignal;
+  sessionId: string;
+  turnId: string;
+  tool: string;
+  args: unknown;
 }
 
 const MAX_LINE = 8 * 1024 * 1024;
@@ -347,23 +351,41 @@ export class RpcServer {
       type: "approval.request",
       sessionId,
       turnId,
-      data: { request_id: requestId, tool, args }
+      data: { request_id: requestId, tool, args: redactSecrets(args) }
     });
     this.broadcast(event);
 
     return new Promise<ApprovalDecision>((resolve) => {
-      const settle = (approved: boolean, remember = false): void => {
+      const settle = (approved: boolean, remember = false, reason = "user"): void => {
         const entry = this.pendingApprovals.get(requestId);
         if (!entry) return;
         clearTimeout(entry.timer);
         entry.signal?.removeEventListener("abort", entry.onAbort);
         this.pendingApprovals.delete(requestId);
+        try {
+          appendAudit(this.db, {
+            actor: "user",
+            action: "tool.approval",
+            resource: `tool:${entry.tool}`,
+            decision: approved ? "allow" : "deny",
+            metadata: {
+              request_id: requestId,
+              session_id: entry.sessionId,
+              turn_id: entry.turnId,
+              remember,
+              reason,
+              args: JSON.stringify(redactSecrets(entry.args)).slice(0, 2_000)
+            }
+          });
+        } catch {
+          // Audit tidak boleh menahan keputusan izin yang sudah diambil user.
+        }
         resolve({ approved, remember });
       };
-      const onAbort = (): void => settle(false);
-      const timer = setTimeout(() => settle(false), APPROVAL_TIMEOUT_MS);
+      const onAbort = (): void => settle(false, false, "cancelled");
+      const timer = setTimeout(() => settle(false, false, "timeout"), APPROVAL_TIMEOUT_MS);
       timer.unref?.();
-      this.pendingApprovals.set(requestId, { settle, timer, onAbort, signal });
+      this.pendingApprovals.set(requestId, { settle, timer, onAbort, signal, sessionId, turnId, tool, args });
       if (signal?.aborted) {
         settle(false);
         return;
