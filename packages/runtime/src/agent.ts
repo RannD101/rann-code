@@ -559,6 +559,19 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       let lastProviderError: unknown;
       let completed = false;
       for (const [index, candidate] of candidates.entries()) {
+        if (providerHealth.isOpen(candidate.provider.name)) {
+          publish("log", {
+            level: "warn",
+            event: "provider.circuit_open",
+            provider: candidate.provider.name,
+            model: candidate.model
+          });
+          lastProviderError = new RannError(
+            "E_PROVIDER_UNAVAILABLE",
+            `Provider ${candidate.provider.name} sedang dibuka circuit breaker-nya`
+          );
+          continue;
+        }
         const reserve = Math.min(candidate.maxOutputTokens || 4096, 8192);
         if (candidate.contextWindow > 0 && promptTokens + reserve > candidate.contextWindow) {
           throw new RannError(

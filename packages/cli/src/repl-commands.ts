@@ -169,7 +169,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("messaging", ["msg"], "/messaging <status|send>", "Kelola adapter messaging", "infra", "admin"),
   cmd("agents", [], "/agents <list|get|cancel|profiles|message>", "Kelola subagent", "infra", "admin"),
   cmd("background", ["bg"], "/background <list|add|get|logs|cancel|retry>", "Kelola task latar", "infra", "exec"),
-  cmd("queue", [], "/queue", "Kelola antrean job", "infra", "admin", false, NOT_YET),
+  cmd("queue", [], "/queue", "Kelola antrean job", "infra", "admin"),
   cmd("integrations", ["int"], "/integrations", "Kelola integrasi eksternal", "infra", "admin", false, NOT_YET),
   cmd("logs", [], "/logs", "Lihat log", "infra", "read"),
   cmd("health", [], "/health", "Health check komponen", "infra"),

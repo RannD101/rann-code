@@ -1484,6 +1484,35 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print("pakai: /gateway status|start|stop|pair|devices|revoke <id>");
           continue;
         }
+        if (line === "/queue" || line.startsWith("/queue ")) {
+          const argument = line.slice(6).trim();
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "list").toLowerCase();
+          const options = parseInlineOptions(tokens.slice(1), new Set(["status", "limit"]));
+          if (sub === "cancel" || sub === "retry") {
+            const id = options.positionals[0];
+            if (!id) {
+              print(`Pakai: /queue ${sub} <id>`);
+              continue;
+            }
+            const job = await client.request<JobView>(`background.${sub}`, { id });
+            print(`job ${job.id} ${job.status}`);
+            continue;
+          }
+          const rows = await client.request<JobView[]>("background.list", {
+            ...(inlineFlag(options.flags, "status") ? { status: inlineFlag(options.flags, "status") } : {}),
+            limit: inlineNumber(options.flags, "limit") ?? 50
+          });
+          const pending = rows.filter((job) => job.status === "queued" || job.status === "running");
+          if (options.flags.json === true) print(JSON.stringify(pending, null, 2));
+          else if (pending.length === 0) print(ui.dim("antrean kosong"));
+          else {
+            for (const job of pending) print(renderJobRow(job));
+            const running = pending.filter((job) => job.status === "running").length;
+            print(ui.dim(`${pending.length} job menunggu, ${running} berjalan`));
+          }
+          continue;
+        }
         if (line === "/background" || line === "/bg" || line.startsWith("/background ") || line.startsWith("/bg ")) {
           const argument = line.replace(/^\/(?:background|bg)\s*/, "");
           const tokens = tokenizeInline(argument);
