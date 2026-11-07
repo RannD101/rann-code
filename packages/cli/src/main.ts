@@ -2520,6 +2520,205 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(ui.green(`dipulihkan: ${String((result.restored as unknown[] | undefined)?.length ?? 0)} berkas`));
           continue;
         }
+        if (line === "/config" || line.startsWith("/config ")) {
+          const argument = line.slice(7).trim();
+          if (argument.startsWith("explain ")) {
+            const key = argument.slice(8).trim();
+            if (key.length === 0) {
+              print(ui.yellow("Pakai: /config explain <kunci>"));
+              continue;
+            }
+            const data = await client.request<Record<string, unknown>>("config.explain", { key });
+            print(`${key} = ${JSON.stringify(data.value)}  sumber ${String(data.source)}  ${String(data.path ?? "")}`);
+            continue;
+          }
+          const key = argument.length > 0 && argument !== "get" ? argument : "";
+          if (key.length > 0) {
+            const data = await client.request<Record<string, unknown>>("config.explain", { key });
+            print(`${key} = ${JSON.stringify(data.value)}  sumber ${String(data.source)}`);
+            continue;
+          }
+          const data = await client.request<Record<string, unknown>>("config.get", {});
+          print(JSON.stringify(data.config, null, 2));
+          print(ui.dim(`file: ${(data.files as string[] | undefined)?.join(", ") ?? "-"}`));
+          continue;
+        }
+        if (line === "/permissions" || line === "/permission") {
+          const data = await client.request<Record<string, unknown>>("config.get", {});
+          const config = (data.config as Record<string, unknown> | undefined) ?? {};
+          const permissions = (config.permissions as Record<string, unknown> | undefined) ?? {};
+          print(`mode: ${String(permissions.mode ?? "read-only")}`);
+          for (const [key, value] of Object.entries(permissions).filter(([name]) => name !== "mode")) {
+            print(`  ${key}: ${JSON.stringify(value)}`);
+          }
+          continue;
+        }
+        if (line === "/settings") {
+          const data = await client.request<Record<string, unknown>>("config.get", {});
+          print(JSON.stringify(data.config, null, 2));
+          continue;
+        }
+        if (line === "/secrets") {
+          const rows = await client.request<Array<Record<string, unknown>>>("secret.list", {});
+          if (rows.length === 0) print(ui.dim("belum ada secret tersimpan"));
+          for (const row of rows) print(`${String(row.name)}  ${String(row.provider ?? "-")}  ${String(row.created_at ?? "")}`);
+          continue;
+        }
+        if (line === "/env") {
+          const names = Object.keys(process.env).filter((name) => /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i.test(name));
+          for (const name of names.sort()) print(`${name}=[REDACTED]`);
+          print(ui.dim(`${names.length} variabel sensitif terlihat oleh proses CLI, nilai tidak ditampilkan`));
+          continue;
+        }
+        if (line === "/sandbox") {
+          const data = await client.request<Record<string, unknown>>("config.explain", { key: "sandbox" });
+          print(JSON.stringify(data.value ?? data, null, 2));
+          continue;
+        }
+        if (line === "/context") {
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          const messages = (data.messages as unknown[] | undefined) ?? [];
+          const approx = JSON.stringify(messages).length;
+          print(`sesi ${sessionId}`);
+          print(`pesan ${messages.length}, perkiraan konteks ${Math.ceil(approx / 4)} token`);
+          const usage = (data.usage as Record<string, unknown> | undefined) ?? {};
+          print(`token masuk ${String(usage.input_tokens ?? 0)}, keluar ${String(usage.output_tokens ?? 0)}`);
+          continue;
+        }
+        if (line === "/tool" || line.startsWith("/tool ")) {
+          const parts = line.split(/\s+/).slice(1);
+          const action = parts[0] ?? "list";
+          if (action === "list" || parts.length === 0) {
+            const tools = await client.request<Array<Record<string, unknown>>>("tool.list", {});
+            for (const tool of tools) print(`${tool.enabled === false ? " " : "*"} ${String(tool.name)}`);
+            continue;
+          }
+          if (action === "info") {
+            const name = parts[1];
+            if (!name) {
+              print(ui.yellow("Pakai: /tool info <nama>"));
+              continue;
+            }
+            const tools = await client.request<Array<Record<string, unknown>>>("tool.list", {});
+            const tool = tools.find((item) => item.name === name);
+            if (!tool) {
+              print(ui.red(`tool ${name} tidak ditemukan`));
+              continue;
+            }
+            print(JSON.stringify(tool, null, 2));
+            continue;
+          }
+          print(ui.yellow("Pakai: /tool list|info <nama>"));
+          continue;
+        }
+        if (line === "/test" || line.startsWith("/test ")) {
+          const pattern = line.slice(5).trim();
+          const manager = existsSync(join(process.cwd(), "pnpm-lock.yaml")) ? "pnpm" : existsSync(join(process.cwd(), "yarn.lock")) ? "yarn" : "npm";
+          const argv = manager === "npm" ? ["test"] : ["test"];
+          if (pattern.length > 0) argv.push("--", pattern);
+          print(ui.dim(`$ ${manager} ${argv.join(" ")}`));
+          const result = spawnSync(manager, argv, { cwd: process.cwd(), stdio: "inherit", env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" } });
+          print(result.status === 0 ? ui.green("tes lulus") : ui.red(`tes gagal, exit ${String(result.status)}`));
+          continue;
+        }
+        if (line.startsWith("/debug ")) {
+          const symptom = line.slice(6).trim();
+          if (symptom.length === 0) {
+            print(ui.yellow("Pakai: /debug \"gejala\""));
+            continue;
+          }
+          busy = true;
+          try {
+            const prompt = `Debug masalah berikut secara sistematis: kumpulkan bukti, ajukan hipotesis, uji satu per satu, lalu perbaiki dan verifikasi. Gejala: ${symptom}`;
+            const result = await runStreaming(client, sessionId, outgoing(prompt), {
+              ...(model ? { model } : {}),
+              ...(permissionMode ? { permissionMode } : {}),
+              ...(onApproval ? { onApproval } : {})
+            });
+            await recordResult(result);
+          } finally {
+            busy = false;
+          }
+          continue;
+        }
+        if (line === "/profile" || line === "/profile show") {
+          const rows = await client.request<Array<Record<string, unknown>>>("memory.list", {});
+          const profile = rows.filter((row) => row.scope === "global").slice(0, 20);
+          if (profile.length === 0) print(ui.dim("profil belum memiliki entri memori global"));
+          for (const row of profile) print(`${String(row.id)}  ${String(row.content)}`);
+          continue;
+        }
+        if (line === "/login" || line.startsWith("/login ")) {
+          const parts = line.split(/\s+/).slice(1);
+          const name = parts[0];
+          const envFlag = parts.indexOf("--env");
+          const envName = envFlag > 0 ? parts[envFlag + 1] : undefined;
+          if (!name || !envName) {
+            print(ui.yellow("Pakai: /login <provider> --env NAMA_VAR"));
+            continue;
+          }
+          const value = process.env[envName];
+          if (!value) {
+            print(ui.red(`environment ${envName} kosong`));
+            continue;
+          }
+          const ref = `${name}.api_key`;
+          await client.request("secret.set", { name: ref, value, provider: name });
+          setConfigValue(resolveHome(), `providers.${name}.api_key_ref`, ref);
+          print(ui.green(`kunci ${name} tersimpan, akhiran ****${value.slice(-4)}`));
+          continue;
+        }
+        if (line === "/logout" || line.startsWith("/logout ")) {
+          const name = line.split(/\s+/)[1];
+          if (!name) {
+            print(ui.yellow("Pakai: /logout <provider>"));
+            continue;
+          }
+          const result = await client.request<{ removed: boolean }>("secret.remove", { name: `${name}.api_key` });
+          print(result.removed ? ui.green(`kunci ${name} dihapus`) : ui.dim(`tidak ada kunci ${name}`));
+          continue;
+        }
+        if (line === "/task" || line.startsWith("/task ")) {
+          const id = line.split(/\s+/)[1];
+          const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 10 });
+          const tasks: Array<Record<string, unknown>> = plans.flatMap((plan) =>
+            ((plan.tasks as Array<Record<string, unknown>> | undefined) ?? []).map((task) => ({ ...task, plan_id: plan.id }) as Record<string, unknown>)
+          );
+          if (!id || id === "list") {
+            if (tasks.length === 0) print(ui.dim("belum ada task"));
+            for (const task of tasks) print(`${String(task.id)}  [${String(task.status)}]  ${String(task.title)}`);
+            continue;
+          }
+          const task = tasks.find((item) => item.id === id);
+          if (!task) {
+            print(ui.red(`task ${id} tidak ditemukan`));
+            continue;
+          }
+          print(JSON.stringify(task, null, 2));
+          continue;
+        }
+        if (line === "/compact") {
+          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
+          const messages = (data.messages as unknown[] | undefined) ?? [];
+          print(`sesi berisi ${messages.length} pesan. Compaction otomatis berjalan saat konteks melewati batas model.`);
+          continue;
+        }
+        if (line === "/whatsnew") {
+          const changelog = join(process.cwd(), "CHANGELOG.md");
+          if (existsSync(changelog)) {
+            print(readFileSync(changelog, "utf8").split("\n").slice(0, 80).join("\n"));
+          } else {
+            print(`rann-code ${packageVersion()}  lihat https://github.com/RannD101/rann-code/releases`);
+          }
+          continue;
+        }
+        if (line.startsWith("/feedback ")) {
+          const text = line.slice(10).trim();
+          const file = join(resolveHome(), "feedback.jsonl");
+          writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), text })}\n`, { flag: "a", mode: 0o600 });
+          print(ui.green(`masukan disimpan lokal di ${file}`));
+          continue;
+        }
         if (line === "/cancel") {
           await client.request("session.cancel", { sessionId });
           print(ui.dim("permintaan batal dikirim"));
