@@ -85,9 +85,11 @@ Sisa M2: keychain OS (sekarang masih vault berkas dengan master key 0600) dan he
 - `packages/runtime/src/agent.ts`: batas langkah, budget, checkpoint `pre_tool`, pembatalan, dan `turn.failed`.
 - `packages/runtime/src/rpc.ts`: `plan.list` dan `task.list` untuk membaca rencana serta task per sesi.
 - `packages/cli/src/main.ts`: `/tasks` menampilkan rencana dan status task, `/cancel` membatalkan turn aktif.
-- Tes: `planner.test.ts` lulus; `verifier` dan `plan-runtime` belum punya tes sendiri. Total 103 tes (21 berkas).
+- `packages/runtime/src/failure-analysis.ts`: kategori kegagalan (auth, rate limit, timeout, budget, izin, konteks, stream, plan), sifat bisa diulang, dan saran tindakan; ikut terkirim di event `error` dan `turn.failed`.
+- `packages/cli/src/stream.ts`: menampilkan saran tindakan saat turn gagal.
+- Tes: `planner.test.ts` lulus; `verifier` dan `plan-runtime` belum punya tes sendiri. Total 107 tes (22 berkas).
 
-Sisa M4: goal tracking eksplisit, failure analysis, `/execute`, dan pemulihan task setelah kill -9.
+Sisa M4: goal tracking eksplisit, `/execute`, dan pemulihan task setelah kill -9.
 
 ## Aturan
 

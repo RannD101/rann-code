@@ -17,6 +17,7 @@ import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventTy
 import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
+import { analyzeFailure } from "./failure-analysis.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
 import { loadInstructions } from "./instructions.js";
@@ -725,7 +726,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           const err = toRannError(error);
           finishError(err.code, err.message);
           if (err.code === "E_APPROVAL_REQUIRED" || err.code === "E_PERMISSION") {
-            publish("error", { error_code: err.code, message: err.message });
+            publish("error", {
+              error_code: err.code,
+              message: err.message,
+              analysis: analyzeFailure(err, { provider: provider.name, model, step: steps, lastTool: call.name })
+            });
             publish("turn.end", { status: "failed", error_code: err.code });
             if (activePlan) finishPlan(db, activePlan, "failed", (type, data) => publish(type, data));
             finalize("failed", { code: err.code, message: err.message });
@@ -746,7 +751,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     if (err.code === "E_PROVIDER_UNAVAILABLE" || err.code === "E_PROVIDER_RATE_LIMIT" || err.code === "E_PROVIDER_AUTH" || err.code === "E_TIMEOUT") {
       providerHealth.recordFailure(provider.name, err);
     }
-    publish("error", { error_code: err.code, message: err.message });
+    publish("error", {
+      error_code: err.code,
+      message: err.message,
+      analysis: analyzeFailure(err, { provider: provider.name, model, step: steps })
+    });
     publish("turn.end", { status: err.code === "E_CANCELLED" ? "cancelled" : "failed", error_code: err.code });
     if (activePlan) {
       finishPlan(db, activePlan, err.code === "E_CANCELLED" ? "cancelled" : "failed", (type, data) =>

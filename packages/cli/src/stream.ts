@@ -10,13 +10,20 @@ export interface StreamUsage {
   outputTokens: number;
 }
 
+export interface StreamError {
+  code: string;
+  message: string;
+  category?: string;
+  action?: string;
+}
+
 export interface StreamResult {
   ok: boolean;
   turnId: string;
   text: string;
   steps: number;
   usage: StreamUsage;
-  error?: { code: string; message: string };
+  error?: StreamError;
 }
 
 export interface ApprovalRequest {
@@ -74,7 +81,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
   return await new Promise<StreamResult>((resolve, reject) => {
     let wroteText = false;
     let pendingApproval = false;
-    let pendingError: { code: string; message: string } | undefined;
+    let pendingError: StreamError | undefined;
     let collected = "";
     const emit = (payload: Record<string, unknown>): void => {
       if (format === "stream-json") process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -171,9 +178,12 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "error") {
+        const analysis = (event.data.analysis ?? {}) as Record<string, unknown>;
         pendingError = {
           code: String(event.data.error_code ?? "E_INTERNAL"),
-          message: String(event.data.message ?? "turn gagal")
+          message: String(event.data.message ?? "turn gagal"),
+          ...(typeof analysis.category === "string" ? { category: analysis.category } : {}),
+          ...(typeof analysis.action === "string" ? { action: analysis.action } : {})
         };
         return;
       }
@@ -184,6 +194,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         const finalText = typeof event.data.text === "string" ? event.data.text : collected;
         const ok = String(event.data.status ?? "done") === "done";
         if (!ok && pendingError) printErr(`${ui.red("rann")}: ${pendingError.code}: ${pendingError.message}`);
+        if (!ok && pendingError?.action) printErr(ui.dim(`saran: ${pendingError.action}`));
         emit({ type: "turn.end", turn_id: turnId, ok, steps, usage, text: finalText });
         cleanup();
         resolve({
@@ -210,7 +221,10 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         breakLine();
         const code = String(event.data.error_code ?? "E_INTERNAL");
         const message = String(event.data.message ?? "turn gagal");
+        const analysis = (event.data.analysis ?? {}) as Record<string, unknown>;
+        const action = typeof analysis.action === "string" ? analysis.action : undefined;
         printErr(`${ui.red("rann")}: ${code}: ${message}`);
+        if (action) printErr(ui.dim(`saran: ${action}`));
         emit({ type: "error", turn_id: turnId, code, message });
         emit({ type: "turn.end", turn_id: turnId, ok: false, steps: 0, usage: readUsage(undefined), text: collected });
         cleanup();
@@ -220,7 +234,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           text: collected,
           steps: 0,
           usage: { inputTokens: 0, outputTokens: 0 },
-          error: { code, message }
+          error: { code, message, ...(typeof analysis.category === "string" ? { category: analysis.category } : {}), ...(action ? { action } : {}) }
         });
       }
     };

@@ -30,6 +30,7 @@ import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
 import { routeModel, type HealthState } from "./router.js";
 import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
+import { analyzeFailure } from "./failure-analysis.js";
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
 import { providerHealth } from "./providers/retry.js";
@@ -626,7 +627,7 @@ export class RpcServer {
             type: "turn.failed",
             sessionId,
             turnId: turn.id,
-            data: { error_code: failure.code, message: failure.message }
+            data: { error_code: failure.code, message: failure.message, analysis: analyzeFailure(failure) }
           });
           this.broadcast(event);
         } catch {
