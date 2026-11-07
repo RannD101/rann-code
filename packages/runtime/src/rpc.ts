@@ -789,19 +789,16 @@ export class RpcServer {
         return { cancelled: ids };
       }
       case "agent.message": {
-        if (!getSubagent(this.db, input.to as string)) {
-          throw new RannError("E_NOT_FOUND", `Agent tujuan tidak ditemukan: ${String(input.to)}`);
-        }
-        const id = recordSubagentMessage(this.db, {
+        const result = this.recordAgentMessage({
           from: input.from as string,
           to: input.to as string,
-          type: (input.type as string | undefined) ?? "note",
+          type: ((input.type as string | undefined) ?? "note") as "note" | "question" | "answer" | "conflict",
           subject: input.subject as string,
           body: input.body as string,
           priority: (input.priority as "low" | "normal" | "high" | undefined) ?? "normal",
           ...(input.refs ? { refs: input.refs as string[] } : {})
         });
-        return { id };
+        return result;
       }
       case "agent.profiles":
         return loadProfiles(this.options.layout.home, this.options.config.projectPath ?? process.cwd()).map((profile) => ({
@@ -1826,6 +1823,63 @@ export class RpcServer {
     };
   }
 
+  private recordAgentMessage(input: {
+    from: string;
+    to: string;
+    type: "note" | "question" | "answer" | "conflict";
+    subject: string;
+    body: string;
+    priority?: "low" | "normal" | "high";
+    refs?: string[];
+  }): { id: string; escalated: boolean } {
+    const from = getSubagent(this.db, input.from);
+    const to = getSubagent(this.db, input.to);
+    if (!from || !to) throw new RannError("E_NOT_FOUND", "Agent pengirim atau tujuan tidak ditemukan");
+    if (from.id === to.id) throw new RannError("E_TOOL_INVALID_ARGS", "Agent tidak bisa mengirim pesan ke dirinya sendiri");
+    const root = (path: string | null): string => (path ?? "").split("/")[0] ?? "";
+    const related = from.parent_id === to.id || to.parent_id === from.id || (root(from.path) !== "" && root(from.path) === root(to.path));
+    if (!related) throw new RannError("E_PERMISSION", "Pesan hanya boleh ke parent, anak, atau peer dalam tim yang sama");
+    const id = recordSubagentMessage(this.db, {
+      from: input.from,
+      to: input.to,
+      type: input.type,
+      subject: input.subject,
+      body: input.body,
+      priority: input.priority ?? "normal",
+      ...(input.refs ? { refs: input.refs } : {})
+    });
+    let escalated = false;
+    if (input.type === "conflict") {
+      const count = this.db
+        .prepare("SELECT COUNT(*) AS n FROM subagent_messages WHERE type = 'conflict' AND ((from_agent = ? AND to_agent = ?) OR (from_agent = ? AND to_agent = ?))")
+        .get(input.from, input.to, input.to, input.from) as { n?: number } | undefined;
+      if ((count?.n ?? 0) >= 3) {
+        escalated = true;
+        const rootAgent = from.depth === 0 ? from : to.depth === 0 ? to : from;
+        const sessionId = rootAgent.session_id ?? this.options.config.projectPath ?? "";
+        if (sessionId) {
+          try {
+            const event = appendEvent(this.db, {
+              type: "error",
+              sessionId,
+              data: {
+                error_code: "E_AGENT_CONFLICT",
+                escalation: true,
+                message: `Konflik antar agen belum selesai setelah ${count?.n ?? 3} pesan: ${input.subject}`,
+                from: input.from,
+                to: input.to
+              }
+            });
+            this.broadcast(event);
+          } catch {
+            // eskalasi best effort
+          }
+        }
+      }
+    }
+    return { id, escalated };
+  }
+
   private async runSubagent(options: {
     parent: SessionRow;
     parentTurnId: string;
@@ -1863,7 +1917,10 @@ export class RpcServer {
     const target = this.resolveTarget(config, requestedModel);
     const descriptor = resolveDescriptor(this.db, config, target.providerName, target.model);
     const provider = createProvider(target.providerName, providerFor(config, target.providerName), process.env, this.secrets);
-    const permissionMode = config.subagents.permission_mode === "read-only" ? "read-only" : selected.permission;
+    const rank: Record<string, number> = { "read-only": 0, ask: 1, custom: 1, "accept-edits": 2, trusted: 3 };
+    const profileMode = config.subagents.permission_mode === "read-only" ? "read-only" : selected.permission;
+    const sessionMode = options.parent.permission_mode;
+    const permissionMode = (rank[sessionMode] ?? 1) <= (rank[profileMode] ?? 1) ? sessionMode : profileMode;
     const maxSteps = Math.max(1, Math.min(options.input.maxSteps ?? selected.maxSteps, config.subagents.max_steps, 30));
 
     const child = createSession(this.db, {
@@ -1891,6 +1948,16 @@ export class RpcServer {
       path: parentAgent ? `${parentAgent.path}/${selected.name}` : selected.name,
       model: `${target.providerName}/${target.model}`,
       permissionMode,
+      metadata: {
+        context: options.input.context ?? null,
+        acceptance: options.input.acceptance ?? null,
+        files: options.input.files ?? [],
+        timeout_ms: options.input.timeoutMs ?? null,
+        max_steps: maxSteps,
+        max_depth: config.subagents.max_depth,
+        profile_source: selected.source,
+        output: selected.output
+      },
       ...(parentAgent ? { parentId: parentAgent.id } : {})
     });
     options.onStarted?.(agent.id);
@@ -1937,7 +2004,10 @@ export class RpcServer {
     }, config.subagents.heartbeat_ms);
 
     const tools = selected.tools === "*" ? undefined : [...selected.tools];
-    if (tools && depth + 1 < config.subagents.max_depth && !tools.includes("task")) tools.push("task");
+    if (tools) {
+      if (depth + 1 < config.subagents.max_depth && !tools.includes("task")) tools.push("task");
+      if (!tools.includes("agent_message")) tools.push("agent_message");
+    }
 
     const before = this.gitChangedFiles(options.projectPath);
     const memory = config.memory.enabled && selected.memory
@@ -1963,6 +2033,8 @@ export class RpcServer {
         selected.systemPrompt,
         `Tujuan: ${options.input.goal}`,
         options.input.context ? `Konteks dari agent induk: ${options.input.context}` : "",
+        options.input.acceptance ? `Kriteria selesai: ${options.input.acceptance}` : "",
+        options.input.files && options.input.files.length > 0 ? `Berkas relevan: ${options.input.files.join(", ")}` : "",
         "Kamu tidak bisa bertanya ke pengguna. Akhiri dengan ringkasan hasil yang bisa dipakai agent induk."
       ]
         .filter(Boolean)
@@ -1980,7 +2052,10 @@ export class RpcServer {
       ...(config.plugins.enabled ? { plugins: this.pluginManager(options.projectPath) } : {})
     };
 
-    const releaseSlot = await this.acquireSubagentSlot(`${target.providerName}/${target.model}`, config.subagents.max_concurrent, controller.signal);
+    const runSignal = options.input.timeoutMs
+      ? AbortSignal.any([controller.signal, AbortSignal.timeout(options.input.timeoutMs)])
+      : controller.signal;
+    const releaseSlot = await this.acquireSubagentSlot(`${target.providerName}/${target.model}`, config.subagents.max_concurrent, runSignal);
     try {
       const result = await runTurn({
         db: this.db,
@@ -2012,7 +2087,8 @@ export class RpcServer {
         maxOutputTokens: descriptor.maxOutputTokens,
         costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>
           costFor(descriptor, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens),
-        signal: controller.signal,
+        agentMessage: async (message) => this.recordAgentMessage({ ...message, from: agent.id }),
+        signal: runSignal,
         emit: (event) => this.broadcast(event)
       });
       const after = this.gitChangedFiles(options.projectPath);
@@ -2021,12 +2097,17 @@ export class RpcServer {
         costFor(descriptor, result.usage.inputTokens, result.usage.outputTokens, result.usage.cacheReadTokens, result.usage.cacheWriteTokens) ?? 0;
       touchSession(this.db, child.id, { status: "closed" });
       updateSubagent(this.db, agent.id, { status: "done", steps: result.steps, cost_usd: costUsd });
+      const evidencePattern = /(?:[\w./-]+\.\w+:\d+|\b(?:pnpm|npm|npx|node|git|pytest|go test|cargo test)\b)/;
+      const verified = filesChanged.length > 0 || evidencePattern.test(result.text);
       const summary = {
         agent_id: agent.id,
         profile: selected.name,
         session_id: child.id,
         turn_id: turn.id,
         status: "done" as const,
+        verified,
+        unverified_reason: verified ? null : "Ringkasan tidak memuat path:baris atau perintah yang bisa diperiksa",
+        acceptance: options.input.acceptance ?? null,
         text: result.text,
         steps: result.steps,
         usage: result.usage,

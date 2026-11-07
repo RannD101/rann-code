@@ -48,6 +48,7 @@ export function createSubagent(
     path: string;
     model?: string;
     permissionMode?: SubagentRow["permission_mode"];
+    metadata?: Record<string, unknown>;
   }
 ): SubagentRow {
   const id = newId("ag");
@@ -55,7 +56,7 @@ export function createSubagent(
   db.prepare(
     `INSERT INTO agents (id, profile_id, name, role, parent_id, status, model, permission_mode, metadata_json,
        session_id, turn_id, parent_turn_id, profile, goal, depth, path, steps, cost_usd, heartbeat_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'subagent', ?, 'idle', ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`
+     VALUES (?, ?, ?, 'subagent', ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`
   ).run(
     id,
     ensureDefaultProfile(db),
@@ -63,6 +64,7 @@ export function createSubagent(
     input.parentId ?? null,
     input.model ?? null,
     input.permissionMode ?? "read-only",
+    JSON.stringify(input.metadata ?? {}),
     input.sessionId,
     input.turnId ?? null,
     input.parentTurnId ?? null,

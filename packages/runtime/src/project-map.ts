@@ -221,7 +221,23 @@ function detectEntryPoints(root: string): string[] {
   return [...new Set(candidates)].filter((path) => existsSync(join(root, path)));
 }
 
+function makeTargets(root: string): Set<string> {
+  const file = join(root, "Makefile");
+  if (!existsSync(file)) return new Set();
+  try {
+    const names = new Set<string>();
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const match = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line);
+      if (match?.[1] !== undefined) names.add(match[1]);
+    }
+    return names;
+  } catch {
+    return new Set();
+  }
+}
+
 function detectCommands(manager: string | null, scripts: Record<string, string>, root: string): Record<string, string | null> {
+  const make = makeTargets(root);
   const run = (name: string): string | null => {
     if (!(name in scripts)) return null;
     if (manager === "pnpm") return `pnpm ${name}`;
@@ -259,6 +275,9 @@ function detectCommands(manager: string | null, scripts: Record<string, string>,
   if (out.build === null) {
     if (existsSync(join(root, "Cargo.toml"))) out.build = "cargo build";
     else if (existsSync(join(root, "go.mod"))) out.build = "go build ./...";
+  }
+  for (const name of ["test", "lint", "build", "typecheck"] as const) {
+    if (out[name] === null && make.has(name)) out[name] = `make ${name}`;
   }
   return out;
 }

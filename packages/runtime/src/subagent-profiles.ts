@@ -5,6 +5,7 @@ export interface SubagentProfile {
   name: string;
   description: string;
   when: string;
+  output: string;
   systemPrompt: string;
   tools: string[] | "*";
   permission: "read-only" | "accept-edits";
@@ -23,8 +24,13 @@ const BASE_RULES = [
   "Jangan mengubah berkas di luar tujuan."
 ].join(" ");
 
-function profile(input: Omit<SubagentProfile, "source" | "memory"> & { memory?: boolean }): SubagentProfile {
-  return { ...input, memory: input.memory ?? true, source: "builtin" };
+function profile(input: Omit<SubagentProfile, "source" | "memory" | "output"> & { memory?: boolean; output?: string }): SubagentProfile {
+  return {
+    ...input,
+    output: input.output ?? "Ringkasan bukti: berkas dan baris yang dibaca atau diubah, perintah yang dijalankan, hasil nyata, dan risiko yang tersisa.",
+    memory: input.memory ?? true,
+    source: "builtin"
+  };
 }
 
 export const BUILTIN_PROFILES: SubagentProfile[] = [
@@ -109,6 +115,61 @@ export const BUILTIN_PROFILES: SubagentProfile[] = [
     triggers: ["tulis", "dokumentasi", "changelog", "artikel", "readme"]
   }),
   profile({
+    name: "architect",
+    description: "Merancang batas modul, alur data, dan keputusan teknis.",
+    when: "Perlu desain sebelum implementasi atau keputusan arsitektur.",
+    systemPrompt: `${BASE_RULES} Petakan batasan, pilihan, trade-off, dan keputusan. Sebut berkas dan antarmuka yang terpengaruh. Jangan menulis kode produksi.`,
+    tools: ["fs_read", "fs_list", "fs_glob", "search_code", "repo_map", "git_read"],
+    permission: "read-only",
+    maxSteps: 10,
+    triggers: ["arsitektur", "desain sistem", "batas modul", "trade-off", "keputusan teknis", "architect"],
+    output: "Keputusan arsitektur, alternatif yang ditolak, konsekuensi, dan berkas yang perlu berubah."
+  }),
+  profile({
+    name: "coding",
+    description: "Alias peran implementasi untuk perubahan lintas bahasa.",
+    when: "Tugas implementasi umum tanpa spesialisasi frontend atau backend.",
+    systemPrompt: `${BASE_RULES} Terapkan perubahan sekecil yang jelas, jaga gaya repo, lalu jalankan pemeriksaan. Laporkan diff dan hasil nyata.`,
+    tools: ["fs_read", "fs_list", "fs_glob", "search_code", "fs_write", "fs_edit", "apply_patch", "shell_run", "project_check", "git_read"],
+    permission: "accept-edits",
+    maxSteps: 12,
+    triggers: ["coding", "kode", "implementasi", "buat fitur", "ubah logika"],
+    output: "Diff ringkas, berkas yang berubah, perintah verifikasi, dan hasilnya."
+  }),
+  profile({
+    name: "frontend",
+    description: "Mengerjakan UI, komponen, gaya, dan aksesibilitas.",
+    when: "Perubahan menyentuh tampilan, komponen, CSS, atau interaksi browser.",
+    systemPrompt: `${BASE_RULES} Jaga konsistensi desain yang ada, aksesibilitas, dan perilaku responsif. Uji di browser bila memungkinkan. Jangan mengubah backend tanpa alasan.`,
+    tools: ["fs_read", "fs_list", "fs_glob", "search_code", "fs_write", "fs_edit", "apply_patch", "shell_run", "browser", "project_check", "git_read"],
+    permission: "accept-edits",
+    maxSteps: 12,
+    triggers: ["frontend", "ui", "komponen", "css", "tampilan", "react", "aksesibilitas"],
+    output: "Komponen yang berubah, perilaku sebelum dan sesudah, serta bukti render atau tes."
+  }),
+  profile({
+    name: "backend",
+    description: "Mengerjakan API, database, antrean, dan logika server.",
+    when: "Perubahan menyentuh endpoint, skema data, migrasi, atau proses latar.",
+    systemPrompt: `${BASE_RULES} Jaga kompatibilitas data, validasi di tepi, dan penanganan error. Sertakan migrasi bila skema berubah dan uji jalur gagal.`,
+    tools: ["fs_read", "fs_list", "fs_glob", "search_code", "fs_write", "fs_edit", "apply_patch", "shell_run", "project_check", "git_read"],
+    permission: "accept-edits",
+    maxSteps: 12,
+    triggers: ["backend", "api", "endpoint", "database", "migrasi", "server", "sql"],
+    output: "Endpoint atau skema yang berubah, migrasi, tes jalur sukses dan gagal, serta risiko data."
+  }),
+  profile({
+    name: "documentation",
+    description: "Menulis dan memperbarui dokumentasi dari fakta repo.",
+    when: "Perlu README, panduan, changelog, atau docstring yang akurat.",
+    systemPrompt: `${BASE_RULES} Baca kode dan perintah nyata sebelum menulis. Jangan memakai placeholder atau klaim yang tidak bisa dibuktikan. Tulis dalam bahasa yang diminta.`,
+    tools: ["fs_read", "fs_list", "fs_glob", "search_code", "fs_write", "fs_edit", "project_check", "git_read"],
+    permission: "accept-edits",
+    maxSteps: 10,
+    triggers: ["dokumentasi", "readme", "panduan", "changelog", "docstring", "documentation"],
+    output: "Berkas dokumentasi yang berubah dan daftar fakta repo yang menjadi sumbernya."
+  }),
+  profile({
     name: "security",
     description: "Meninjau risiko keamanan pada kode sendiri.",
     when: "Ada perubahan yang menyentuh auth, input, berkas, atau jaringan.",
@@ -148,6 +209,7 @@ function fromFile(path: string, source: "user" | "project"): SubagentProfile | u
     name,
     description: meta.description ?? body.trim().split("\n")[0]!.slice(0, 160),
     when: meta.when ?? "",
+    output: meta.output ?? "Ringkasan bukti: berkas dan baris, perintah, hasil, dan risiko yang tersisa.",
     systemPrompt: body.trim(),
     tools: tools === "*" || tools === "" ? "*" : tools.split(",").map((tool) => tool.trim()).filter(Boolean),
     permission: meta.permission === "accept-edits" ? "accept-edits" : "read-only",

@@ -213,6 +213,7 @@ describe("tools", () => {
       "system_info",
       "schedule_task",
       "messaging_send",
+      "agent_message",
       "task",
       "read_file",
       "write_file",

@@ -87,6 +87,9 @@ export interface DelegateInput {
   profile?: string;
   background?: boolean;
   maxSteps?: number;
+  acceptance?: string;
+  files?: string[];
+  timeoutMs?: number;
 }
 
 export interface AgentConfig {
@@ -130,6 +133,7 @@ export interface RunTurnOptions {
   browser?: BrowserManager;
   mcp?: McpToolset;
   delegate?: (input: DelegateInput) => Promise<unknown>;
+  agentMessage?: (input: { to: string; type: "note" | "question" | "answer" | "conflict"; subject: string; body: string; priority?: "low" | "normal" | "high"; refs?: string[] }) => Promise<unknown>;
   signal?: AbortSignal;
   approved?: boolean;
   taskClass?: TaskClass;
@@ -1325,6 +1329,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             turnId,
             db: options.db,
             ...(options.agentId ? { agentId: options.agentId } : {}),
+            ...(options.agentMessage ? { agentMessage: options.agentMessage } : {}),
             ...(options.checkpointsDir ? { checkpointsDir: options.checkpointsDir } : {})
           });
           const retryable = ["fs_read", "fs_list", "fs_stat", "fs_glob", "git_read", "repo_map", "search_code", "project_check"].includes(call.name);

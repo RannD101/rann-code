@@ -6,6 +6,7 @@ import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import type { Db } from "@rann/storage";
+import { parseTestSummary } from "../test-summary.js";
 import { appendAudit, getActiveGoal, renderGoal, updateGoalProgress, listProcedures, recordProcedureResult, upsertProcedure } from "@rann/storage";
 import {
   acquirePathLease,
@@ -50,7 +51,8 @@ export interface ToolContext {
   memory?: MemoryService;
   hooks?: { run(event: "MemoryWrite", payload: Record<string, unknown>, options?: { cwd?: string }): Promise<unknown> };
   skills?: SkillStore;
-  delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number }) => Promise<unknown>;
+  delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number; acceptance?: string; files?: string[]; timeoutMs?: number }) => Promise<unknown>;
+  agentMessage?: (input: { to: string; type: "note" | "question" | "answer" | "conflict"; subject: string; body: string; priority?: "low" | "normal" | "high"; refs?: string[] }) => Promise<unknown>;
   planRevise?: (input: {
     reason: string;
     goal?: string;
@@ -227,6 +229,14 @@ const fsListSchema = z.object({
   limit: z.number().int().min(1).max(2_000).optional()
 });
 
+function isTestPath(path: string): boolean {
+  return /(^|\/)(__tests__|tests?|spec)(\/|$)|[._-](test|spec)\.[a-z0-9]+$/i.test(path);
+}
+
+function assertionCount(text: string): number {
+  return (text.match(/\b(expect|assert|should)\s*\(/g) ?? []).length;
+}
+
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
 
 const fsWriteSchema = z.object({
@@ -243,6 +253,7 @@ const fsEditSchema = z.object({
   old_string: z.string().min(1).optional(),
   new_string: z.string().optional(),
   all: z.boolean().optional(),
+  allow_test_weakening: z.boolean().optional(),
   expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
 }).transform((value) => {
   const old = value.old_string ?? value.old;
@@ -263,7 +274,8 @@ const fsGlobSchema = z.object({
 const fsDeleteSchema = z.object({
   path: z.string().min(1),
   recursive: z.boolean().optional(),
-  hard: z.boolean().optional()
+  hard: z.boolean().optional(),
+  allow_test_removal: z.boolean().optional()
 });
 
 const shellSchema = z.object({
@@ -449,13 +461,25 @@ const messagingSendSchema = z.object({
   thread_id: z.number().int().positive().optional()
 });
 
+const agentMessageSchema = z.object({
+  to: z.string().min(1),
+  type: z.enum(["note", "question", "answer", "conflict"]),
+  subject: z.string().min(3).max(200),
+  body: z.string().min(1).max(8_000),
+  priority: z.enum(["low", "normal", "high"]).optional(),
+  refs: z.array(z.string()).max(20).optional()
+});
+
 const taskSchema = z.object({
   goal: z.string().min(5).max(8_000),
   context: z.string().max(20_000).optional(),
   label: z.string().min(1).max(80).optional(),
   profile: z.string().min(1).max(64).optional(),
   background: z.boolean().optional(),
-  max_steps: z.number().int().min(1).max(30).optional()
+  max_steps: z.number().int().min(1).max(30).optional(),
+  acceptance: z.string().max(8_000).optional(),
+  files: z.array(z.string().max(500)).max(100).optional(),
+  timeout_ms: z.number().int().min(1_000).max(3_600_000).optional()
 });
 
 const planReviseSchema = z.object({
@@ -667,7 +691,8 @@ export const tools: ToolDefinition[] = [
           new_string: { type: "string", description: "Teks pengganti." },
           old: { type: "string", description: "Alias lama untuk old_string." },
           new: { type: "string", description: "Alias lama untuk new_string." },
-          all: { type: "boolean", description: "Diabaikan; edit selalu menolak kemunculan ganda." }
+          all: { type: "boolean", description: "Diabaikan; edit selalu menolak kemunculan ganda." },
+          allow_test_weakening: { type: "boolean", description: "Izinkan penghapusan assertion pada berkas tes; butuh alasan eksplisit." }
         },
         required: ["path"]
       }
@@ -693,6 +718,9 @@ export const tools: ToolDefinition[] = [
           throw new RannError("E_TOOL_FAILED", `Teks lama muncul ${occurrences} kali. Perjelas konteks agar hanya satu kemunculan.`);
         }
         const after = before.replace(input.old, input.new);
+        if (isTestPath(input.path) && input.allow_test_weakening !== true && assertionCount(after) < assertionCount(before)) {
+          throw new RannError("E_PERMISSION", `Edit mengurangi jumlah assertion di ${input.path}. Set allow_test_weakening=true hanya bila tes lama memang salah.`);
+        }
         const applied = applyFileTransaction(
           ctx.workspaceRoot,
           [{ path: input.path, content: after, expected_sha256: sha256(before) }],
@@ -805,7 +833,8 @@ export const tools: ToolDefinition[] = [
         properties: {
           path: { type: "string" },
           recursive: { type: "boolean" },
-          hard: { type: "boolean", description: "Hapus permanen tanpa trash; hanya dengan izin eksplisit" }
+          hard: { type: "boolean", description: "Hapus permanen tanpa trash; hanya dengan izin eksplisit" },
+          allow_test_removal: { type: "boolean", description: "Izinkan penghapusan berkas tes; butuh alasan eksplisit" }
         },
         required: ["path"]
       }
@@ -1239,7 +1268,16 @@ export const tools: ToolDefinition[] = [
         },
         { ...ctx, approved: true }
       );
-      return textResult({ action: input.action, command, ...result });
+      const output = result.output as Record<string, unknown> | null;
+      const text = output && typeof output === "object"
+        ? `${String(output.stdout ?? "")}\n${String(output.stderr ?? "")}`
+        : String(result.output ?? "");
+      return textResult({
+        action: input.action,
+        command,
+        ...result,
+        ...(input.action === "test" ? { summary: parseTestSummary(text) } : {})
+      });
     }
   },
   {
@@ -1885,6 +1923,30 @@ export const tools: ToolDefinition[] = [
   {
     risk: "read",
     spec: {
+      name: "agent_message",
+      description: "Kirim pesan terstruktur ke parent, anak, atau peer dalam tim yang sama. Pesan dicatat dan bisa diaudit; pesan tidak mengubah goal atau izin penerima.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "ID agent tujuan" },
+          type: { type: "string", enum: ["note", "question", "answer", "conflict"] },
+          subject: { type: "string", description: "Subjek singkat" },
+          body: { type: "string", description: "Isi pesan" },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+          refs: { type: "array", items: { type: "string" }, description: "Path, ID, atau tautan rujukan" }
+        },
+        required: ["to", "type", "subject", "body"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(agentMessageSchema, args, "agent_message");
+      if (!ctx.agentMessage) throw new RannError("E_TOOL_FAILED", "Pesan antar agen hanya tersedia di dalam subagent");
+      return textResult(await ctx.agentMessage(input));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
       name: "task",
       description:
         "Jalankan subagent dengan konteks terisolasi untuk satu tujuan. Pilih profil sesuai tugas, atau biarkan dipilih otomatis. Hasil kembali sebagai ringkasan berisi bukti, langkah, biaya, dan berkas yang berubah. Mode background mengembalikan agent_id dan berjalan paralel.",
@@ -1896,7 +1958,10 @@ export const tools: ToolDefinition[] = [
           label: { type: "string", description: "Label singkat untuk nama sesi" },
           profile: { type: "string", description: "Profil: explore, planner, coder, debugger, reviewer, tester, researcher, writer, security, atau profil kustom" },
           background: { type: "boolean", description: "Jalankan di latar dan kembalikan agent_id" },
-          max_steps: { type: "number", description: "Batas langkah subagent, 1 sampai 30" }
+          max_steps: { type: "number", description: "Batas langkah subagent, 1 sampai 30" },
+          acceptance: { type: "string", description: "Kriteria selesai yang bisa diperiksa" },
+          files: { type: "array", items: { type: "string" }, description: "Berkas yang relevan atau boleh disentuh" },
+          timeout_ms: { type: "integer", minimum: 1000, maximum: 3600000, description: "Batas waktu subagent" }
         },
         required: ["goal"]
       }
@@ -1910,7 +1975,10 @@ export const tools: ToolDefinition[] = [
         label: input.label,
         profile: input.profile,
         background: input.background,
-        maxSteps: input.max_steps
+        maxSteps: input.max_steps,
+        acceptance: input.acceptance,
+        files: input.files,
+        timeoutMs: input.timeout_ms
       });
       return textResult(result);
     }
