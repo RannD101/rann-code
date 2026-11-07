@@ -87,9 +87,7 @@ const KEY_SEQUENCES: Array<{ sequence: string; action: string }> = [
   { sequence: "\u001b[1;5D", action: "word-left" },
   { sequence: "\u001b[1;5C", action: "word-right" },
   { sequence: "\u001b[1;3D", action: "word-left" },
-  { sequence: "\u001b[1;3C", action: "word-right" },
-  { sequence: "\u001b[5~", action: "none" },
-  { sequence: "\u001b[6~", action: "none" }
+  { sequence: "\u001b[1;3C", action: "word-right" }
 ];
 
 const CONTROL_KEYS: Record<number, string> = {
@@ -159,6 +157,8 @@ export class LineEditor {
   private escapeTimer?: NodeJS.Timeout;
   private escapeSubmits = false;
   private cancelInFlight = false;
+  private busyCtrlCount = 0;
+  private busyCtrlAt = 0;
   private followCursor = true;
   private viewLine = 0;
   private lastViewStart = 0;
@@ -168,7 +168,11 @@ export class LineEditor {
     const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
     if (!this.listening) {
       if (text.includes("\u0003") && (this.options.busy?.() ?? false)) {
-        void this.cancelWhileBusy();
+        void this.handleBusyCtrlC();
+        return;
+      }
+      if (text.includes("\u0004") && (this.options.busy?.() ?? false) && this.options.onCtrlD) {
+        void this.ctrlDWhileBusy();
         return;
       }
       this.queuedInput += text;
@@ -599,6 +603,19 @@ export class LineEditor {
     this.finish(line);
   }
 
+  private async handleBusyCtrlC(): Promise<void> {
+    const now = Date.now();
+    if (now - this.busyCtrlAt > 2_000) this.busyCtrlCount = 0;
+    this.busyCtrlAt = now;
+    this.busyCtrlCount += 1;
+    if (this.busyCtrlCount === 1) {
+      process.stdout.write("\nTekan Ctrl+C sekali lagi dalam 2 detik untuk membatalkan turn.\n");
+      return;
+    }
+    this.busyCtrlCount = 0;
+    await this.cancelWhileBusy();
+  }
+
   private async cancelWhileBusy(): Promise<void> {
     if (this.cancelInFlight) return;
     this.cancelInFlight = true;
@@ -627,6 +644,15 @@ export class LineEditor {
       return;
     }
     if ((this.options.busy?.() ?? false) && this.options.onCancel) {
+      if (now - this.busyCtrlAt > 2_000) this.busyCtrlCount = 0;
+      this.busyCtrlAt = now;
+      this.busyCtrlCount += 1;
+      if (this.busyCtrlCount === 1) {
+        process.stdout.write("\nTekan Ctrl+C sekali lagi dalam 2 detik untuk membatalkan turn.\n");
+        this.render();
+        return;
+      }
+      this.busyCtrlCount = 0;
       await this.withPrompt(async () => {
         const handled = await this.options.onCancel?.();
         if (handled) process.stdout.write("\nTurn dibatalkan.\n");
@@ -647,6 +673,12 @@ export class LineEditor {
       return;
     }
     this.exit(130);
+  }
+
+  private async ctrlDWhileBusy(): Promise<void> {
+    const choice = await this.options.onCtrlD?.(true);
+    if (choice === "cancel") await this.options.onCancel?.();
+    if (choice === "exit") this.exit(130);
   }
 
   private async handleCtrlD(): Promise<void> {

@@ -43,6 +43,14 @@ export interface ApprovalDecision {
   remember?: boolean;
 }
 
+export function approvalPattern(tool: string, args: unknown): string | null {
+  if (args === null || typeof args !== "object") return tool;
+  const values = args as Record<string, unknown>;
+  const target = values.path ?? values.file ?? values.cwd ?? values.command ?? values.url ?? values.domain ?? values.target;
+  if (typeof target !== "string" || target.trim().length === 0) return tool;
+  return `${tool}:${target.trim().slice(0, 200)}`;
+}
+
 export interface ContextOptions {
   maxTokens: number;
   keepRecent: number;
@@ -76,6 +84,7 @@ export interface AgentConfig {
   systemExtra: string;
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
+  preApprovedPatterns?: Set<string>;
   requestApproval?: (request: { tool: string; args: unknown }) => Promise<ApprovalDecision>;
 }
 
@@ -767,11 +776,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             content,
             contentJson: { toolCallId: call.id, toolName: call.name }
           });
+          const summary = typeof result.output === "string"
+            ? result.output
+            : JSON.stringify(result.output ?? "");
           publish("tool.end", {
             tool: call.name,
             status: result.ok ? "ok" : "error",
             exit_code: result.exitCode,
-            duration_ms: result.durationMs
+            duration_ms: result.durationMs,
+            summary: summary.replace(/\s+/g, " ").slice(0, 240)
           });
           trackGoal(result.ok ? "ok" : "error");
         };
@@ -808,7 +821,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
 
         try {
           let result: Awaited<ReturnType<typeof executeTool>>;
-          const preApproved = options.approved === true || config.preApprovedTools?.has(call.name) === true;
+          const pattern = approvalPattern(call.name, call.args);
+          const preApproved = options.approved === true
+            || config.preApprovedTools?.has(call.name) === true
+            || (pattern !== null && config.preApprovedPatterns?.has(pattern) === true);
           const toolContext = (approved: boolean) => ({
             workspaceRoot,
             workspaceOnly: config.workspaceOnly,
@@ -837,7 +853,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               finishError("E_APPROVAL_REQUIRED", `Izin ditolak user untuk ${call.name}`);
               continue;
             }
-            if (decision.remember) config.preApprovedTools?.add(call.name);
+            if (decision.remember) {
+              if (pattern !== null && config.preApprovedPatterns) config.preApprovedPatterns.add(pattern);
+              else config.preApprovedTools?.add(call.name);
+            }
             result = await executeTool(call.name, call.args, toolContext(true));
           }
           finishOk(result);

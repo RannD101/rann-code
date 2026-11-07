@@ -10,7 +10,7 @@ import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
 import { choose, chooseWith, clearScreen, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
-import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
+import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
 import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
@@ -53,8 +53,10 @@ Flag umum:
   --yes                 setujui otomatis semua permintaan tool
   --plan                susun rencana saja, belum menjalankan tool
   --detach              jalankan turn di latar, langsung cetak id turn
-  --output-format <f>   text | json | stream-json
+  --output-format <f>   text | json | stream-json | ndjson
   --json                keluaran JSON
+  --theme <nama>        dark | light | auto | custom
+  --no-color            matikan warna dan escape ANSI
   -v, --version         versi
   -h, --help            bantuan`;
 
@@ -89,6 +91,15 @@ async function main(argv: string[]): Promise<number> {
     first !== undefined && !first.startsWith("-") && !KNOWN_COMMANDS.has(first)
       ? parseArgs(["run", ...argv])
       : parseArgs(argv);
+
+  if (flagBool(args, "no-color")) process.env.NO_COLOR = "1";
+  const themeFlag = flagString(args, "theme");
+  if (themeFlag !== undefined) {
+    if (themeFlag !== "dark" && themeFlag !== "light" && themeFlag !== "auto" && themeFlag !== "custom") {
+      throw new RannError("E_INVALID_PARAMS", "--theme harus dark, light, auto, atau custom.");
+    }
+    setTheme(themeFlag);
+  }
 
   if (flagBool(args, "version")) {
     print(`rann-code ${packageVersion()}`);
@@ -368,7 +379,9 @@ async function readPipedStdin(): Promise<string> {
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
-  return Buffer.concat(chunks).toString("utf8").trim();
+  const buffer = Buffer.concat(chunks);
+  if (buffer.includes(0)) throw new RannError("E_INVALID_PARAMS", "Input stdin terlihat biner. Kirim teks, atau lampirkan berkas dengan @path.");
+  return buffer.toString("utf8").trim();
 }
 
 async function runPrompt(args: ParsedArgs, text: string): Promise<number> {
@@ -391,14 +404,14 @@ async function runPrompt(args: ParsedArgs, text: string): Promise<number> {
     });
     return { sessionId: created.id as string, reused: false };
   });
-  if (!reused && resolveOutputFormat(args) === "text") print(ui.dim(`sesi ${sessionId}`));
+  if (!reused && resolveOutputFormat(args) === "text") printErr(ui.dim(`sesi ${sessionId}`));
   return await sendToSession(sessionId, prompt, args);
 }
 
 function resolveOutputFormat(args: ParsedArgs): OutputFormat {
   const raw = flagString(args, "output-format") ?? (flagBool(args, "json") ? "json" : "text");
-  if (raw === "text" || raw === "json" || raw === "stream-json") return raw;
-  throw new RannError("E_INVALID_PARAMS", `output-format tidak dikenal: ${raw}. Pakai text, json, atau stream-json.`);
+  if (raw === "text" || raw === "json" || raw === "stream-json" || raw === "ndjson") return raw;
+  throw new RannError("E_INVALID_PARAMS", `output-format tidak dikenal: ${raw}. Pakai text, json, stream-json, atau ndjson.`);
 }
 
 async function sendToSession(sessionId: string, text: string, args: ParsedArgs): Promise<number> {
@@ -434,11 +447,17 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
     if (output === "json") {
       const payload = {
         ok: result.ok,
+        text: result.text,
         result: result.text,
+        sessionId,
         session_id: sessionId,
+        taskId: result.turnId,
         turn_id: result.turnId,
+        status: result.ok ? "done" : "failed",
         steps: result.steps,
         usage: {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
           input_tokens: result.usage.inputTokens,
           output_tokens: result.usage.outputTokens
         },
@@ -470,13 +489,20 @@ function makeApprovalHandler(
           : /write|edit|delete|patch|apply/.test(request.tool)
             ? "menulis atau mengubah berkas di workspace"
             : "menjalankan tool dengan izin tulis di workspace";
-    const prompt = `\nPerlu izin: ${request.tool}\n  args: ${detail.slice(0, 400)}\n  dampak: ${impact}`;
+    const targetValue = args.path ?? args.file ?? args.cwd ?? args.url ?? args.domain ?? args.target;
+    const target = typeof targetValue === "string" ? `\n  target: ${targetValue}` : "";
+    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.slice(0, 2_000)}\n  dampak: ${impact}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
     const choices = [
       { key: "once", label: "Izinkan sekali" },
-      { key: "always", label: "Selalu izinkan tool ini di sesi ini" },
+      { key: "always", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
       { key: "deny", label: "Tolak" }
     ] as const;
-    const answer = ask ? await chooseWith(ask, prompt, [...choices], "deny") : await choose(prompt, [...choices], "deny");
+    const answer = ask
+      ? await chooseWith(async (question) => {
+          const reply = (await ask(question)).trim();
+          return /^(n|no|tidak)$/i.test(reply) ? "deny" : reply;
+        }, prompt, [...choices], "deny")
+      : await choose(prompt, [...choices], "deny");
     return { approved: answer !== "deny", remember: answer === "always" };
   };
 }
@@ -544,10 +570,12 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     let busy = false;
     let totalTokens = 0;
     let totalCost = 0;
+    let lastTurnCost: number | null | undefined;
     let lastInputTokens = 0;
     let lastOutputTokens = 0;
     let contextLimit = 24_000;
     let lastTurnId: string | undefined;
+    let lastCancelled = false;
     let lastResponse = "";
     let pendingAttachment: { name: string; content: string } | undefined;
     const onSigint = async (): Promise<void> => {
@@ -568,8 +596,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       const parts = [model ?? "default"];
       if (totalTokens > 0) parts.push(`${(totalTokens / 1000).toFixed(1)}k tok`);
       if (lastInputTokens > 0 || lastOutputTokens > 0) parts.push(`in ${lastInputTokens} out ${lastOutputTokens}`);
-      if (contextLimit > 0) parts.push(`${Math.min(100, Math.round((lastInputTokens / contextLimit) * 100))}% ctx`);
-      parts.push(totalCost > 0 ? `$${totalCost.toFixed(3)}` : "$?");
+      if (contextLimit > 0) {
+        const percent = Math.min(100, Math.round((lastInputTokens / contextLimit) * 100));
+        const zone = percent >= 90 ? ui.red : percent >= 75 ? ui.yellow : percent >= 50 ? ui.yellow : ui.green;
+        parts.push(zone(`${percent}% ctx`));
+      }
+      const turnCost = lastTurnCost === undefined ? "?" : lastTurnCost === null ? "?" : lastTurnCost.toFixed(4);
+      parts.push(`turn $${turnCost}`);
+      parts.push(totalCost > 0 ? `hari $${totalCost.toFixed(3)}` : "hari $?");
       parts.push(permissionMode ?? "ask");
       if (pendingAttachment) parts.push(`lampiran ${pendingAttachment.name}`);
       const text = parts.join("  ");
@@ -717,6 +751,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       totalTokens += result.usage.inputTokens + result.usage.outputTokens;
       lastResponse = result.text;
       lastTurnId = result.turnId;
+      lastCancelled = !result.ok && result.error?.code === "E_CANCELLED";
+      lastTurnCost = result.costUsd;
       try {
         const budget = await client.request<Record<string, unknown>>("budget.status", {});
         totalCost = Number(budget.spent_usd_today ?? totalCost);
@@ -885,9 +921,10 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
         }
         if (line.startsWith("/") && !findReplCommand(commandName(line))) {
-          const suggestions = matchReplCommands(commandName(line)).slice(0, 3);
-          print(`perintah tidak dikenal: ${commandName(line)}`);
+          const suggestions = nearestCommands(commandName(line), 3);
+          print(ui.red(`E_UNKNOWN_COMMAND: /${commandName(line)} tidak dikenal di mode ini.`));
           if (suggestions.length > 0) print(`mungkin: ${suggestions.map((item) => `/${item.name}`).join(", ")}`);
+          else print("jalankan /help untuk daftar perintah.");
           continue;
         }
         if (line.startsWith("/")) {
@@ -1207,19 +1244,29 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/history" || line.startsWith("/history ")) {
           const argument = line.slice(8).trim();
-          const limit = Number(/--limit\s+(\d+)/.exec(argument)?.[1] ?? 20);
-          const search = /--search\s+(.+)$/.exec(argument)?.[1]?.trim();
-          const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
-          const messages = ((data.messages as Array<Record<string, unknown>> | undefined) ?? [])
-            .filter((message) => message.role === "user" || message.role === "assistant")
-            .filter((message) => (search ? String(message.content ?? "").toLowerCase().includes(search.toLowerCase()) : true))
-            .slice(-Math.max(1, Math.min(200, limit)));
-          if (messages.length === 0) print(ui.dim("belum ada pesan cocok"));
+          if (argument === "clear") {
+            print(ui.green(`${history.clear()} entri riwayat prompt dihapus`));
+            continue;
+          }
+          const limit = Math.max(1, Math.min(1_000, Number(/--limit\s+(\d+)/.exec(argument)?.[1] ?? 20)));
+          const search = /--search\s+(?:"([^"]+)"|(\S+))/.exec(argument);
+          const since = /--(?:since|from)\s+(\d{4}-\d{2}-\d{2})/.exec(argument)?.[1];
+          const until = /--(?:until|to)\s+(\d{4}-\d{2}-\d{2})/.exec(argument)?.[1];
+          const from = since ? new Date(`${since}T00:00:00`).getTime() : undefined;
+          const to = until ? new Date(`${until}T23:59:59`).getTime() : undefined;
+          const rows = history.search({
+            ...(search?.[1] || search?.[2] ? { search: search[1] ?? search[2] ?? "" } : {}),
+            ...(from !== undefined && Number.isFinite(from) ? { from } : {}),
+            ...(to !== undefined && Number.isFinite(to) ? { to } : {}),
+            limit
+          });
+          if (rows.length === 0) print(ui.dim("belum ada prompt cocok"));
           else {
-            for (const message of messages) {
-              const text = String(message.content ?? "").replace(/\s+/g, " ").slice(0, 240);
-              print(`${String(message.role).padEnd(9)} ${text}`);
+            for (const entry of rows) {
+              const when = new Date(entry.at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+              print(`${when}  ${entry.text.replace(/\s+/g, " ").slice(0, 240)}`);
             }
+            print(ui.dim(`${rows.length} entri, file ${history.path}`));
           }
           continue;
         }
@@ -1315,6 +1362,23 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/resume" || line.startsWith("/resume ")) {
           const target = line.slice(7).trim();
+          if (target.length === 0 && lastTurnId && lastCancelled) {
+            const continuation = `Lanjutkan turn ${lastTurnId} dari langkah terakhir. Jangan ulangi tool yang sudah berhasil; periksa riwayat tool di konteks, selesaikan sisa pekerjaan, lalu laporkan hasil dan bukti verifikasi.`;
+            print(ui.dim(`melanjutkan turn ${lastTurnId} dari checkpoint terakhir`));
+            busy = true;
+            try {
+              const result = await runStreaming(client, sessionId, continuation, {
+                ...(model ? { model } : {}),
+                ...(permissionMode ? { permissionMode } : {}),
+                ...(onApproval ? { onApproval } : {})
+              });
+              await recordResult(result);
+              if (!result.ok) print(ui.red("[lanjutan gagal]"));
+            } finally {
+              busy = false;
+            }
+            continue;
+          }
           if (target.length === 0) {
             const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 15, projectPath: process.cwd() });
             for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
@@ -1327,6 +1391,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           if (data.permission_mode) permissionMode = String(data.permission_mode);
           if (typeof data.project_path === "string" && existsSync(data.project_path)) {
             process.chdir(data.project_path);
+            history.switchTo(data.project_path);
             try {
               branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
             } catch {
@@ -1364,6 +1429,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           const session = await client.request<Record<string, unknown>>("session.create", { projectPath: target, model, permissionMode });
           process.chdir(target);
+          history.switchTo(target);
           sessionId = String(session.id);
           model = String(session.model ?? model ?? "default");
           permissionMode = String(session.permission_mode ?? permissionMode ?? "ask");
@@ -1536,7 +1602,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line.startsWith("/")) {
-          print(ui.red(`perintah tidak dikenal: ${line}. Coba /help`));
+          print(ui.red(`E_UNKNOWN_COMMAND: /${commandName(line)} tidak dikenal.`));
+          print(`mungkin: ${nearestCommands(commandName(line), 3).map((item) => `/${item.name}`).join(", ")}, atau /help`);
           continue;
         }
 
@@ -2190,6 +2257,15 @@ function initCommand(): number {
   print(projectMapSummary(map));
   return 0;
 }
+
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
+process.stderr.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
 
 main(process.argv.slice(2))
   .then((code) => {

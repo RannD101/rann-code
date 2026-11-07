@@ -33,11 +33,11 @@ function projectKey(cwd: string): string {
 }
 
 export class HistoryStore {
-  readonly path: string;
+  path: string;
   private entries: HistoryEntry[] = [];
 
   constructor(
-    dir: string,
+    private readonly dir: string,
     cwd: string,
     private readonly maxEntries = 1_000
   ) {
@@ -48,6 +48,12 @@ export class HistoryStore {
       // filesystem non-POSIX
     }
     this.path = join(dir, `${projectKey(cwd)}.jsonl`);
+    this.load();
+  }
+
+  switchTo(cwd: string): void {
+    this.path = join(this.dir, `${projectKey(cwd)}.jsonl`);
+    this.entries = [];
     this.load();
   }
 

@@ -114,7 +114,16 @@ describe("daemon dan RPC", () => {
       });
       await second;
       expect(readFileSync(join(project, "dua.txt"), "utf8")).toBe("dua\n");
-      expect(approvals).toBe(1);
+      expect(approvals).toBe(2);
+
+      const third = waitTurn();
+      await client.request("session.send", {
+        sessionId: session.id,
+        text: 'tool:fs_write {"path":"dua.txt","content":"dua lagi\\n"}'
+      });
+      await third;
+      expect(readFileSync(join(project, "dua.txt"), "utf8")).toBe("dua lagi\n");
+      expect(approvals).toBe(2);
     } finally {
       client.close();
       await daemon.stop();

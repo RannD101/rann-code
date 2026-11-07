@@ -2,8 +2,10 @@ import type { RpcClient } from "@rann/runtime";
 import type { EventEnvelope } from "@rann/shared";
 import { RannError } from "@rann/shared";
 import { printErr, Spinner, ui } from "./ui.js";
+import { previewEdit } from "./edit-preview.js";
+import { MarkdownStream } from "./markdown.js";
 
-export type OutputFormat = "text" | "json" | "stream-json";
+export type OutputFormat = "text" | "json" | "stream-json" | "ndjson";
 
 export interface StreamUsage {
   inputTokens: number;
@@ -23,6 +25,7 @@ export interface StreamResult {
   text: string;
   steps: number;
   usage: StreamUsage;
+  costUsd?: number | null;
   error?: StreamError;
 }
 
@@ -47,6 +50,11 @@ export interface SendOptions {
   onApproval?: (request: ApprovalRequest) => Promise<ApprovalDecision>;
 }
 
+function brief(value: unknown, limit = 160): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? {});
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
 function readUsage(value: unknown): StreamUsage {
   if (value === null || typeof value !== "object") return { inputTokens: 0, outputTokens: 0 };
   const usage = value as Record<string, unknown>;
@@ -57,7 +65,10 @@ function readUsage(value: unknown): StreamUsage {
 }
 
 export async function runStreaming(client: RpcClient, sessionId: string, text: string, options: SendOptions = {}): Promise<StreamResult> {
-  const format = options.output ?? "text";
+  const format = options.output === "ndjson" ? "stream-json" : options.output ?? "text";
+  const phaseSpinner = new Spinner();
+  const phaseEnabled = format === "text" && process.stderr.isTTY === true;
+  if (phaseEnabled) phaseSpinner.start("mengirim");
   const buffered: EventEnvelope[] = [];
   let handler: ((event: EventEnvelope) => void) | undefined;
   const unsubscribe = client.onEvent((event) => {
@@ -65,6 +76,10 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
     else buffered.push(event);
   });
 
+  if (phaseEnabled) {
+    phaseSpinner.stop();
+    phaseSpinner.start("menunggu model");
+  }
   let sent: { turnId: string };
   try {
     sent = await client.request<{ turnId: string }>("session.send", {
@@ -83,10 +98,35 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
   const turnId = sent.turnId;
 
   return await new Promise<StreamResult>((resolve, reject) => {
-    let wroteText = false;
+    const markdown = format === "text" ? new MarkdownStream() : undefined;
     let pendingApproval = false;
     let pendingError: StreamError | undefined;
     let collected = "";
+    let costUsd: number | null | undefined;
+    let pendingText = "";
+    let flushTimer: NodeJS.Timeout | undefined;
+    let reasoningOpen = false;
+    const flushText = (): void => {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = undefined;
+      }
+      if (pendingText.length === 0) return;
+      if (format === "text" && !pendingApproval) {
+        const rendered = markdown ? markdown.push(pendingText) : pendingText;
+        if (rendered.length > 0) process.stdout.write(rendered);
+      }
+      pendingText = "";
+    };
+    const queueText = (chunk: string): void => {
+      pendingText += chunk;
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        flushText();
+      }, 33);
+      flushTimer.unref();
+    };
     const emit = (payload: Record<string, unknown>): void => {
       if (format === "stream-json") process.stdout.write(`${JSON.stringify(payload)}\n`);
     };
@@ -97,23 +137,31 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
 
     const cleanup = (): void => {
       clearTimeout(timer);
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = undefined;
+      phaseSpinner.stop();
       handler = undefined;
       unsubscribe();
       unsubscribeClose();
     };
 
     const breakLine = (): void => {
-      if (format === "text" && wroteText) process.stdout.write("\n");
-      wroteText = false;
+      if (format === "text") {
+        const rendered = markdown?.flush() ?? "";
+        if (rendered.length > 0) process.stdout.write(rendered);
+      }
     };
 
     const toolSpinner = new Spinner();
     let toolStartedAt = 0;
+    let planTotal = 0;
+    let taskStartedAt = 0;
+    const taskStatuses = new Map<string, string>();
     const unsubscribeClose = client.onClose(() => {
       if (!handler) return;
       toolSpinner.stop();
       breakLine();
-      if (format === "text") printErr(ui.yellow("[koneksi terputus, jawaban mungkin tidak lengkap]"));
+      if (format === "text") printErr(ui.yellow("[stream terputus] jawaban mungkin tidak lengkap, jalankan /resume atau ulangi prompt"));
       cleanup();
       resolve({
         ok: false,
@@ -159,23 +207,55 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       if (event.type === "message.delta") {
         const chunk = String(event.data.text ?? "");
         collected += chunk;
-        if (format === "text" && !pendingApproval) {
-          wroteText = true;
-          process.stdout.write(chunk);
-        } else if (format === "stream-json") {
-          emit({ type: "message.delta", turn_id: turnId, text: chunk });
+        phaseSpinner.stop();
+        if (format === "stream-json") emit({ type: "message.delta", turn_id: turnId, text: chunk });
+        else if (format === "text") {
+          if (reasoningOpen) {
+            process.stdout.write("\n");
+            reasoningOpen = false;
+          }
+          queueText(chunk);
+        }
+        return;
+      }
+      if (event.type === "usage.update") {
+        if (typeof event.data.cost_usd === "number") costUsd = event.data.cost_usd;
+        else if (event.data.cost_usd === null) costUsd = null;
+        return;
+      }
+      if (event.type === "reasoning.delta") {
+        const chunk = String(event.data.text ?? "");
+        if (format === "text" && chunk.length > 0) {
+          phaseSpinner.stop();
+          if (!reasoningOpen) {
+            process.stdout.write(ui.dim("\n[reasoning]\n"));
+            reasoningOpen = true;
+          }
+          process.stdout.write(ui.dim(chunk));
         }
         return;
       }
       if (event.type === "tool.start" || event.type === "tool.started") {
+        flushText();
+        phaseSpinner.stop();
+        if (reasoningOpen) {
+          process.stdout.write("\n");
+          reasoningOpen = false;
+        }
         breakLine();
         const tool = String(event.data.tool);
+        const argText = brief(event.data.args);
+        const preview = format === "text" ? previewEdit(tool, event.data.args, process.cwd()) : null;
+        if (preview) {
+          printErr(ui.dim(`[diff] ${preview.path}  +${preview.added} -${preview.removed}`));
+          for (const line of preview.lines) printErr(ui.dim(`  ${line}`));
+        }
         if (format === "text") {
           if (process.stderr.isTTY) {
             toolStartedAt = Date.now();
-            toolSpinner.start(`[tool] ${tool}`);
+            toolSpinner.start(`[tool] ${tool} ${argText}`);
           } else {
-            process.stdout.write(ui.dim(`[tool] ${tool}\n`));
+            printErr(ui.dim(`[tool] ${tool} ${argText}`));
           }
         }
         emit({ type: "tool.start", turn_id: turnId, tool, args: event.data.args });
@@ -188,10 +268,12 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           const label = status === "ok" ? ui.green("ok") : ui.red(status);
           const duration = Number(event.data.duration_ms ?? (toolStartedAt > 0 ? Date.now() - toolStartedAt : 0));
           const timing = duration > 0 ? ` ${(duration / 1000).toFixed(1)}s` : "";
+          const exit = event.data.exit_code === undefined || event.data.exit_code === null ? "" : ` exit ${String(event.data.exit_code)}`;
+          const summary = typeof event.data.summary === "string" && event.data.summary.length > 0 ? `  ${brief(event.data.summary, 160)}` : "";
           if (process.stderr.isTTY) {
-            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}`));
+            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${summary}`));
           } else {
-            process.stdout.write(ui.dim(`[tool] ${tool} ${label}${timing}\n`));
+            printErr(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${summary}`));
           }
           toolStartedAt = 0;
         }
@@ -199,15 +281,25 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "plan.update") {
+        if (typeof event.data.tasks === "number") planTotal = event.data.tasks;
         if (format === "text" && typeof event.data.status === "string") {
-          process.stdout.write(ui.dim(`[plan] ${event.data.status}${event.data.reason ? `: ${event.data.reason}` : ""}\n`));
+          const total = planTotal > 0 ? ` ${planTotal} langkah` : "";
+          printErr(ui.dim(`[plan] ${event.data.status}${total}${event.data.reason ? `: ${event.data.reason}` : ""}`));
         }
         emit({ type: "plan.update", turn_id: turnId, ...event.data });
         return;
       }
       if (event.type === "task.update") {
-        if (format === "text" && typeof event.data.status === "string") {
-          process.stdout.write(ui.dim(`[task] ${event.data.status} ${String(event.data.title ?? "")}\n`));
+        const taskId = String(event.data.task_id ?? event.data.plan_task_id ?? "");
+        const status = String(event.data.status ?? "");
+        if (taskId && status) taskStatuses.set(taskId, status);
+        if (status === "running") taskStartedAt = Date.now();
+        if (format === "text" && status) {
+          const done = [...taskStatuses.values()].filter((value) => value === "done").length;
+          const current = status === "running" ? Math.min(done + 1, planTotal || done + 1) : done;
+          const counter = planTotal > 0 ? ` ${current}/${planTotal}` : "";
+          const elapsed = status === "running" && taskStartedAt > 0 ? ` ${((Date.now() - taskStartedAt) / 1000).toFixed(1)}s` : "";
+          printErr(ui.dim(`[task]${counter} ${status} ${String(event.data.title ?? "")}${elapsed}`));
         }
         emit({ type: "task.update", turn_id: turnId, ...event.data });
         return;
@@ -227,6 +319,12 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         return;
       }
       if (event.type === "turn.end") {
+        flushText();
+        phaseSpinner.stop();
+        if (reasoningOpen) {
+          process.stdout.write("\n");
+          reasoningOpen = false;
+        }
         toolSpinner.stop();
         breakLine();
         const usage = readUsage(event.data.usage);
@@ -243,11 +341,14 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           text: finalText,
           steps,
           usage,
+          costUsd,
           error: ok ? undefined : pendingError
         });
         return;
       }
       if (event.type === "turn.completed") {
+        flushText();
+        phaseSpinner.stop();
         toolSpinner.stop();
         breakLine();
         const usage = readUsage(event.data.usage);
@@ -255,7 +356,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         const finalText = typeof event.data.text === "string" ? event.data.text : collected;
         emit({ type: "turn.end", turn_id: turnId, ok: true, steps, usage, text: finalText });
         cleanup();
-        resolve({ ok: true, turnId, text: finalText, steps, usage });
+        resolve({ ok: true, turnId, text: finalText, steps, usage, costUsd });
         return;
       }
       if (event.type === "turn.failed") {

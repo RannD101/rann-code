@@ -33,7 +33,8 @@ const VALUE_FLAGS = new Set([
   "body",
   "project",
   "env",
-  "policy"
+  "policy",
+  "theme"
 ]);
 
 function setFlag(flags: ParsedArgs["flags"], key: string, value: string | boolean): void {

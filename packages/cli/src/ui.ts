@@ -182,7 +182,7 @@ export function printErr(line: string): void {
   process.stderr.write(`${line}\n`);
 }
 
-export function clearScreen(tty = true): void {
+export function clearScreen(tty = colorsEnabled()): void {
   if (!tty) return;
   process.stdout.write("\u001b[2J\u001b[H");
 }

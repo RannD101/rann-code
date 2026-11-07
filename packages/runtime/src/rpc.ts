@@ -79,6 +79,7 @@ export class RpcServer {
   private readonly activeTurns = new Map<string, AbortController>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sessionApprovals = new Map<string, Set<string>>();
+  private readonly sessionApprovalPatterns = new Map<string, Set<string>>();
   private readonly db: Db;
   private readonly secrets: SecretStore;
   private readonly mcp: McpManager;
@@ -680,6 +681,8 @@ export class RpcServer {
     this.activeTurns.set(sessionId, controller);
     const approvals = this.sessionApprovals.get(sessionId) ?? new Set<string>();
     this.sessionApprovals.set(sessionId, approvals);
+    const approvalPatterns = this.sessionApprovalPatterns.get(sessionId) ?? new Set<string>();
+    this.sessionApprovalPatterns.set(sessionId, approvalPatterns);
 
     const agentConfig: AgentConfig = {
       permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? session.permission_mode,
@@ -690,6 +693,7 @@ export class RpcServer {
       maxRuntimeMs: config.agent.max_runtime_ms,
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
+      preApprovedPatterns: approvalPatterns,
       requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal)
     };
 
@@ -1035,6 +1039,7 @@ export class RpcServer {
     for (const entry of this.pendingApprovals.values()) entry.settle(false);
     this.pendingApprovals.clear();
     this.sessionApprovals.clear();
+    this.sessionApprovalPatterns.clear();
     await this.mcp.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     for (const socket of this.sockets) socket.destroy();
