@@ -1,8 +1,6 @@
 # Backlog audit 151 FR
 
-Total terbaca: 132. done 7, partial 121, missing 4.
-
-Setiap butir gap harus ditutup dengan kode dan tes nyata sebelum 1.0.0.
+done 7, partial 140, missing 4.
 
 ## RC-FR-001 REPL interaktif [partial]
 - Butir 1: `rann` tanpa argumen dengan stdout bukan TTY mencetak help (main.ts:128-130), bukan menjalankan mode non-interaktif.
@@ -80,6 +78,126 @@ Setiap butir gap harus ditutup dengan kode dan tes nyata sebelum 1.0.0.
 - Butir 1: `@path` yang tidak ada dilewati diam-diam di CLI (main.ts:909), sehingga path tidak divalidasi dan prompt tetap dikirim tanpa lampiran.
 - AC: `@path` tidak menampilkan konfirmasi lampiran; hanya `/attach` yang mencetak status (main.ts:2133), sedangkan extractAttachments tidak mencetak apa pun (main.ts:901-914).
 - Butir 5: batas total 50 MB belum diuji; tes berjudul total 50 MB hanya memeriksa berkas 20 MB lebih (attachments.test.ts:66-72).
+
+## RC-FR-020 Help dan error contract [partial]
+- Butir 1: `rann --help` memakai string statis (main.ts:20-56), bukan registry REPL_COMMANDS (repl-commands.ts:197), jadi kedua dokumentasi bisa berbeda isi.
+- Butir 2: tidak semua error membawa saran tindakan; error tanpa data.hint dan tanpa entri failure-analysis hanya menampilkan kode dan pesan (main.ts:3839-3843).
+- Butir 3: --debug hanya menambah stack pada penangan error tingkat atas (main.ts:3844); error yang dicetak di dalam REPL tidak berubah detailnya.
+- Butir 4: jalur izin ditolak hanya mencetak `Izin ditolak user untuk <tool>` tanpa cara mengubah izin (agent.ts:1124-1126).
+- Butir 5: tidak ada lapisan i18n atau locale; seluruh pesan berupa literal bahasa Indonesia dan tidak ada sakelar ke bahasa Inggris.
+
+## RC-FR-021 Agent reasoning loop [partial]
+- Butir 1: tidak ada fase eksplisit understand, plan, act, observe, evaluate, verify, report; yang ada hanya plan.update, tool.start, tool.end, message, dan turn.end (agent.ts:596-1170).
+- Butir 2: turn tetap difinalisasi done setelah dua kegagalan verifikasi dengan gap masih tersisa (agent.ts:793-832), dan turn tanpa plan langsung done saat model berhenti tanpa tool call.
+- Butir 3: tidak ada event observe, evaluate, atau verify tersendiri; hasil tool hanya ditulis sebagai pesan tool (agent.ts:955-969).
+- Butir 5: kelanjutan otomatis saat model berhenti tanpa tool call hanya berlaku bila ada plan aktif (agent.ts:789-805); tanpa plan tidak ada pertanyaan atau aksi lanjutan.
+
+## RC-FR-022 Perencanaan otomatis [partial]
+- Butir 1: tidak ada deteksi dependensi eksternal (paket, layanan, API); planDecision hanya melihat langkah, file, operasi besar, dan task class (planner.ts:81-93).
+- Butir 3: validasi bukan skema ketat; normalizePlan mengisi agen `coding`, risiko `low`, dan estimasi `[5,15]` saat field hilang (planner.ts:183-197).
+- Butir 3: task tanpa agen atau tanpa file tetap lolos karena validatePlan hanya mewajibkan judul dan acceptance (planner.ts:224-231).
+- AC: jumlah task minimal tiga tidak divalidasi; validatePlan menerima plan dengan satu task (planner.ts:221), sehingga goal kompleks bisa menghasilkan plan satu task.
+
+## RC-FR-023 Mode plan eksplisit [partial]
+- Butir 2: tidak ada persetujuan, penolakan, atau pengeditan per task sebelum eksekusi; yang ada hanya approval boolean untuk plan berisiko tinggi (agent.ts:483-497).
+- Butir 3: `--plan-only` menghasilkan JSON hanya jika `--json` juga diberikan (main.ts:846); mode teks default mencetak markdown.
+- Butir 4: mode plan tidak bisa membaca file atau mencari informasi karena agent kembali sebelum loop tool (agent.ts:505-543) dan planner hanya menerima workspaceBrief (planner.ts:100-119).
+- Butir 5: `/execute <tugas>` menyusun plan baru dari prompt baru (main.ts:2769-2786), bukan melanjutkan plan yang baru dibuat; `/plan` tanpa argumen tidak punya handler, hanya `/plan <tugas>` (main.ts:2793).
+
+## RC-FR-024 Dekomposisi tugas dan DAG [partial]
+- Butir 1: tujuan task (description) opsional dan tidak divalidasi; agen serta file juga tidak wajib di validatePlan (planner.ts:224-231).
+- Butir 4: tidak ada penanda task paralel dan tidak ada eksekusi bersamaan; plan task dijalankan satu per satu berdasarkan created_at (plan-runtime.ts:182-235, agent.ts:846).
+- Butir 4: tidak ada penjadwalan yang mempertimbangkan konflik lease antar task paralel.
+- AC: plan enam task dengan task tanpa agen atau tanpa file tetap lolos validasi selama judul dan acceptance ada (planner.ts:224-231).
+
+## RC-FR-025 Deteksi dependensi dan urutan eksekusi [partial]
+- Butir 1: dependensi implisit dari file atau modul tidak dideteksi; hanya task.dependsOn eksplisit yang dipakai (planner.ts:232-237).
+- Butir 4: tidak ada konsep dependensi non-kritis; semua dependensi diperlakukan sebagai prasyarat keras (plan-runtime.ts:214-215).
+- Butir 2: urutan topologis dari validatePlan tidak dipakai saat eksekusi; advancePlanTask memilih task pertama berstatus queued yang dependensinya selesai berdasarkan created_at (plan-runtime.ts:182-215).
+
+## RC-FR-026 Penilaian risiko [partial]
+- Butir 1: tidak ada klasifikasi risiko dari kategori perubahan skema, migrasi, penghapusan file, Git destruktif, auth, dependency baru, atau deploy; risiko berasal dari JSON model (planner.ts:183-192).
+- Butir 2: task hanya menyimpan level, tidak menyimpan alasan; reason hanya ada pada array risks yang opsional (planner.ts:30-34, 199-207).
+- Butir 4: normalizeRisk menurunkan nilai tak dikenal menjadi `low` (planner.ts:151-153), sehingga model bisa menghilangkan level tinggi tanpa penilaian independen.
+- Butir 5: ringkasan approval tidak memuat alasan risiko, hanya level dan daftar task (planner.ts:350-360).
+- AC: task migrasi database tidak otomatis ditandai high karena tidak ada detektor kategori migrasi (planner.ts:58-94).
+
+## RC-FR-027 Estimasi eksekusi [partial]
+- Butir 2: tidak ada label historical atau heuristic dan tidak ada pembacaan data historis task; estimasi sepenuhnya dari model.
+- Butir 3: revisePlan mempertahankan estimasi lama bila revision.estimate tidak diisi (plan-runtime.ts:289), jadi estimasi tidak diperbarui otomatis saat plan berubah.
+- Butir 4: nilai hilang diganti angka palsu [5,15] menit dan [0,0] dolar (planner.ts:196-197), bukan `tidak tersedia`.
+- Butir 5: tidak ada pencatatan aktual versus estimasi setelah task selesai; tabel tasks tidak punya kolom aktual (schema-v3.ts:127-142).
+
+## RC-FR-028 Persetujuan rencana [partial]
+- Butir 2: hanya ada setuju atau tolak seluruh plan; tidak ada persetujuan sebagian task dan tidak ada permintaan revisi dengan catatan.
+- Butir 3: tidak ada status pending per task; setelah plan disetujui, startFirstTask langsung menjalankan task pertama (agent.ts:512).
+- Butir 4: masa berlaku hanya timeout permintaan approval 10 menit (rpc.ts:131); plan yang sudah disetujui tidak punya kedaluwarsa dan tidak perlu disetujui ulang.
+- Butir 5: audit mencatat aktor dan waktu, tetapi tidak mengikat keputusan ke versi plan atau daftar task yang disetujui (rpc.ts:1272-1285).
+
+## RC-FR-029 Persistensi dan versi rencana [partial]
+- Butir 2: plan lama tidak disimpan sebagai baris tersendiri dan status `superseded` tidak ada di CHECK status plans (schema-v3.ts:102); revisi menimpa baris yang sama (plan-runtime.ts:300-320).
+- Butir 3: `/plan show` tidak ada; hanya `/plan <tugas>` (main.ts:2793) dan `/tasks` yang tidak menampilkan nomor versi atau riwayat versi.
+- Butir 4: tidak ada perintah atau RPC untuk ekspor dan impor plan ke JSON; pencarian plan.export dan plan.import tidak menemukan implementasi.
+- Butir 1: versi tersimpan, tetapi status plan setelah revisit hanya satu baris sehingga versi lama tidak bisa dibuka ulang sebagai plan utuh.
+
+## RC-FR-030 Replanning dinamis [partial]
+- Butir 1: tidak ada trigger otomatis untuk task gagal permanen, file target hilang, atau dependensi berubah; hanya model yang memanggil tool plan_revise, sementara kegagalan task hanya menandai blocked (plan-runtime.ts:144-175).
+- Butir 3: approval ulang hanya untuk perubahan goal atau penambahan task high (agent.ts:1040-1052); perubahan besar lain tidak memicu approval.
+- Butir 4: perubahan kecil seperti urutan task low tidak bisa otomatis dan tidak dicatat sebagai revisi terpisah; semua revisi harus lewat plan_revise.
+- Butir 2: plan lama tidak tersimpan sebagai versi terpisah, hanya metadata pada baris plan yang sama (plan-runtime.ts:300-320).
+
+## RC-FR-031 Eksekusi multi-langkah dan pemilihan tool [partial]
+- Butir 2: tool yang tidak diizinkan tetap dikirim ke model; pemeriksaan izin baru terjadi saat eksekusi (agent.ts:583-590 vs tools/index.ts assertAllowed).
+- Butir 1: tidak ada pemilihan tool berdasarkan capability, biaya, atau konteks; model memilih sendiri dari seluruh kandidat.
+- Butir 4: tidak ada eksekusi tool paralel; semua call dijalankan berurutan (agent.ts:846-880).
+- AC: tidak ada alasan pemilihan tool yang dicatat atau ditampilkan; trace hanya memuat nama tool dan args (agent.ts:875-880).
+- Butir 3: timeout bergantung pada konfigurasi tiap tool, tidak ada batas waktu per tool call yang tercatat di metadata call (tools/index.ts:1093-1133).
+
+## RC-FR-032 Observasi dan evaluasi [partial]
+- Butir 1: tidak ada objek observation dengan status, ringkasan, data, dan artefak; hasil tool hanya JSON mentah di pesan tool (agent.ts:955-969).
+- Butir 2: tidak ada evaluasi per langkah terhadap kriteria task; verifikasi hanya di akhir plan (agent.ts:789-805).
+- Butir 3: hasil kosong tidak ditandai dan tetap dianggap sukses karena textResult selalu ok true (tools/index.ts:95-97).
+- Butir 4: tidak ada event evaluasi beserta alasan; trace hanya mencatat tool.start, tool.end, dan error (agent.ts:875-969).
+- Butir 5: tidak ada jalur `tidak tahu`; bila verifikasi tidak bisa dijalankan, turn tetap selesai dengan teks model.
+
+## RC-FR-033 Self-correction dan strategi retry [partial]
+- Butir 1: matriks retry di ARCHITECTURE bagian 13.3 tidak ada di repo; docs hanya berisi audit, prd, status.md, dan tutorial, tanpa ARCHITECTURE.md.
+- Butir 2: percobaan ketiga dengan args identik masih dijalankan; penghentian baru terjadi pada percobaan keempat karena kondisi `seen > 3` (agent.ts:990-996).
+- Butir 3: E_NO_PROGRESS tidak punya entri di tabel failure-analysis, jadi analisisnya jatuh ke kategori unknown dengan saran generik (failure-analysis.ts:101-105).
+- Butir 4: tidak ada catatan perubahan strategi atau parameter; retry mengulang args yang sama (agent.ts:1097-1105).
+- Butir 5: retry otomatis hanya pada tool baca yang idempoten, tetapi tidak ada mekanisme yang mencegah model memanggil ulang tool tulis secara identik sampai batas empat kali (agent.ts:984-996).
+
+## RC-FR-034 Pemulihan error [partial]
+- Butir 2: conflict tidak memicu replan dan budget hanya menghentikan turn; tidak ada pemetaan transient, permanent, conflict, budget, policy ke aksi berbeda (failure-analysis.ts:31-97).
+- Butir 4: checkpoint file hanya dibuat sekali per turn sebelum tool mutasi pertama (agent.ts:853-860); perubahan file berikutnya tidak punya titik rollback.
+- Butir 5: tidak ada pilihan pengguna retry, skip, replan, atau abort saat error bisa dipulihkan; agent langsung retry atau menghentikan turn (agent.ts:1092-1186).
+- AC: setelah tool timeout, state disimpan tetapi turn tidak bisa dilanjutkan otomatis dari langkah terakhir; /resume hanya meneruskan percakapan, bukan state tool (main.ts:2287-2312).
+
+## RC-FR-035 Prioritas task [partial]
+- Butir 1: prioritas tersimpan dan diurutkan di listTasks, tetapi eksekusi plan mengabaikannya dan memakai urutan created_at (plan-runtime.ts:182-215).
+- Butir 2: tidak ada API atau perintah untuk mengubah prioritas task yang sedang berjalan atau antre.
+- Butir 3: tidak ada antrean terpisah untuk task high dengan concurrency lebih besar; plan task selalu dijalankan berurutan (agent.ts:846).
+- Butir 4: task yang menunggu approval plan memblokir seluruh turn, termasuk task lain yang tidak butuh approval (agent.ts:483-512).
+- Butir 5: perubahan prioritas tidak dicatat karena tidak ada operasi perubahan prioritas.
+
+## RC-FR-036 Goal tracking dan state [partial]
+- AC: runTurn tidak memanggil finishGoal, jadi turn bisa berstatus done meski kriteria goal belum terpenuhi (agent.ts:832); finishGoal hanya dipanggil dari /goal finish (main.ts:1511).
+- Butir 2: progres bertambah pada setiap tool, termasuk tool yang gagal (agent.ts:880-890), sehingga angka langkah tidak mencerminkan kemajuan task.
+- Butir 4: kriteria hanya punya status done boolean dan bukti; tidak ada status gagal atau alasan kegagalan per kriteria (goal-repos.ts:4-10).
+- Butir 1: goal disimpan di tabel goals per sesi, bukan di state task; task hanya menyimpan plan_id dan metadata (schema-v3.ts:127-142).
+
+## RC-FR-037 Dukungan task panjang [partial]
+- Butir 2: turn yang stalled hanya ditandai dan diberi event; tidak ada pemulihan otomatis, dan turn yang terputus saat restart justru ditandai failed (repos.ts:259-283).
+- Butir 3: checkpoint tidak berkala; checkpoint file hanya dibuat sekali sebelum tool mutasi pertama (agent.ts:853-860), bukan setiap N langkah atau setelah test lulus.
+- Butir 4: progress dan log tersedia di CLI dan dashboard, tetapi messaging hanya mengirim hasil akhir turn.end (messaging.ts:392-428), bukan progres berkala.
+- AC: setelah 10 menit heartbeat memang tetap di bawah 10 detik, tetapi tidak ada bukti pemulihan task yang stalled karena /resume hanya aktif setelah pembatalan manual (main.ts:2287-2291).
+
+## RC-FR-038 Checkpoint dan kelanjutan task [partial]
+- Butir 1: checkpoint file hanya dibuat sekali per turn sebelum tool mutasi pertama; tidak ada checkpoint setelah test lulus atau setiap N langkah (agent.ts:853-860).
+- Butir 2: manifest tidak menyimpan Git ref, dan checkpoint DB tidak menyimpan status task lengkap, hanya step, plan_id, tool, args, dan file_checkpoint_id (agent.ts:863-875).
+- Butir 3: setelah crash, recoverInterruptedTurns menandai turn failed dan menambah pesan pemulihan, bukan melanjutkan dari checkpoint (repos.ts:259-283).
+- Butir 4: checkpoint.restore hanya mengembalikan file, tidak mengembalikan state task (rpc.ts:821-835); /undo memakai force true sehingga melewati pemeriksaan file yang berubah (main.ts:2547).
+- Butir 5: `/checkpoint` tidak punya aksi hapus; hanya daftar (main.ts:2389-2393), dan tidak ada RPC checkpoint.delete.
 
 ## RC-FR-039 Analisis kegagalan dan verifikasi [partial]
 - Verifikasi hanya berjalan jika ada plan aktif; turn tanpa plan bisa selesai tanpa menjalankan kriteria apa pun.

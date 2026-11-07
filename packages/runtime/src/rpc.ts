@@ -1071,8 +1071,6 @@ export class RpcServer {
           input.name as string,
           input.source as string | undefined
         );
-      case "skill.conflicts":
-        return this.skillStore(input.projectPath as string | undefined).conflicts();
       case "skill.remove":
         return {
           removed: this.skillStore(input.projectPath as string | undefined).remove(
