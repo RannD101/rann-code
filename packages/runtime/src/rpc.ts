@@ -1367,14 +1367,15 @@ export class RpcServer {
     tool: string,
     args: unknown,
     signal?: AbortSignal,
-    reason?: string
+    reason?: string,
+    risk?: "low" | "medium" | "high"
   ): Promise<ApprovalDecision> {
     const requestId = newId("req");
     const event = appendEvent(this.db, {
       type: "approval.request",
       sessionId,
       turnId,
-      data: { request_id: requestId, tool, args: redactSecrets(args), ...(reason ? { reason } : {}) }
+      data: { request_id: requestId, tool, args: redactSecrets(args), ...(reason ? { reason } : {}), ...(risk ? { risk } : {}) }
     });
     this.broadcast(event);
 
@@ -1578,7 +1579,7 @@ export class RpcServer {
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
       preApprovedPatterns: approvalPatterns,
-      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal, request.reason),
+      requestApproval: (request) => this.requestApproval(sessionId, turn.id, request.tool, request.args, controller.signal, request.reason, request.risk),
       ...(config.hooks.length > 0
         ? {
             hooks: new HookRunner(config.hooks, {
@@ -1963,7 +1964,7 @@ export class RpcServer {
         .filter(Boolean)
         .join("\n"),
       requestApproval: (request) =>
-        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal, request.reason),
+        this.requestApproval(options.parent.id, options.parentTurnId, request.tool, request.args, controller.signal, request.reason, request.risk),
       ...(config.hooks.length > 0
         ? {
             hooks: new HookRunner(config.hooks, {

@@ -6,7 +6,9 @@ import {
   appendEvent,
   completeToolCall,
   createCheckpoint,
+  finishGoal,
   finishTurn,
+  getActiveGoal,
   listMessages,
   markTurnRunning,
   recordUsage,
@@ -16,6 +18,7 @@ import {
   updateGoalProgress
 } from "@rann/storage";
 import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import type { ChatAttachment, ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
@@ -48,6 +51,7 @@ import {
 export interface ApprovalDecision {
   approved: boolean;
   remember?: boolean;
+  reason?: string;
 }
 
 export function approvalPattern(tool: string, args: unknown): string | null {
@@ -62,6 +66,7 @@ export interface ContextOptions {
   maxTokens: number;
   keepRecent: number;
   summaryChars: number;
+  vision?: boolean;
 }
 
 export interface BudgetOptions {
@@ -97,7 +102,7 @@ export interface AgentConfig {
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
   preApprovedPatterns?: Set<string>;
-  requestApproval?: (request: { tool: string; args: unknown; reason?: string }) => Promise<ApprovalDecision>;
+  requestApproval?: (request: { tool: string; args: unknown; reason?: string; risk?: "low" | "medium" | "high" }) => Promise<ApprovalDecision>;
   hooks?: HookRunner;
   scheduleTask?: (input: { text: string; priority?: number; delaySeconds?: number; idempotencyKey?: string }) => Promise<unknown>;
   sendMessage?: (chatId: number, text: string, threadId?: number) => Promise<unknown>;
@@ -251,7 +256,16 @@ function systemPrompt(
   return lines.join("\n");
 }
 
-function toChatMessages(rows: MessageRow[]): ChatMessage[] {
+function currentGitRef(root: string): string | undefined {
+  try {
+    const value = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toChatMessages(rows: MessageRow[], options: { vision?: boolean } = {}): ChatMessage[] {
   const messages: ChatMessage[] = [];
   for (const row of rows) {
     if (row.role === "user" && row.content_json) {
@@ -271,6 +285,10 @@ function toChatMessages(rows: MessageRow[]): ChatMessage[] {
             continue;
           }
           if (attachment.kind === "image") {
+            if (options.vision === false) {
+              content += `\n\n[lampiran gambar ${attachment.name} tidak dikirim: model aktif tanpa capability vision]`;
+              continue;
+            }
             images.push({
               name: attachment.name,
               mime: attachment.mime,
@@ -353,7 +371,8 @@ export function buildChatContext(
   baseSystem: string,
   options: ContextOptions
 ): BuiltContext {
-  const full = toChatMessages(rows);
+  const vision = options.vision !== false;
+  const full = toChatMessages(rows, { vision });
   const fullTokens = estimateTokens(baseSystem) + full.reduce((sum, message) => sum + messageTokens(message), 0);
   if (fullTokens <= options.maxTokens) {
     return {
@@ -383,7 +402,7 @@ export function buildChatContext(
       digest.length > 0 ? digest : "(pesan lama tidak memiliki teks yang bisa diringkas)"
     ].join("\n")
   };
-  const recent = toChatMessages(rows.slice(cut));
+  const recent = toChatMessages(rows.slice(cut), { vision });
   const messages: ChatMessage[] = [{ role: "system", content: baseSystem }, summary, ...recent];
   const estimated = estimateTokens(baseSystem) + messageTokens(summary) + recent.reduce((sum, message) => sum + messageTokens(message), 0);
   return { messages, compacted: true, dropped: cut, estimated_tokens: estimated };
@@ -407,6 +426,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let summaryPersisted = false;
   let lastCompactionKey = "";
   let prematureCount = 0;
+  let goalPrompts = 0;
   let lastToolSignature = "";
   let repeatedToolCalls = 0;
   let fileCheckpointId: string | undefined;
@@ -523,6 +543,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   }
   const taskClass = options.taskClass ?? classifyTask(options.userText);
   let activePlan: ActivePlan | undefined;
+  const initialGitRef = options.checkpointsDir ? currentGitRef(workspaceRoot) : undefined;
   let planText = "";
   const decision = planDecision(taskClass, options.userText);
   if (!decision.needed) {
@@ -675,7 +696,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         throw new RannError("E_RUNTIME_EXCEEDED", message);
       }
       const history = listMessages(db, session.id, 400);
-      const built = buildChatContext(history, baseSystem, contextOptions);
+      const built = buildChatContext(history, baseSystem, {
+        ...contextOptions,
+        vision: options.modelCapabilities?.vision !== false
+      });
       if (built.compacted) {
         compactedAny = true;
         await runHook("PreCompact", { dropped_messages: built.dropped, kept_messages: history.length - built.dropped });
@@ -878,6 +902,31 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             }
           }
         }
+        const activeGoal = getActiveGoal(db, session.id);
+        const pendingCriteria = activeGoal?.status === "active" ? activeGoal.criteria.filter((criterion) => !criterion.done) : [];
+        if (pendingCriteria.length > 0 && goalPrompts < 2) {
+          goalPrompts += 1;
+          publish("phase", { phase: "reflect", reason: "goal_incomplete", pending: pendingCriteria.length });
+          addMessage(db, {
+            sessionId: session.id,
+            turnId,
+            role: "system",
+            content: [
+              `Goal belum selesai. Kriteria yang belum terpenuhi: ${pendingCriteria.map((criterion) => criterion.text).join("; ")}.`,
+              "Lanjutkan pekerjaan dan tandai kriteria lewat goal_update setelah bukti nyata ada. Jangan berhenti dengan ringkasan saja."
+            ].join("\n")
+          });
+          continue;
+        }
+        if (pendingCriteria.length > 0) {
+          const message = `Goal belum selesai setelah ${goalPrompts} percobaan lanjutan: ${pendingCriteria.map((criterion) => criterion.text).join("; ")}`;
+          finishGoal(db, session.id, "failed", message);
+          publish("error", { error_code: "E_GOAL_INCOMPLETE", message });
+          publish("phase", { phase: "report", status: "failed" });
+          publish("turn.end", { status: "failed", error_code: "E_GOAL_INCOMPLETE", steps, text });
+          finalize("failed", { code: "E_GOAL_INCOMPLETE", message });
+          throw new RannError("E_GOAL_INCOMPLETE", message);
+        }
         if (activePlan) publish("phase", { phase: "verify", plan_id: activePlan.id });
         const verification = activePlan
           ? await verifyPlanLive(db, turnId, activePlan.draft, workspaceRoot, { signal, env: { RANN_VERIFY: "1" } })
@@ -900,8 +949,16 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           continue;
         }
         finalText = text;
-        if (verification && verification.gaps.length > 0) {
+        if (verification && !verification.passed) {
           finalText += `\n\nBelum diverifikasi:\n${verification.gaps.map((gap) => `- ${gap}`).join("\n")}`;
+          const message = `Verifikasi rencana gagal setelah ${prematureCount} percobaan: ${verification.gaps.join("; ")}`;
+          publish("plan.update", { plan_id: activePlan?.id, status: "failed", gaps: verification.gaps });
+          publish("error", { error_code: "E_VERIFICATION_FAILED", message });
+          publish("phase", { phase: "reflect", reason: "verification_failed" });
+          publish("phase", { phase: "report", status: "failed" });
+          publish("turn.end", { status: "failed", error_code: "E_VERIFICATION_FAILED", steps, text: finalText });
+          finalize("failed", { code: "E_VERIFICATION_FAILED", message });
+          throw new RannError("E_VERIFICATION_FAILED", message);
         }
         recordUsage(db, {
           provider: usedProviderName,
@@ -920,6 +977,19 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           cost_usd: options.costUsd?.(usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens) ?? null
         });
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
+        if (getActiveGoal(db, session.id)?.status === "active") {
+          try {
+            finishGoal(db, session.id, "done", "turn selesai dan verifikasi lulus");
+          } catch (error) {
+            const message = String(redactSecrets(toRannError(error).message));
+            publish("error", { error_code: "E_GOAL_INCOMPLETE", message });
+            publish("phase", { phase: "report", status: "failed" });
+            publish("turn.end", { status: "failed", error_code: "E_GOAL_INCOMPLETE", steps, text: finalText });
+            finalize("failed", { code: "E_GOAL_INCOMPLETE", message });
+            throw new RannError("E_GOAL_INCOMPLETE", message);
+          }
+        }
+        publish("phase", { phase: "reflect", status: "done" });
         publish("phase", { phase: "report", status: "done" });
         await runHook("Stop", { status: "done", steps });
         publish("turn.end", { status: "done", steps, usage, text: finalText });
@@ -947,7 +1017,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         const mutating = ["fs_write", "fs_edit", "fs_delete", "git_write", "shell_run", "checkpoint_restore"].includes(call.name);
         if (mutating && !fileCheckpointId && options.checkpointsDir) {
           try {
-            const manifest = createFileCheckpoint(workspaceRoot, options.checkpointsDir, { label: `sebelum ${call.name}` });
+            const manifest = createFileCheckpoint(workspaceRoot, options.checkpointsDir, { label: `sebelum ${call.name}`, ...(initialGitRef ? { gitRef: initialGitRef } : {}) });
             fileCheckpointId = manifest.id;
           } catch {
             fileCheckpointId = undefined;
@@ -955,6 +1025,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         }
         const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: redactSecrets(call.args) });
         const signature = `${call.name}:${JSON.stringify(redactSecrets(call.args))}`;
+        const activeTask = activePlan ? currentPlanTask(db, activePlan) : undefined;
+        const gitRef = initialGitRef ?? (options.checkpointsDir ? currentGitRef(workspaceRoot) : undefined);
         createCheckpoint(db, {
           sessionId: session.id,
           turnId,
@@ -963,13 +1035,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           state: {
             step: steps,
             plan_id: activePlan?.id ?? null,
+            task_state: activeTask ? {
+              task_id: activeTask.task_id,
+              status: "running",
+              title: activeTask.title,
+              acceptance: activeTask.acceptance,
+              risk: activeTask.risk
+            } : null,
             tool: call.name,
             args: redactSecrets(call.args),
             premature_count: prematureCount,
+            git_ref: gitRef ?? null,
             file_checkpoint_id: fileCheckpointId ?? null
           }
         });
-        publish("tool.start", { tool: call.name, args: redactSecrets(call.args), call_id: call.id, tool_call_id: toolRow.id });
+        publish("tool.start", { tool: call.name, args: redactSecrets(call.args), cwd: workspaceRoot, call_id: call.id, tool_call_id: toolRow.id });
 
         const trackGoal = (status: "ok" | "error"): void => {
           if (call.name === "goal_update") return;
@@ -1028,6 +1108,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           publish("tool.end", {
             tool: call.name,
             status: result.ok ? "ok" : "error",
+            cwd: workspaceRoot,
             exit_code: result.exitCode,
             duration_ms: result.durationMs,
             summary: summary.replace(/\s+/g, " ").slice(0, 240)
@@ -1069,7 +1150,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             content: JSON.stringify({ error: code, message }),
             contentJson: { toolCallId: call.id, toolName: call.name }
           });
-          publish("tool.end", { tool: call.name, status: "error", error_code: code });
+          publish("tool.end", { tool: call.name, status: "error", error_code: code, reason: message });
         };
 
         const preHook = config.hooks
@@ -1238,7 +1319,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           } catch (error) {
             const err = toRannError(error);
             if (err.code !== "E_APPROVAL_REQUIRED" || !config.requestApproval) throw err;
-            const decision = await config.requestApproval({ tool: call.name, args: call.args, ...(typeof err.data?.reason === "string" ? { reason: err.data.reason } : {}) });
+            const taskRisk = activePlan ? currentPlanTask(db, activePlan)?.risk : undefined;
+            const decision = await config.requestApproval({
+              tool: call.name,
+              args: call.args,
+              ...(typeof err.data?.reason === "string" ? { reason: err.data.reason } : {}),
+              ...(taskRisk === "low" || taskRisk === "medium" || taskRisk === "high" ? { risk: taskRisk } : {})
+            });
             appendAudit(db, {
               actor: "user",
               action: "approval.decision",
@@ -1248,6 +1335,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
                 session_id: session.id,
                 turn_id: turnId,
                 remember: decision.remember === true,
+                ...(decision.reason ? { reason: decision.reason } : {}),
                 args: redactSecrets(call.args)
               }
             });

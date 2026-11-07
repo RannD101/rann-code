@@ -1,4 +1,22 @@
 import { connect, type Socket } from "node:net";
+
+async function openSocket(socketPath: string, timeoutMs: number): Promise<Socket> {
+  return new Promise<Socket>((resolve, reject) => {
+    const connection = connect(socketPath);
+    const timer = setTimeout(() => {
+      connection.destroy();
+      reject(new RannError("E_DAEMON_DOWN", `Daemon tidak merespons di ${socketPath}`));
+    }, timeoutMs);
+    connection.once("connect", () => {
+      clearTimeout(timer);
+      resolve(connection);
+    });
+    connection.once("error", (error) => {
+      clearTimeout(timer);
+      reject(new RannError("E_DAEMON_DOWN", `Daemon tidak bisa dihubungi: ${error.message}`, { cause: error }));
+    });
+  });
+}
 import { RannError, type EventEnvelope, type RpcResponse } from "@rann/shared";
 
 interface Pending {
@@ -14,31 +32,44 @@ export class RpcClient {
   private nextId = 1;
   private buffer = "";
   private closed = false;
+  private socket: Socket;
 
-  private constructor(private readonly socket: Socket) {
+  private constructor(socket: Socket, private readonly socketPath: string) {
+    this.socket = socket;
+    this.attach(socket);
+  }
+
+  private attach(socket: Socket): void {
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => this.onData(chunk));
     socket.on("close", () => this.failAll(new RannError("E_DAEMON_DOWN", "Koneksi ke daemon terputus")));
     socket.on("error", (error) => this.failAll(new RannError("E_DAEMON_DOWN", `Koneksi daemon error: ${error.message}`, { cause: error })));
   }
 
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  async reconnect(timeoutMs = 5_000, attempts = 3): Promise<void> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const socket = await openSocket(this.socketPath, timeoutMs);
+        this.buffer = "";
+        this.closed = false;
+        this.socket = socket;
+        this.attach(socket);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+      }
+    }
+    throw lastError ?? new RannError("E_DAEMON_DOWN", "Gagal menyambung ulang ke daemon");
+  }
+
   static async connect(socketPath: string, timeoutMs = 5_000): Promise<RpcClient> {
-    const socket = await new Promise<Socket>((resolve, reject) => {
-      const connection = connect(socketPath);
-      const timer = setTimeout(() => {
-        connection.destroy();
-        reject(new RannError("E_DAEMON_DOWN", `Daemon tidak merespons di ${socketPath}`));
-      }, timeoutMs);
-      connection.once("connect", () => {
-        clearTimeout(timer);
-        resolve(connection);
-      });
-      connection.once("error", (error) => {
-        clearTimeout(timer);
-        reject(new RannError("E_DAEMON_DOWN", `Daemon tidak bisa dihubungi: ${error.message}`, { cause: error }));
-      });
-    });
-    return new RpcClient(socket);
+    return new RpcClient(await openSocket(socketPath, timeoutMs), socketPath);
   }
 
   private onData(chunk: string): void {

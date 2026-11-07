@@ -782,7 +782,8 @@ async function sendToSession(sessionId: string, text: string, args: ParsedArgs):
       planOnly: flagBool(args, "plan") || flagBool(args, "plan-only") || args.command === "plan",
       onApproval: makeApprovalHandler(args)
     });
-    if (output === "json") {
+    const planOnly = flagBool(args, "plan") || flagBool(args, "plan-only") || args.command === "plan";
+    if (output === "json" || (planOnly && result.plan)) {
       const payload = {
         ok: result.ok,
         text: result.text,
@@ -815,12 +816,25 @@ function makeApprovalHandler(
   args: ParsedArgs,
   ask?: (question: string) => Promise<string>
 ): ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined {
-  if (flagBool(args, "yes")) return async () => ({ approved: true });
+  if (flagBool(args, "yes")) {
+    return async (request) => {
+      const requestArgs = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
+      const destructive = request.tool === "shell_run" && typeof requestArgs.command === "string"
+        ? destructiveReason(requestArgs.command)
+        : undefined;
+      if (destructive || request.risk === "high") return { approved: false };
+      return { approved: true };
+    };
+  }
   if (process.stdin.isTTY !== true) return undefined;
   return async (request) => {
     const args = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
-    const detail = "command" in args ? String(args.command) : JSON.stringify(request.args ?? {});
-    const dangerous = request.reason ?? (request.tool === "shell_run" && typeof args.command === "string" ? destructiveReason(args.command) : undefined);
+    const detail = typeof args.method === "string" && typeof args.url === "string"
+      ? `${args.method} ${args.url}`
+      : "command" in args
+        ? String(args.command)
+        : JSON.stringify(request.args ?? {});
+    const dangerous = request.risk === "high" ? "task rencana berisiko tinggi" : request.reason ?? (request.tool === "shell_run" && typeof args.command === "string" ? destructiveReason(args.command) : undefined);
     const impact = dangerous
       ? `DESTRUKTIF: ${dangerous}. Operasi ini bisa menghilangkan data dan tidak selalu bisa dibatalkan.`
       : request.tool === "shell_run"
@@ -838,7 +852,7 @@ function makeApprovalHandler(
     const diff = preview
       ? `\n  diff ${preview.path} (+${preview.added} -${preview.removed}):\n${preview.lines.map((line) => `    ${line}`).join("\n")}`
       : "";
-    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.slice(0, 2_000)}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
+    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.length > 10_000 ? `${detail.slice(0, 10_000)}\n  ... (${detail.length - 10_000} karakter lagi, lihat log tool)` : detail}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
     const choices = [
       { key: "once", label: "Izinkan sekali" },
       { key: "always", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
@@ -850,7 +864,11 @@ function makeApprovalHandler(
           return /^(n|no|tidak)$/i.test(reply) ? "deny" : reply;
         }, prompt, [...choices], "deny")
       : await choose(prompt, [...choices], "deny");
-    return { approved: answer !== "deny", remember: answer === "always" };
+    return {
+      approved: answer !== "deny",
+      remember: answer === "always",
+      reason: answer === "deny" ? "ditolak user lewat dialog izin" : "disetujui user lewat dialog izin"
+    };
   };
 }
 
@@ -944,6 +962,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const sigintListener = (): void => { void onSigint(); };
     process.on("SIGINT", sigintListener);
 
+    let showStatusBar = true;
     const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
@@ -955,7 +974,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       if (lastInputTokens > 0 || lastOutputTokens > 0) parts.push(`in ${lastInputTokens} out ${lastOutputTokens}`);
       if (contextLimit > 0) {
         const percent = Math.min(100, Math.round((lastInputTokens / contextLimit) * 100));
-        const zone = percent >= 90 ? ui.red : percent >= 75 ? ui.yellow : percent >= 50 ? ui.yellow : ui.green;
+        const zone = percent >= 90 ? ui.red : percent >= 75 ? ui.orange : percent >= 50 ? ui.yellow : ui.green;
         parts.push(zone(`${percent}% ctx`));
       }
       const turnCost = lastTurnCost === undefined ? "?" : lastTurnCost === null ? "?" : lastTurnCost.toFixed(4);
@@ -963,6 +982,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       parts.push(totalCost > 0 ? `hari $${totalCost.toFixed(3)}` : "hari $?");
       parts.push(permissionMode ?? "ask");
       if (pendingAttachment) parts.push(`lampiran ${pendingAttachment.name}`);
+      if (!showStatusBar) return ui.cyan("› ");
       const text = parts.join("  ");
       return ui.cyan("› ") + (width >= 64 ? ui.dim(`${truncateWidth(text, Math.max(10, width - 8))} `) : "");
     };
@@ -972,10 +992,16 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       const configReply = await client.request<Record<string, unknown>>("config.get", {});
       const configValue = (configReply.config as Record<string, unknown> | undefined) ?? configReply;
       if (typeof configValue.provider === "string") providerName = configValue.provider;
+      const uiConfig = (configValue.ui as Record<string, unknown> | undefined) ?? {};
+      if (uiConfig.status_bar === false || uiConfig.statusBar === false) showStatusBar = false;
       try {
         const listed = await client.request<Array<Record<string, unknown>>>("provider.list");
         const active = listed.find((item) => item.name === providerName) ?? listed[0];
         if (active && typeof active.health === "string") providerStatus = active.health;
+        if (active && active.health !== "ok") {
+          const backup = listed.find((item) => item.name !== providerName && item.health === "ok");
+          if (backup) providerStatus = `${providerStatus} -> ${String(backup.name)}`;
+        }
       } catch {
         // status provider tidak menghalangi sesi
       }
@@ -994,9 +1020,11 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       busy: () => busy,
       prompt: statusPrompt,
       palette: [
-        ...REPL_COMMANDS.filter((command) => isAvailable(command)).map((command: ReplCommand) => ({
+        ...REPL_COMMANDS.map((command: ReplCommand) => ({
           name: command.name,
-          description: command.description,
+          description: isAvailable(command)
+            ? command.description
+            : `${command.description} [tidak tersedia${command.unavailableReason ? `: ${command.unavailableReason}` : ""}]`,
           category: command.category,
           usage: command.usage
         })),
@@ -1039,6 +1067,20 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (command === "/theme") {
           return { start: tokenStart, items: ["dark", "light", "auto", "custom"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
         }
+        if (command === "/task") {
+          return { start: tokenStart, items: ["list", "show", "add", "prioritas", "priority", "retry", "cancel", "block"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/plan") {
+          return { start: tokenStart, items: ["show", "approve", "reject", "revise", "pause", "resume"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/mcp") {
+          const list = await client.request<Array<Record<string, unknown>>>("mcp.list");
+          return { start: tokenStart, items: ["list", "add", "remove", "test", "reload", ...list.map((item) => String(item.name))].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+        }
+        if (command === "/agent" || command === "/agents") {
+          const list = await client.request<Array<Record<string, unknown>>>("agent.list", { sessionId, limit: 20 });
+          return { start: tokenStart, items: list.map((item) => String(item.id ?? item.profile ?? "")).filter((item) => item.length > 0 && item.startsWith(query)).map((value) => ({ value })) };
+        }
         if (command === "/resume" || command === "/history") {
           const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 20, projectPath: process.cwd() });
           return { start: tokenStart, items: list.map((item) => String(item.id)).filter((item) => item.startsWith(query)).map((value) => ({ value })) };
@@ -1071,7 +1113,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         return choose("Turn masih berjalan. Pilih tindakan:", [
           { key: "wait" as const, label: "tunggu sampai selesai" },
           { key: "cancel" as const, label: "batalkan turn" },
-          { key: "exit" as const, label: "keluar tanpa menunggu" }
+          { key: "background" as const, label: "biarkan berjalan di background" },
+          { key: "exit" as const, label: "keluar dan hentikan klien" }
         ], "wait");
       },
       onExpand: async () => {
@@ -2491,14 +2534,21 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/tasks") {
           const plans = await client.request<Array<Record<string, unknown>>>("plan.list", { sessionId, limit: 5 });
-          if (plans.length === 0) {
-            print(ui.dim("belum ada rencana di sesi ini"));
+          const jobs = await client.request<Array<Record<string, unknown>>>("background.list", { limit: 10 });
+          if (plans.length === 0 && jobs.length === 0) {
+            print(ui.dim("belum ada rencana atau job background"));
             continue;
           }
           for (const plan of plans) {
             print(`${String(plan.id)}  ${String(plan.status)}  ${String(plan.goal)}`);
             const tasks = (plan.tasks as Array<Record<string, unknown>> | undefined) ?? [];
             for (const task of tasks) print(`  - [${String(task.status)}] ${String(task.title)}`);
+          }
+          if (jobs.length > 0) {
+            print(ui.dim("job background:"));
+            for (const job of jobs) {
+              print(`  - [${String(job.status)}] ${String(job.id)}  ${String(job.kind)}  ${String(job.next_run_at ?? "")}`);
+            }
           }
           continue;
         }

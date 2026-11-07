@@ -187,7 +187,7 @@ export function advancePlanTask(
   publish: (type: "task.update", data: Record<string, unknown>) => void
 ): { next?: PlanTaskView; remaining: number; allDone: boolean } {
   const rows = db
-    .prepare("SELECT id, status, metadata_json FROM tasks WHERE plan_id = ? ORDER BY created_at")
+    .prepare("SELECT id, status, metadata_json FROM tasks WHERE plan_id = ? ORDER BY priority DESC, created_at")
     .all(plan.id) as { id: string; status: string; metadata_json: string }[];
   const done = new Set<string>();
   for (const row of rows) {

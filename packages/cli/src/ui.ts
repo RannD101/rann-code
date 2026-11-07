@@ -112,6 +112,7 @@ export const ui = {
   red: (text: string) => wrapRgb(themeTokens().danger, text),
   green: (text: string) => wrapRgb(themeTokens().success, text),
   yellow: (text: string) => wrapRgb(themeTokens().warning, text),
+  orange: (text: string) => wrapRgb("#e07b39", text),
   cyan: (text: string) => wrapRgb(themeTokens().accent, text),
   accent: (text: string) => wrapRgb(themeTokens().accent, text),
   border: (text: string) => wrapRgb(themeTokens().border, text),

@@ -411,6 +411,7 @@ export class LineEditor {
   }
 
   private handleAction(action: string): void {
+    if (this.options.disabledShortcuts?.includes(action)) return;
     if (action !== "scroll-up" && action !== "scroll-down") this.followCursor = true;
     switch (action) {
       case "scroll-up":
@@ -458,10 +459,13 @@ export class LineEditor {
         if (this.overlay) this.moveOverlay(1);
         else this.navigateHistory(1);
         return;
-      case "newline":
+      case "newline": {
         this.overlay = undefined;
-        this.insert("\n");
+        const before = this.buffer.slice(0, this.cursor);
+        const fenceCount = (before.match(/```/g) ?? []).length;
+        this.insert(fenceCount % 2 === 1 ? "\n  " : "\n");
         return;
+      }
       case "backtab":
         void this.complete(true);
         return;
@@ -576,6 +580,10 @@ export class LineEditor {
     this.overlay = undefined;
     this.buffer = `${this.buffer.slice(0, this.cursor)}${text}${this.buffer.slice(this.cursor)}`;
     this.cursor += text.length;
+    if (text === "/" && this.buffer === "/" && (this.options.palette?.length ?? 0) > 0) {
+      this.openPalette();
+      return;
+    }
     this.render();
   }
 
@@ -654,6 +662,8 @@ export class LineEditor {
         return;
       }
       this.busyCtrlCount = 0;
+      this.ctrlCCount = 0;
+      this.ctrlCAt = 0;
       await this.withPrompt(async () => {
         const handled = await this.options.onCancel?.();
         if (handled) process.stdout.write("\nTurn dibatalkan.\n");
@@ -694,6 +704,10 @@ export class LineEditor {
     const choice = await this.withPrompt(() => this.options.onCtrlD!(this.options.busy?.() ?? false));
     if (choice === "exit") {
       this.exit(130);
+      return;
+    }
+    if (choice === "background") {
+      this.exit(0);
       return;
     }
     if (choice === "cancel") {
@@ -838,6 +852,17 @@ export class LineEditor {
     if (!this.options.completer) return;
     const result = await this.options.completer(this.buffer, this.cursor);
     if (result.items.length === 0) {
+      const typed = this.buffer.trim();
+      if (typed.startsWith("/") && !typed.includes(" ")) {
+        const nearest = (this.options.palette ?? [])
+          .map((item) => ({ item, score: fuzzyScore(item.name, typed.slice(1)) }))
+          .filter((entry) => entry.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3);
+        if (nearest.length > 0) {
+          process.stdout.write(`\nTidak ada kandidat. Mungkin maksud kamu: ${nearest.map((entry) => `/${entry.item.name}`).join(", ")}\n`);
+        }
+      }
       this.render();
       return;
     }

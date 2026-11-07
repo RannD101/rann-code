@@ -24,6 +24,7 @@ export interface PlanTask {
   dependsOn: string[];
   files: string[];
   risk: RiskLevel;
+  riskReason?: string;
   acceptance: string;
 }
 
@@ -187,7 +188,12 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
       agent: asString(t.agent) ?? "coding",
       dependsOn: asStringArray(t.dependsOn),
       files: asStringArray(t.files),
-      risk: normalizeRisk(t.risk),
+      ...(() => {
+        const detected = detectRisk(`${title} ${asString(t.description) ?? ""}`);
+        const risk = RISK_ORDER[detected.level] > RISK_ORDER[normalizeRisk(t.risk)] ? detected.level : normalizeRisk(t.risk);
+        const reason = asStringArray(t.files).length > 20 ? "menyentuh lebih dari 20 file" : detected.reason;
+        return reason ? { risk, riskReason: reason } : { risk };
+      })(),
       acceptance
     });
   }
@@ -216,6 +222,19 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
   };
 }
 
+const HIGH_RISK = /\b(migrasi|migration|schema|drop table|hapus data|delete data|auth|kredensial|credential|secret|deploy|rilis|release|force push|production|produksi)\b/i;
+const MEDIUM_RISK = /\b(ubah|refactor|hapus|rename|ganti|install|pasang|dependensi|dependency|konfigurasi|config)\b/i;
+
+export function detectRisk(text: string): { level: RiskLevel; reason?: string } {
+  const high = HIGH_RISK.exec(text);
+  if (high) return { level: "high", reason: `menyentuh area berisiko: ${high[1]}` };
+  const medium = MEDIUM_RISK.exec(text);
+  if (medium) return { level: "medium", reason: `mengubah area yang ada: ${medium[1]}` };
+  return { level: "low" };
+}
+
+const RISK_ORDER: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+
 export function validatePlan(plan: PlanDraft): PlanValidation {
   const errors: string[] = [];
   if (plan.tasks.length === 0) errors.push("plan tidak punya task");
@@ -225,6 +244,7 @@ export function validatePlan(plan: PlanDraft): PlanValidation {
     if (ids.has(task.id)) errors.push(`id task duplikat: ${task.id}`);
     ids.add(task.id);
     if (task.acceptance.trim().length === 0) errors.push(`task ${task.id} tanpa acceptance`);
+    if ((task.description ?? "").trim().length === 0) errors.push(`task ${task.id} tanpa deskripsi`);
     if (task.title.trim().length === 0) errors.push(`task ${task.id} tanpa judul`);
     const files = task.files.length;
     if (files > 20) errors.push(`task ${task.id} menyentuh ${files} file, melebihi batas 20`);

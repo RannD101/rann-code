@@ -36,6 +36,7 @@ export interface ApprovalRequest {
   tool: string;
   args: unknown;
   reason?: string;
+  risk?: "low" | "medium" | "high";
 }
 
 export interface ApprovalDecision {
@@ -162,21 +163,33 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
     let planTotal = 0;
     let taskStartedAt = 0;
     const taskStatuses = new Map<string, string>();
+    let reconnecting = false;
     const unsubscribeClose = client.onClose(() => {
-      if (!handler) return;
-      toolSpinner.stop();
-      breakLine();
-      if (format === "text") printErr(ui.yellow("[stream terputus] jawaban mungkin tidak lengkap, jalankan /resume atau ulangi prompt"));
-      cleanup();
-      resolve({
-        ok: false,
-        turnId,
-        text: collected,
-        steps: 0,
-        usage: { inputTokens: 0, outputTokens: 0 },
-        durationMs: Date.now() - startedAt,
-        error: { code: "E_STREAM_TRUNCATED", message: "Koneksi ke daemon terputus sebelum turn selesai" }
-      });
+      if (!handler || reconnecting) return;
+      reconnecting = true;
+      void (async () => {
+        toolSpinner.stop();
+        breakLine();
+        if (format === "text") printErr(ui.yellow("[stream terputus] mencoba menyambung ulang otomatis..."));
+        try {
+          await client.reconnect();
+          reconnecting = false;
+          if (format === "text") printErr(ui.green("[tersambung lagi] melanjutkan menerima event turn"));
+          handler = onEvent;
+          return;
+        } catch {
+          cleanup();
+          resolve({
+            ok: false,
+            turnId,
+            text: collected,
+            steps: 0,
+            usage: { inputTokens: 0, outputTokens: 0 },
+            durationMs: Date.now() - startedAt,
+            error: { code: "E_STREAM_TRUNCATED", message: "Koneksi ke daemon terputus; jalankan /resume untuk melanjutkan" }
+          });
+        }
+      })();
     });
 
     const askApproval = async (event: EventEnvelope): Promise<void> => {
@@ -184,7 +197,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       const tool = String(event.data.tool ?? "tool");
       const args = event.data.args;
       const reason = typeof event.data.reason === "string" ? event.data.reason : undefined;
-      emit({ type: "approval.request", turn_id: turnId, request_id: requestId, tool, args, ...(reason ? { reason } : {}) });
+      const risk = event.data.risk === "low" || event.data.risk === "medium" || event.data.risk === "high" ? event.data.risk : undefined;
+      emit({ type: "approval.request", turn_id: turnId, request_id: requestId, tool, args, ...(reason ? { reason } : {}), ...(risk ? { risk } : {}) });
       if (!requestId || !options.onApproval) {
         if (requestId) {
           await client.request("permission.respond", { requestId, approved: false }).catch(() => undefined);
@@ -194,7 +208,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       }
       pendingApproval = true;
       try {
-        const decision = await options.onApproval({ requestId, tool, args });
+        const decision = await options.onApproval({ requestId, tool, args, ...(reason ? { reason } : {}), ...(risk ? { risk } : {}) });
         await client.request("permission.respond", {
           requestId,
           approved: decision.approved,
@@ -225,6 +239,22 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         }
         return;
       }
+      if (event.type === "phase") {
+        const labels: Record<string, string> = {
+          understand: "memahami goal",
+          plan: "menyusun rencana",
+          observe: "membaca hasil tool",
+          evaluate: "mengevaluasi hasil",
+          verify: "memverifikasi",
+          done: "selesai"
+        };
+        const label = labels[String(event.data.phase ?? "")];
+        if (label && phaseEnabled) {
+          phaseSpinner.stop();
+          phaseSpinner.start(label);
+        }
+        return;
+      }
       if (event.type === "usage.update") {
         if (typeof event.data.cost_usd === "number") costUsd = event.data.cost_usd;
         else if (event.data.cost_usd === null) costUsd = null;
@@ -233,12 +263,17 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       if (event.type === "reasoning.delta") {
         const chunk = String(event.data.text ?? "");
         if (format === "text" && chunk.length > 0) {
-          phaseSpinner.stop();
-          if (!reasoningOpen) {
-            process.stdout.write(ui.dim("\n[reasoning]\n"));
+          if (process.env.RANN_SHOW_REASONING === "1") {
+            phaseSpinner.stop();
+            if (!reasoningOpen) {
+              process.stdout.write(ui.dim("\n[reasoning]\n"));
+              reasoningOpen = true;
+            }
+            process.stdout.write(ui.dim(chunk));
+          } else if (!reasoningOpen) {
+            process.stdout.write(ui.dim("\n[reasoning terlipat, set RANN_SHOW_REASONING=1 untuk membuka]"));
             reasoningOpen = true;
           }
-          process.stdout.write(ui.dim(chunk));
         }
         return;
       }
@@ -276,11 +311,16 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
           const duration = Number(event.data.duration_ms ?? (toolStartedAt > 0 ? Date.now() - toolStartedAt : 0));
           const timing = duration > 0 ? ` ${(duration / 1000).toFixed(1)}s` : "";
           const exit = event.data.exit_code === undefined || event.data.exit_code === null ? "" : ` exit ${String(event.data.exit_code)}`;
-          const summary = typeof event.data.summary === "string" && event.data.summary.length > 0 ? `  ${brief(event.data.summary, 160)}` : "";
+          const cwd = tool === "shell_run" && typeof event.data.cwd === "string" ? ` di ${event.data.cwd}` : "";
+          const summary = typeof event.data.summary === "string" && event.data.summary.length > 0
+            ? `  ${brief(event.data.summary, 160)}`
+            : typeof event.data.reason === "string" && event.data.reason.length > 0
+              ? `  ${brief(event.data.reason, 160)}`
+              : "";
           if (process.stderr.isTTY) {
-            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${summary}`));
+            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${cwd}${summary}`));
           } else {
-            printErr(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${summary}`));
+            printErr(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${cwd}${summary}`));
           }
           toolStartedAt = 0;
         }
@@ -292,7 +332,9 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         if (typeof event.data.tasks === "number") planTotal = event.data.tasks;
         if (format === "text" && typeof event.data.status === "string") {
           const total = planTotal > 0 ? ` ${planTotal} langkah` : "";
-          printErr(ui.dim(`[plan] ${event.data.status}${total}${event.data.reason ? `: ${event.data.reason}` : ""}`));
+          const version = Number(event.data.version ?? 1);
+          const replan = version > 1 ? ` [replan v${version}]` : "";
+          printErr(ui.dim(`[plan]${replan} ${event.data.status}${total}${event.data.reason ? `: ${event.data.reason}` : ""}`));
         }
         emit({ type: "plan.update", turn_id: turnId, ...event.data });
         return;
@@ -305,7 +347,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         if (format === "text" && status) {
           const done = [...taskStatuses.values()].filter((value) => value === "done").length;
           const current = status === "running" ? Math.min(done + 1, planTotal || done + 1) : done;
-          const counter = planTotal > 0 ? ` ${current}/${planTotal}` : "";
+          const pendingVerify = planTotal > 0 && current >= planTotal && status !== "running" ? " menunggu verifikasi" : "";
+          const counter = planTotal > 0 ? ` ${current}/${planTotal}${pendingVerify}` : "";
           const elapsed = status === "running" && taskStartedAt > 0 ? ` ${((Date.now() - taskStartedAt) / 1000).toFixed(1)}s` : "";
           printErr(ui.dim(`[task]${counter} ${status} ${String(event.data.title ?? "")}${elapsed}`));
         }

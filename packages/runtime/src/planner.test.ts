@@ -12,6 +12,7 @@ const validPlan = {
     {
       id: "t1",
       title: "Petakan middleware",
+      description: "Baca src/http.ts dan catat urutan middleware",
       agent: "coding",
       dependsOn: [],
       files: ["src/http.ts"],
@@ -21,6 +22,7 @@ const validPlan = {
     {
       id: "t2",
       title: "Implementasi limiter",
+      description: "Tambahkan limiter di src/rate-limit.ts dan sambungkan",
       agent: "coding",
       dependsOn: ["t1"],
       files: ["src/rate-limit.ts"],

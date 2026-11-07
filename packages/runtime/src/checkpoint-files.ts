@@ -23,6 +23,8 @@ export interface CheckpointManifest {
   files: SnapshotFile[];
   bytes: number;
   truncated: boolean;
+  git_ref?: string;
+  task_state?: unknown;
 }
 
 let sequence = 0;
@@ -51,7 +53,7 @@ function listFiles(root: string): string[] {
 export function createFileCheckpoint(
   workspaceRoot: string,
   checkpointsDir: string,
-  options: { label?: string; paths?: string[] } = {}
+  options: { label?: string; paths?: string[]; gitRef?: string; taskState?: unknown } = {}
 ): CheckpointManifest {
   const createdMs = Date.now();
   sequence += 1;
@@ -92,7 +94,9 @@ export function createFileCheckpoint(
     workspace: resolve(workspaceRoot),
     files,
     bytes,
-    truncated
+    truncated,
+    ...(options.gitRef ? { git_ref: options.gitRef } : {}),
+    ...(options.taskState !== undefined ? { task_state: options.taskState } : {})
   };
   writeFileSync(resolve(dir, "manifest.json"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
   return manifest;

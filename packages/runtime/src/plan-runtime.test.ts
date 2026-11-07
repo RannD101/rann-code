@@ -40,6 +40,7 @@ const draft: PlanDraft = {
     {
       id: "t1",
       title: "Buat endpoint",
+      description: "Tambahkan route POST di src/app.ts",
       agent: "coding",
       dependsOn: [],
       files: ["src/app.ts"],
@@ -80,9 +81,9 @@ describe("plan runtime", () => {
     const dag: PlanDraft = {
       ...draft,
       tasks: [
-        { id: "t1", title: "Satu", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "selesai" },
-        { id: "t2", title: "Dua", agent: "coder", dependsOn: ["t1"], files: [], risk: "low", acceptance: "selesai" },
-        { id: "t3", title: "Tiga", agent: "coder", dependsOn: ["t2"], files: [], risk: "low", acceptance: "selesai" }
+        { id: "t1", title: "Satu", description: "Kerjakan Satu", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "selesai" },
+        { id: "t2", title: "Dua", description: "Kerjakan Dua", agent: "coder", dependsOn: ["t1"], files: [], risk: "low", acceptance: "selesai" },
+        { id: "t3", title: "Tiga", description: "Kerjakan Tiga", agent: "coder", dependsOn: ["t2"], files: [], risk: "low", acceptance: "selesai" }
       ]
     };
     const plan = persistPlan(db, session.id, turn.id, dag, validation, "dag", () => {});
@@ -117,8 +118,8 @@ describe("plan runtime", () => {
     const dag: PlanDraft = {
       ...draft,
       tasks: [
-        { id: "a", title: "Rendah", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "ok" },
-        { id: "b", title: "Tinggi", agent: "coder", dependsOn: [], files: [], risk: "high", acceptance: "ok" }
+        { id: "a", title: "Rendah", description: "Kerjakan Rendah", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "ok" },
+        { id: "b", title: "Tinggi", description: "Kerjakan Tinggi", agent: "coder", dependsOn: [], files: [], risk: "high", acceptance: "ok" }
       ]
     };
     const plan = persistPlan(db, session.id, turn.id, dag, validation, "prioritas", () => {});
@@ -137,8 +138,8 @@ describe("plan runtime", () => {
     const dag: PlanDraft = {
       ...draft,
       tasks: [
-        { id: "a", title: "A", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "ok" },
-        { id: "b", title: "B", agent: "coder", dependsOn: ["hilang"], files: [], risk: "low", acceptance: "ok" }
+        { id: "a", title: "A", description: "Kerjakan A", agent: "coder", dependsOn: [], files: [], risk: "low", acceptance: "ok" },
+        { id: "b", title: "B", description: "Kerjakan B", agent: "coder", dependsOn: ["hilang"], files: [], risk: "low", acceptance: "ok" }
       ]
     };
     const plan = persistPlan(db, session.id, turn.id, dag, validation, "blocked", () => {});
@@ -211,6 +212,7 @@ describe("plan runtime", () => {
           {
             id: "t1",
             title: "Buat endpoint",
+            description: "Tambahkan route POST di src/app.ts",
             agent: "coding",
             dependsOn: [],
             files: ["src/app.ts"],
@@ -220,6 +222,7 @@ describe("plan runtime", () => {
           {
             id: "t2",
             title: "Tambah tes endpoint",
+            description: "Tulis tes endpoint 200",
             agent: "testing",
             dependsOn: ["t1"],
             files: ["src/app.test.ts"],
