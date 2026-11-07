@@ -85,7 +85,8 @@ export const configSchema = z.object({
   budget: z
     .object({
       max_tokens_per_turn: z.number().int().nonnegative().default(0),
-      max_tokens_per_day: z.number().int().nonnegative().default(0)
+      max_tokens_per_day: z.number().int().nonnegative().default(0),
+      max_usd_per_day: z.number().nonnegative().default(0)
     })
     .default({}),
   mcp: z

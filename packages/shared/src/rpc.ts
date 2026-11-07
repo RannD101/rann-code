@@ -177,7 +177,8 @@ export const methodParams = {
   "skill.remove": skillRemoveParams,
   "secret.list": empty,
   "secret.set": secretSetParams,
-  "secret.remove": secretRemoveParams
+  "secret.remove": secretRemoveParams,
+  "budget.status": empty
 } as const;
 
 export type MethodName = keyof typeof methodParams;

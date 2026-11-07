@@ -28,6 +28,7 @@ import {
   schemaVersion,
   searchMemories,
   summarizeUsage,
+  sumCostSince,
   sumTokensSince,
   updateMemory,
   type Db
@@ -154,6 +155,7 @@ describe("database", () => {
       "scheduler_jobs",
       "job_runs",
       "jobs",
+      "job_events",
       "checkpoints",
       "artifacts",
       "path_leases",
@@ -225,7 +227,11 @@ describe("database", () => {
       "INSERT INTO usage_events (id, provider, model, session_id, turn_id, input_tokens, output_tokens, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).run("use_lama", "mock", "mock-1", session.id, turn.id, 100, 50, 0, old);
     recordUsage(db, { provider: "mock", model: "mock-1", sessionId: session.id, turnId: turn.id, inputTokens: 7, outputTokens: 3 });
-    expect(sumTokensSince(db, old + 60_000)).toBe(10);
-    expect(sumTokensSince(db, 0)).toBe(160);
+    recordUsage(db, { provider: "mock", model: "mock-1", sessionId: session.id, turnId: turn.id, inputTokens: 4, outputTokens: 6, costUsd: 0.25 });
+    expect(sumTokensSince(db, old + 60_000)).toBe(20);
+    expect(sumTokensSince(db, 0)).toBe(170);
+    const cost = sumCostSince(db, 0);
+    expect(cost.knownUsd).toBeCloseTo(0.25, 6);
+    expect(cost.unknownCount).toBe(2);
   });
 });

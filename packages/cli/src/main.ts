@@ -732,6 +732,21 @@ async function usageCommand(args: ParsedArgs): Promise<number> {
   for (const row of rows) {
     print(formatUsageRow(row));
   }
+  const budget = await withClient((client) =>
+    client.request<{
+      max_usd_per_day: number;
+      max_tokens_per_day: number;
+      spent_usd_today: number;
+      unknown_cost_events_today: number;
+      tokens_today: number;
+    }>("budget.status")
+  );
+  const limitUsd = budget.max_usd_per_day > 0 ? `$${budget.max_usd_per_day}` : "tanpa batas";
+  const limitTokens = budget.max_tokens_per_day > 0 ? String(budget.max_tokens_per_day) : "tanpa batas";
+  print(
+    `hari ini: $${budget.spent_usd_today.toFixed(6)} / ${limitUsd}, ${budget.tokens_today} token / ${limitTokens}` +
+      (budget.unknown_cost_events_today > 0 ? `, ${budget.unknown_cost_events_today} usage tanpa harga` : "")
+  );
   return 0;
 }
 

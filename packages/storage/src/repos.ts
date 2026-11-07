@@ -337,6 +337,17 @@ export function sumTokensSince(db: Db, since: number): number {
   return row.total;
 }
 
+export function sumCostSince(db: Db, since: number): { knownUsd: number; unknownCount: number } {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(CASE WHEN cost_source = 'known' THEN cost_usd ELSE 0 END), 0) AS known_usd,
+              COALESCE(SUM(CASE WHEN cost_source = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_count
+       FROM usage_events WHERE created_at >= ?`
+    )
+    .get(since) as { known_usd: number; unknown_count: number };
+  return { knownUsd: row.known_usd, unknownCount: row.unknown_count };
+}
+
 export type MemoryScope = "global" | "project";
 
 export interface MemoryEntry {

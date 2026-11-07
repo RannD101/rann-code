@@ -10,6 +10,7 @@ import {
   markTurnRunning,
   recordUsage,
   sumTokensSince,
+  sumCostSince,
   touchSession
 } from "@rann/storage";
 import { RannError, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
@@ -45,6 +46,7 @@ export interface ContextOptions {
 export interface BudgetOptions {
   maxTokensPerTurn: number;
   maxTokensPerDay: number;
+  maxUsdPerDay: number;
 }
 
 export interface McpToolset {
@@ -263,7 +265,7 @@ function startOfToday(): number {
 export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const { db, session, turnId, provider, model, workspaceRoot, config, signal, emit } = options;
   const contextOptions: ContextOptions = options.context ?? { maxTokens: 24_000, keepRecent: 20, summaryChars: 6_000 };
-  const budget: BudgetOptions = options.budget ?? { maxTokensPerTurn: 0, maxTokensPerDay: 0 };
+  const budget: BudgetOptions = options.budget ?? { maxTokensPerTurn: 0, maxTokensPerDay: 0, maxUsdPerDay: 0 };
   const usage = { inputTokens: 0, outputTokens: 0 };
   let finalText = "";
   let steps = 0;
@@ -303,6 +305,24 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       publish("turn.end", { status: "failed", error_code: "E_BUDGET_EXHAUSTED" });
       finalize("failed", { code: "E_BUDGET_EXHAUSTED", message });
       throw new RannError("E_BUDGET_EXHAUSTED", message);
+    }
+  }
+
+  if (budget.maxUsdPerDay > 0) {
+    const spent = sumCostSince(db, startOfToday());
+    if (spent.knownUsd >= budget.maxUsdPerDay) {
+      const message = `Budget harian habis: $${spent.knownUsd.toFixed(6)} dari $${budget.maxUsdPerDay} terpakai`;
+      publish("error", { error_code: "E_BUDGET_EXHAUSTED", message });
+      publish("turn.end", { status: "failed", error_code: "E_BUDGET_EXHAUSTED" });
+      finalize("failed", { code: "E_BUDGET_EXHAUSTED", message });
+      throw new RannError("E_BUDGET_EXHAUSTED", message);
+    }
+    if (spent.unknownCount > 0) {
+      publish("log", {
+        level: "warn",
+        event: "budget.unknown_cost",
+        message: `${spent.unknownCount} usage hari ini tidak punya harga; budget hanya menghitung biaya yang diketahui`
+      });
     }
   }
 

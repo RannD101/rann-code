@@ -16,6 +16,8 @@ import {
   schemaVersion,
   setTurnModel,
   summarizeUsage,
+  sumCostSince,
+  sumTokensSince,
   touchSession,
   SecretStore,
   type Db,
@@ -203,6 +205,20 @@ export class RpcServer {
         return this.providerList();
       case "provider.test":
         return await this.providerTest(input);
+      case "budget.status": {
+        const config = this.options.config.config;
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const since = start.getTime();
+        const spent = sumCostSince(this.db, since);
+        return {
+          max_usd_per_day: config.budget.max_usd_per_day,
+          max_tokens_per_day: config.budget.max_tokens_per_day,
+          spent_usd_today: spent.knownUsd,
+          unknown_cost_events_today: spent.unknownCount,
+          tokens_today: sumTokensSince(this.db, since)
+        };
+      }
       case "secret.list":
         return this.secrets.list();
       case "secret.set": {
@@ -491,7 +507,8 @@ export class RpcServer {
       },
       budget: {
         maxTokensPerTurn: config.budget.max_tokens_per_turn,
-        maxTokensPerDay: config.budget.max_tokens_per_day
+        maxTokensPerDay: config.budget.max_tokens_per_day,
+        maxUsdPerDay: config.budget.max_usd_per_day
       },
       memory,
       skills,
@@ -595,7 +612,8 @@ export class RpcServer {
         },
         budget: {
           maxTokensPerTurn: config.budget.max_tokens_per_turn,
-          maxTokensPerDay: config.budget.max_tokens_per_day
+          maxTokensPerDay: config.budget.max_tokens_per_day,
+          maxUsdPerDay: config.budget.max_usd_per_day
         },
         memory,
         skills,
