@@ -243,6 +243,7 @@ const fsWriteSchema = z.object({
   path: z.string().min(1),
   content: z.string().max(MAX_WRITE_BYTES),
   create_dirs: z.boolean().optional(),
+  confirm_large_overwrite: z.boolean().optional(),
   expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
 });
 
@@ -619,6 +620,7 @@ export const tools: ToolDefinition[] = [
           path: { type: "string" },
           content: { type: "string" },
           create_dirs: { type: "boolean" },
+          confirm_large_overwrite: { type: "boolean", description: "Wajib bila menimpa berkas lebih dari 1 MB" },
           expected_sha256: { type: "string", description: "Hash isi lama; wajib jika menimpa berkas yang sudah ada" }
         },
         required: ["path", "content"]
@@ -628,6 +630,14 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsWriteSchema, args, "fs_write");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_write", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
+      const largeLimit = 1024 * 1024;
+      if (input.confirm_large_overwrite !== true) {
+        const existingSize = existsSync(target) && statSync(target).isFile() ? statSync(target).size : 0;
+        const nextSize = Buffer.byteLength(input.content, "utf8");
+        if (existingSize > largeLimit || nextSize > largeLimit) {
+          throw new RannError("E_APPROVAL_REQUIRED", `Menimpa berkas besar (${Math.max(existingSize, nextSize)} byte) butuh confirm_large_overwrite=true.`);
+        }
+      }
       if (input.create_dirs === false && !existsSync(dirname(target))) {
         throw new RannError("E_TOOL_FAILED", `Folder induk tidak ada: ${input.path}`);
       }
@@ -870,6 +880,9 @@ export const tools: ToolDefinition[] = [
         }
       }
       if (input.hard === true) {
+        if (ctx.approved !== true && ctx.permissionMode !== "trusted") {
+          throw new RannError("E_APPROVAL_REQUIRED", "Hapus permanen butuh persetujuan eksplisit. Pakai trash atau setujui lebih dulu.");
+        }
         rmSync(target, { recursive: true, force: false });
         return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", hard: true, before_sha256: beforeSha });
       }

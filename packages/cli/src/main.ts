@@ -724,6 +724,7 @@ async function readPipedStdin(): Promise<string> {
 
 async function runPrompt(args: ParsedArgs, text: string): Promise<number> {
   const stdin = await readPipedStdin();
+  if (stdin.length > 200_000) printErr(ui.yellow(`stdin dipotong dari ${stdin.length} ke 200.000 karakter.`));
   const prompt = stdin.length > 0 ? `${text}\n\nKonteks tambahan dari stdin:\n${stdin.slice(0, 200_000)}` : text;
   if (prompt.trim().length === 0) throw new RannError("E_INVALID_PARAMS", "Prompt kosong. Pakai: rann \"instruksi\"");
   const { sessionId, reused } = await withClient(async (client) => {
@@ -882,7 +883,9 @@ function extractAttachments(line: string): { text: string; attachments: Array<{ 
     if (raw.length === 0) continue;
     const expanded = raw.startsWith("~") ? join(process.env.HOME ?? process.env.USERPROFILE ?? "", raw.slice(1)) : raw;
     const absolute = isAbsolute(expanded) ? expanded : join(process.cwd(), expanded);
-    if (!existsSync(absolute)) continue;
+    if (!existsSync(absolute)) {
+      throw new RannError("E_INVALID_PARAMS", `Lampiran tidak ditemukan: ${raw}. Periksa path atau kutip nama yang mengandung spasi.`);
+    }
     const name = basename(absolute);
     if (!attachments.some((item) => item.path === absolute)) attachments.push({ path: absolute, name });
   }
@@ -1007,6 +1010,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       }
       const contextValue = configValue.context as Record<string, unknown> | undefined;
       if (typeof contextValue?.max_tokens === "number" && contextValue.max_tokens > 0) contextLimit = contextValue.max_tokens;
+      try {
+        const listedModels = await client.request<Record<string, unknown>>("model.list");
+        const descriptors = (listedModels.descriptors as Array<Record<string, unknown>> | undefined) ?? [];
+        const activeModel = descriptors.find((item) => item.id === model || item.model === model);
+        if (typeof activeModel?.contextWindow === "number" && activeModel.contextWindow > 0) contextLimit = activeModel.contextWindow;
+      } catch {
+        // context window model bersifat pelengkap
+      }
       const uiValue = configValue.ui as Record<string, unknown> | undefined;
       const configured = uiValue?.disabled_shortcuts ?? uiValue?.disable_shortcuts;
       if (Array.isArray(configured)) disabledShortcuts = configured.map((item) => String(item));
@@ -1179,8 +1190,10 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     };
 
     if (process.stdin.isTTY !== true) {
-      const text = readFileSync(0, "utf8").trim();
+      const rawText = readFileSync(0, "utf8").trim();
+      const text = rawText.slice(0, 200_000);
       if (text.length === 0) throw new RannError("E_INVALID_PARAMS", "Tidak ada input di stdin");
+      if (rawText.length > text.length) printErr(ui.yellow(`stdin dipotong dari ${rawText.length} ke 200.000 karakter.`));
       const result = await runStreaming(client, sessionId, text, {
         ...(model ? { model } : {}),
         ...(permissionMode ? { permissionMode } : {}),
@@ -1989,8 +2002,15 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const name = line.slice(6).trim();
           if (name.length === 0) {
             const data = await client.request<Record<string, unknown>>("model.list");
-            print(`model aktif: ${model ?? "default"}`);
-            for (const item of (data.models as string[]) ?? []) print(`- ${item}`);
+            const descriptors = (data.descriptors as Array<Record<string, unknown>> | undefined) ?? [];
+            const active = descriptors.find((item) => item.id === model || item.model === model);
+            print(`model aktif: ${model ?? "default"}${active ? `  sumber ${String(active.source ?? "?")}  ctx ${String(active.contextWindow ?? "?")}` : ""}`);
+            const rows: Array<Record<string, unknown>> = descriptors.length > 0
+              ? descriptors
+              : ((data.models as string[]) ?? []).map((id) => ({ id }));
+            for (const item of rows) {
+              print(`- ${String(item.id)}  ${String(item.provider ?? "")}  sumber ${String(item.source ?? "?")}`);
+            }
           } else {
             model = name;
             print(ui.dim(`model ${model}`));

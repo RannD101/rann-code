@@ -43,6 +43,7 @@ export interface ModelDescriptor {
   quality?: { coding: number; reasoning: number; writing: number };
   latencyClass?: "fast" | "standard" | "slow";
   deprecated?: boolean;
+  source?: "catalog" | "config" | "user";
 }
 
 const ALL_FALSE: ModelCapabilities = Object.fromEntries(CAPABILITIES.map((name) => [name, false])) as ModelCapabilities;
@@ -156,7 +157,8 @@ export function builtinDescriptor(provider: string, model: string, kind = "opena
       : {}),
     tokenizer: { type: "heuristic" },
     ...(entry?.quality ? { quality: entry.quality } : {}),
-    latencyClass: entry?.latencyClass ?? "standard"
+    latencyClass: entry?.latencyClass ?? "standard",
+    source: entry ? "catalog" : "user"
   };
 }
 
@@ -227,8 +229,10 @@ export function resolveDescriptor(
     overrides?.cacheWritePrice !== undefined;
   const cacheReadPrice = overrides?.cacheReadPrice ?? row?.cache_read_price ?? base.pricing?.cacheReadPerMTok;
   const cacheWritePrice = overrides?.cacheWritePrice ?? row?.cache_write_price ?? base.pricing?.cacheWritePerMTok;
+  const isConfigured = config.models?.[`${providerName}/${modelName}`] !== undefined;
   const merged: ModelDescriptor = {
     ...base,
+    source: isConfigured ? "config" : base.source,
     displayName: row?.display_name ?? base.displayName,
     contextWindow: overrides?.contextWindow ?? row?.context_window ?? base.contextWindow,
     maxOutputTokens: overrides?.maxOutputTokens ?? row?.max_output_tokens ?? base.maxOutputTokens,
