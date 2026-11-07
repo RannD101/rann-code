@@ -100,7 +100,8 @@ export function isRetryable(error: unknown): boolean {
 
 export function retryDelayMs(attempt: number, retryAfterMs?: number): number {
   if (retryAfterMs !== undefined && retryAfterMs > 0) return Math.min(retryAfterMs, 60_000);
-  return [1_000, 2_000, 4_000][attempt - 1] ?? 4_000;
+  const base = [500, 1_000, 2_000][attempt - 1] ?? 2_000;
+  return base + Math.floor(Math.random() * 251);
 }
 
 export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -128,7 +129,7 @@ export async function* retryStream<T>(
   factory: () => AsyncIterable<T>,
   options: RetryOptions = {}
 ): AsyncGenerator<T, void, unknown> {
-  const attempts = options.attempts ?? 2;
+  const attempts = options.attempts ?? 3;
   let emitted = false;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {

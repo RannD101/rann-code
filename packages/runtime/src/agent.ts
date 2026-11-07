@@ -674,7 +674,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
                 signal
               }),
             {
-              attempts: index === 0 ? 2 : 1,
+              attempts: index === 0 ? 3 : 1,
               signal,
               onRetry: (attempt, error, delayMs) => {
                 publish("error", {

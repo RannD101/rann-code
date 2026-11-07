@@ -2,7 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { execFileSync, spawn } from "node:child_process";
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
-import { RannError, PROTOCOL_VERSION, explainKey, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
+import { RannError, PROTOCOL_VERSION, explainKey, toRannError, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
   appendAudit,
   appendEvent,
@@ -1335,7 +1335,7 @@ export class RpcServer {
     const providerConfig = providerFor(config);
     const model = resolveModel(providerConfig, input.model as string | undefined);
     const session = createSession(this.db, {
-      projectPath: (input.projectPath as string | undefined) ?? process.cwd(),
+      projectPath: (input.projectPath as string | undefined) ?? this.options.config.projectPath ?? process.cwd(),
       title: input.title as string | undefined,
       model,
       permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? config.permissions.mode
@@ -2038,24 +2038,31 @@ export class RpcServer {
     const started = Date.now();
     let reply = "";
     const usage = { inputTokens: 0, outputTokens: 0 };
-    for await (const chunk of provider.chat({
-      model,
-      messages: [{ role: "user", content: "Balas hanya OK" }],
-      maxTokens: 32
-    })) {
-      if (chunk.type === "text") reply += chunk.text;
-      if (chunk.type === "usage") {
-        usage.inputTokens += chunk.inputTokens;
-        usage.outputTokens += chunk.outputTokens;
+    try {
+      for await (const chunk of provider.chat({
+        model,
+        messages: [{ role: "user", content: "Balas hanya OK" }],
+        maxTokens: 32
+      })) {
+        if (chunk.type === "text") reply += chunk.text;
+        if (chunk.type === "usage") {
+          usage.inputTokens += chunk.inputTokens;
+          usage.outputTokens += chunk.outputTokens;
+        }
       }
+    } catch (error) {
+      providerHealth.recordFailure(name, toRannError(error));
+      throw error;
     }
+    const latency = Date.now() - started;
+    providerHealth.recordSuccess(name, latency);
     return {
       ok: true,
       provider: name,
       model,
       reply: reply.trim(),
       usage,
-      latency_ms: Date.now() - started
+      latency_ms: latency
     };
   }
 

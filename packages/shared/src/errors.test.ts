@@ -4,9 +4,9 @@ import { exitCodeFor, RannError, toRannError, toRpcError } from "./errors.js";
 describe("errors", () => {
   it("memetakan kode ke exit code", () => {
     expect(exitCodeFor("E_INVALID_PARAMS")).toBe(2);
-    expect(exitCodeFor("E_CONFIG_INVALID")).toBe(3);
+    expect(exitCodeFor("E_CONFIG_INVALID")).toBe(2);
     expect(exitCodeFor("E_PROVIDER_AUTH")).toBe(4);
-    expect(exitCodeFor("E_PERMISSION")).toBe(5);
+    expect(exitCodeFor("E_PERMISSION")).toBe(3);
     expect(exitCodeFor("E_NOT_FOUND")).toBe(6);
     expect(exitCodeFor("E_CANCELLED")).toBe(130);
     expect(exitCodeFor("E_CONFLICT")).toBe(6);

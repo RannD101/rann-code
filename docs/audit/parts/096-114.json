@@ -1,0 +1,375 @@
+[
+  {
+    "id": "RC-FR-096",
+    "title": "Lifecycle dan dependensi plugin",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/plugins.ts:6 status plugin installed/enabled/disabled/error",
+      "packages/runtime/src/plugins.ts:342-353 enable memeriksa apiVersion dan keberadaan dependensi",
+      "packages/runtime/src/plugins.ts:362-364 markError menulis status error",
+      "packages/runtime/src/plugins.ts:407-448 invoke memakai proses anak, timeout, dan menandai error saat keluar bukan nol",
+      "packages/runtime/src/plugins.ts:376-390 update menyimpan salinan .previous dan menimpa folder",
+      "packages/runtime/src/plugins.ts:401-415 rollback memulihkan folder .previous",
+      "packages/runtime/src/plugins.ts:220-245 list menandai stale bila manifest lebih tua dari STALE_MS",
+      "packages/runtime/src/plugins.test.ts:52 \"memasang plugin nonaktif lalu bisa diaktifkan\"",
+      "packages/runtime/src/plugins.test.ts:78 \"menandai plugin rusak sebagai error tanpa menjatuhkan manager\"",
+      "packages/runtime/src/plugins.test.ts:92 \"rollback memulihkan versi sebelumnya\""
+    ],
+    "gaps": [
+      "Dependensi hanya diperiksa keberadaannya, tidak dimuat berurutan: plugins.ts:349-353 tidak memanggil enable atau load dependensi lebih dulu.",
+      "Plugin yang crash sebagai hook tidak ditandai error: hooks.ts:246-258 hanya mencatat outcome, tidak memanggil PluginManager.markError."
+    ]
+  },
+  {
+    "id": "RC-FR-097",
+    "title": "API dan permission plugin",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/plugins.ts:11-23 manifest memuat permissions, hooks, tools, commands",
+      "packages/runtime/src/plugins.ts:122-132 permissions dibaca dan diteruskan ke PluginInfo",
+      "packages/runtime/src/plugins.ts:220-233 list mengembalikan permissions untuk ditampilkan",
+      "packages/runtime/src/tools/index.ts:1485-1511 plugin_call list/call menjalankan method di proses anak",
+      "packages/runtime/src/plugins.ts:407-459 invoke mengembalikan ChildResult terstruktur ok/error/output",
+      "packages/runtime/src/plugins.test.ts:106 \"remove menghapus folder dan state\""
+    ],
+    "gaps": [
+      "Tidak ada API registrasi tool, command, provider, atau handler hook: manifest.tools dan manifest.commands di plugins.ts:18-19 hanya disimpan, tidak pernah dipasang ke ToolRegistry, CLI, atau registry provider.",
+      "Permission tidak ditegakkan: plugins.ts:122-132 hanya menyimpan daftar permissions dan invoke di plugins.ts:407-459 tidak memeriksa permission sebelum menjalankan method.",
+      "Batas akses penyimpanan tidak ada: proses anak di plugins.ts:423-436 mewarisi filesystem dan cwd penuh, jadi plugin bisa membaca path di luar direktorinya."
+    ]
+  },
+  {
+    "id": "RC-FR-098",
+    "title": "Kompatibilitas dan update plugin",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/plugins.ts:45-67 satisfiesApiRange mendukung caret, tilde, perbandingan, dan OR",
+      "packages/runtime/src/plugins.ts:114-118 manifest dengan API tidak kompatibel ditolak dengan pesan versi tersedia",
+      "packages/runtime/src/plugins.ts:376-390 update menyimpan versi sebelumnya lalu menimpa",
+      "packages/runtime/src/plugins.ts:401-415 rollback memulihkan versi sebelumnya",
+      "packages/runtime/src/plugins.ts:220-245 stale dihitung dari mtime manifest",
+      "packages/runtime/src/plugins.test.ts:32 \"mendukung caret, tilde, perbandingan, dan OR\"",
+      "packages/runtime/src/plugins.test.ts:92 \"rollback memulihkan versi sebelumnya\""
+    ],
+    "gaps": [
+      "Update tidak menampilkan changelog dan tidak meminta konfirmasi saat permissions berubah: plugins.ts:376-390 langsung menimpa, dan InstallOptions.approve di plugins.ts:39 tidak pernah dibaca.",
+      "Pesan penolakan menyebut rentang yang diminta dan versi yang tersedia (plugins.ts:116-118), tetapi tidak menyebut versi minimum yang harus dipakai."
+    ]
+  },
+  {
+    "id": "RC-FR-099",
+    "title": "Event hooks",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/hooks.ts:6-23 mendaftar 16 event termasuk SessionStart, PreToolUse, PostToolUse, Stop, PreCompact",
+      "packages/runtime/src/hooks.ts:34-52 payload berisi session_id, turn_id, cwd, dan field per event",
+      "packages/runtime/src/hooks.ts:180-181 urutan hook berdasarkan prioritas menurun",
+      "packages/runtime/src/hooks.ts:199-253 run berurutan, deny menghentikan rantai, modify diteruskan",
+      "packages/runtime/src/agent.ts:402 UserPromptSubmit, 968 PreToolUse, 1139 PostToolUse, 1144 ToolError",
+      "packages/runtime/src/hooks.test.ts:26 \"menjalankan command berurutan sesuai prioritas dan mengirim payload JSON\"",
+      "packages/runtime/src/hooks.test.ts:57 \"on_error warn tidak memblokir, block memblokir\""
+    ],
+    "gaps": [
+      "Runtime hanya memancarkan 4 dari 16 event: agent.ts:402, 968, 1139, 1144; SessionStart, SessionEnd, PreTask, PostTask, AgentSpawn, AgentComplete, MemoryWrite, SkillLoad, ContextCompact, Stop, PreCompact, dan Notification tidak pernah dipanggil.",
+      "Payload tiap event tidak divalidasi skema: HookPayload di hooks.ts:34-52 adalah objek longgar, jadi field wajib per event tidak dapat dipastikan."
+    ]
+  },
+  {
+    "id": "RC-FR-100",
+    "title": "Konfigurasi, validasi, timeout, dan error hook",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/hooks.ts:26-33 HookConfig memuat event, command/path/url/plugin, timeout_ms, on_error",
+      "packages/runtime/src/hooks.ts:183-197 validate memeriksa event, kind, target, dan rentang timeout",
+      "packages/runtime/src/hooks.ts:60 DEFAULT_TIMEOUT 10.000 ms",
+      "packages/runtime/src/hooks.ts:213-247 empat kind: command, http, script, plugin",
+      "packages/runtime/src/hooks.ts:254-262 on_error warn melanjutkan, block menolak",
+      "packages/runtime/src/hooks.test.ts:67 \"membunuh hook yang melewati timeout\"",
+      "packages/runtime/src/hooks.test.ts:57 \"on_error warn tidak memblokir, block memblokir\""
+    ],
+    "gaps": [
+      "Dry-run tidak menampilkan payload dan hasil: hooks.ts:206-208 hanya menandai skipped, tanpa mengembalikan body yang dikirim atau output yang akan dihasilkan."
+    ]
+  },
+  {
+    "id": "RC-FR-101",
+    "title": "Arsitektur adapter provider",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:6-24 ChatMessage dan attachment",
+      "packages/runtime/src/providers/types.ts:30-37 ChatRequest",
+      "packages/runtime/src/providers/types.ts:45-49 antarmuka Provider hanya chat",
+      "packages/runtime/src/providers/index.ts:20-79 factory memilih adapter berdasarkan kind",
+      "packages/runtime/src/providers/sse.ts:14-49 parser SSE dipakai bersama",
+      "packages/runtime/src/providers/types.ts:51-53 estimateTokens heuristik karakter dibagi empat"
+    ],
+    "gaps": [
+      "Kontrak Provider belum lengkap: providers/types.ts:45-49 hanya punya chat; tidak ada method embed, listModels, health, countTokens, dan stream terpisah."
+    ]
+  },
+  {
+    "id": "RC-FR-102",
+    "title": "Dukungan provider",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/index.ts:20-35 memilih anthropic, gemini, openai-responses, openai, dan mock",
+      "packages/runtime/src/providers/openai.ts:1-60 adapter openai-compatible memakai base URL kustom",
+      "packages/runtime/src/providers/provider-contract.test.ts:51 \"anthropic menormalkan teks, tool use, usage, dan stop\"",
+      "packages/runtime/src/providers/provider-contract.test.ts:88 \"gemini menormalkan parts dan usageMetadata\"",
+      "packages/runtime/src/providers/provider-contract.test.ts:116 \"openai responses menormalkan output_text dan function_call\"",
+      "packages/runtime/src/providers/openai.test.ts:38 \"membaca stream teks, tool call, dan usage\"",
+      "packages/runtime/src/models.ts:5-17 capability per model dipakai router"
+    ],
+    "gaps": [
+      "OpenRouter tidak punya adapter atau kind sendiri: providers/index.ts:20-35 tidak mengenal openrouter, sehingga hanya bisa dipakai sebagai openai-compatible dengan base URL manual.",
+      "Tidak ada contoh konfigurasi per adapter di repo; docs/tutorial-v1.0.0.md hanya memuat contoh OpenRouter, bukan anthropic, gemini, atau openai-responses."
+    ]
+  },
+  {
+    "id": "RC-FR-103",
+    "title": "Manajemen kredensial",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/secrets.ts:146-153 get mengambil kunci dari safeStorage",
+      "packages/storage/src/secrets.ts:164-198 set/delete menyimpan dan menghapus kunci per provider",
+      "packages/runtime/src/rpc.ts:1985-2014 provider.list mengembalikan key_hint empat karakter terakhir",
+      "packages/cli/src/main.ts:3086-3159 perintah rann provider login/add/test/remove mengelola kunci",
+      "packages/runtime/src/providers/index.ts:42-79 adapter menerima secrets dan process.env"
+    ],
+    "gaps": [
+      "Kunci dari environment tidak dipindahkan ke secret store saat first-run: tidak ada kode api_key_env atau first-run di packages/cli/src dan packages/runtime/src, jadi env tetap dibaca langsung.",
+      "Perintah /provider add, /provider test, dan /provider remove tidak ada di REPL: main.ts:1951 hanya memilih provider yang sudah ada; add/test/remove hanya tersedia sebagai subcommand rann provider."
+    ]
+  },
+  {
+    "id": "RC-FR-104",
+    "title": "Discovery dan registrasi model",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:138-161 builtinDescriptor membangun descriptor dari katalog",
+      "packages/runtime/src/models.ts:187-213 resolveDescriptor menggabungkan config, tabel models, dan alias",
+      "packages/runtime/src/models.ts:285-310 registrySnapshot mengumpulkan model dari config dan DB",
+      "packages/runtime/src/models.ts:196-208 alias diselesaikan ke model dan provider",
+      "packages/runtime/src/rpc.ts:1969-1983 model.list mengirim descriptors",
+      "packages/cli/src/main.ts:1966-1975 /models menampilkan id, context window, dan capability",
+      "packages/cli/src/main.ts:2857 perintah rann models menampilkan harga"
+    ],
+    "gaps": [
+      "Discovery listModels tidak ada: registry hanya dibangun dari config.providers[].models dan tabel models (models.ts:285-310), tanpa memanggil endpoint /models provider.",
+      "Model yang tidak tersedia tidak bisa ditandai: ModelDescriptor hanya punya deprecated (models.ts:45), tidak ada flag unavailable atau alasan tidak tersedia.",
+      "/models di REPL tidak menampilkan harga: main.ts:1958-1966 hanya id, context window, dan capability; harga baru muncul di perintah CLI rann models (main.ts:2857)."
+    ]
+  },
+  {
+    "id": "RC-FR-105",
+    "title": "Capability registry",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:5-17 mendaftar 12 capability",
+      "packages/runtime/src/models.ts:138-160 default capability per model dari katalog",
+      "packages/runtime/src/models.ts:163-174 mergeCapabilities menggabungkan override boolean",
+      "packages/runtime/src/router.ts:107-118 requiredCapability untuk coding, vision, dan embedding",
+      "packages/runtime/src/agent.ts:551-553 dan 583-590 tool tidak dipasang bila toolCalling false",
+      "packages/runtime/src/router.test.ts:26 \"membuang model tanpa tool calling untuk coding\"",
+      "packages/runtime/src/models.test.ts:98 \"menganggap model tanpa tool calling tidak bisa memakai tool\""
+    ],
+    "gaps": [
+      "Kapabilitas yang tidak diketahui dianggap mendukung fitur utama: models.ts:140-144 memberi toolCalling, parallelToolCalls, dan structuredOutput true untuk model openai-compatible yang tidak ada di katalog, tanpa status unknown.",
+      "Capability tidak bisa berasal dari provider atau dokumentasi: builtinDescriptor memakai katalog hardcoded (models.ts:64-135) dan override manual/DB (models.ts:207-232), tanpa jalur discovery atau pencatatan sumber.",
+      "Hanya toolCalling, vision, dan embeddings yang dipakai untuk menyaring (router.ts:107-118, rpc.ts:1407-1409); capability parallelToolCalls, structuredOutput, reasoning, audio, pdf, dan promptCaching hanya metadata tanpa penegakan.",
+      "Sumber kapabilitas tidak dicatat: tabel models hanya menyimpan capabilities_json boolean (packages/storage/src/model-repos.ts:31), tanpa kolom sumber atau waktu verifikasi, dan perubahan kapabilitas tidak masuk audit log."
+    ]
+  },
+  {
+    "id": "RC-FR-106",
+    "title": "Context window dan tokenizer",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:51-53 estimateTokens heuristik karakter dibagi empat",
+      "packages/runtime/src/agent.ts:276-290 digestRows memotong tiap pesan lama",
+      "packages/runtime/src/agent.ts:306-336 buildChatContext dan ringkasan digest",
+      "packages/runtime/src/agent.ts:348 default maxTokens 24.000, keepRecent 20, summaryChars 6.000",
+      "packages/runtime/src/agent.ts:656-663 pengecekan contextWindow model ditambah reserve output",
+      "packages/runtime/src/memory.ts:46-52 dan 364 batas promptChars untuk memori",
+      "packages/cli/src/main.ts:2578-2585 /context menampilkan jumlah pesan dan estimasi token"
+    ],
+    "gaps": [
+      "Ambang 75% dan 90% tidak memakai context window model: status bar menghitung persentase dari config.context.max_tokens 24.000 (main.ts:970, 999-1003, 1026), dan kompaksi di agent.ts:306/348 juga memakai 24.000 tetap, bukan descriptor.contextWindow.",
+      "Estimasi token hanya heuristik karakter dibagi empat (providers/types.ts:51-53); tidak ada tokenizer model dan tidak ada uji bahwa error estimasi ≤ 15 persen.",
+      "Pemulihan overflow dari error provider tidak ada: E_CONTEXT_OVERFLOW langsung dilempar di agent.ts:656-663 tanpa kompaksi ulang atau retry dengan konteks lebih kecil.",
+      "Ringkasan bertahap tidak ada: digestRows (agent.ts:276-290) memotong tiap pesan dan membuang sisanya, tanpa tahap yang menjaga goal, keputusan, error, path, dan hasil verifikasi secara eksplisit.",
+      "Prompt caching tidak dikirim ke provider: capability promptCaching ada di models.ts:15, tetapi tidak ada cache_control atau penanda cache di providers/*.ts; cacheRead hanya dibaca dari respons.",
+      "Anggaran retrieval file hanya per pembacaan: MAX_READ_CHARS 200.000 di packages/runtime/src/tools/index.ts:92, tanpa batas kumulatif per turn.",
+      "/context tidak menampilkan komposisi context atau alasan pemotongan: main.ts:2578-2585 hanya jumlah pesan dan estimasi token."
+    ]
+  },
+  {
+    "id": "RC-FR-107",
+    "title": "Streaming dan tool calling",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:39-43 ProviderChunk text, tool_call, usage, error, done",
+      "packages/runtime/src/providers/openai.ts:232-250 tool call dirakit dari delta lalu dikirim setelah selesai",
+      "packages/runtime/src/providers/anthropic.ts:160-179 tool call dikirim setelah input_json_delta lengkap",
+      "packages/runtime/src/agent.ts:851-1160 tool dijalankan berurutan",
+      "packages/runtime/src/providers/retry.ts:136-142 retry berhenti setelah ada chunk terkirim",
+      "packages/runtime/src/providers/openai.test.ts:38 \"membaca stream teks, tool call, dan usage\"",
+      "packages/runtime/src/providers/retry.test.ts:19 \"tidak mengulang setelah teks terkirim\""
+    ],
+    "gaps": [
+      "Delta reasoning tidak ada: ProviderChunk (types.ts:39-43) hanya text, tool_call, usage, error, dan done; tidak ada reasoning atau thinking delta meski capability reasoning ada di models.ts:12.",
+      "Tool call parsial tidak diekspos: argumen baru dikirim setelah JSON lengkap (anthropic.ts:179 dan openai.ts:245-250), sehingga UI tidak bisa menampilkan progres argumen.",
+      "Tool call tidak dijalankan paralel: agent.ts:851-1160 memproses calls berurutan dan capability parallelToolCalls tidak dipakai.",
+      "Resume stream tidak ada: retry.ts:136-142 melempar error bila sudah ada teks terkirim, dan agent.ts:735-739 menyimpan teks parsial lalu berhenti, bukan melanjutkan dari offset."
+    ]
+  },
+  {
+    "id": "RC-FR-108",
+    "title": "Structured output dan multimodal",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/types.ts:30-37 ChatRequest tidak punya responseFormat atau schema",
+      "packages/runtime/src/attachments.ts:7 hanya kind image, pdf, text",
+      "packages/runtime/src/attachments.ts:23-25 batas 20 MB per lampiran dan 50 MB total",
+      "packages/runtime/src/attachments.ts:95-107 validasi ukuran dan tipe dengan magic bytes",
+      "packages/runtime/src/attachments.ts:120-137 PDF diekstrak menjadi teks, bukan dikirim sebagai dokumen",
+      "packages/runtime/src/agent.ts:220-234 gambar dikirim sebagai attachment, teks/PDF digabung ke content",
+      "packages/runtime/src/rpc.ts:1404-1406 gambar ditolak bila model tanpa capability vision",
+      "packages/runtime/src/providers/openai.test.ts:101 \"mengirim gambar sebagai data URL, bukan base64 di content teks\""
+    ],
+    "gaps": [
+      "Structured output belum ada: tidak ada responseFormat, json_schema, atau validasi output terhadap schema di providers/*.ts dan agent.ts.",
+      "Audio tidak didukung: AttachmentKind di attachments.ts:7 hanya image, pdf, text, dan tidak ada jalur audio ke provider.",
+      "PDF selalu diekstrak menjadi teks (attachments.ts:130-137), bahkan untuk model dengan capability pdf, sehingga PDF tidak dikirim sebagai dokumen multimodal.",
+      "Output model tidak divalidasi ulang terhadap schema dan tidak ada perbaikan otomatis saat JSON tidak valid."
+    ]
+  },
+  {
+    "id": "RC-FR-109",
+    "title": "Usage dan biaya",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/models.ts:327-341 costFor menghitung input, output, cache read, dan cache write",
+      "packages/runtime/src/agent.ts:817-828 recordUsage membawa token dan costUsd",
+      "packages/storage/src/repos.ts:370-386 usage_events menyimpan token, biaya, cache, provider_request_id, cost_source",
+      "packages/storage/src/schema-v4.ts:7 kolom provider_request_id ditambahkan",
+      "packages/shared/src/config.ts:117-123 budget per turn dan per hari",
+      "packages/runtime/src/models.test.ts:49 \"memberi harga nol dan $? saat harga tidak diketahui\"",
+      "packages/cli/src/main.ts:1910-1933 /usage, /cost, dan /budget menampilkan ringkasan sesi dan harian",
+      "packages/runtime/src/rpc.ts:843-855 budget.status memisahkan knownUsd dan unknownCost"
+    ],
+    "gaps": [
+      "provider_request_id tidak pernah diisi: ProviderChunk (providers/types.ts:39-43) tidak membawa id respons dan recordUsage dipanggil tanpa providerRequestId di agent.ts:817-828.",
+      "Biaya tidak diketahui disimpan sebagai 0, bukan NULL: repos.ts:381 memakai input.costUsd ?? 0 sementara cost_source unknown di repos.ts:385; /budget menghitung unknown lewat rpc.ts:843-855, tetapi /cost di main.ts:1916-1924 tetap menjumlahkan nol tanpa peringatan.",
+      "Registry harga builtin kosong: tidak ada entri pricing di CATALOG models.ts:64-135, jadi costFor selalu null untuk model bawaan; harga manual yang hanya sebagian diisi dilengkapi 0 di models.ts:238-240.",
+      "Tidak ada budget per task: BudgetOptions di agent.ts:349 hanya maxTokensPerTurn, maxTokensPerDay, dan maxUsdPerDay; config tidak punya batas biaya per task.",
+      "/cost dan /usage hanya ringkasan sesi: main.ts:1910-1924 tidak mengelompokkan per task, dan tidak ada perintah biaya per task."
+    ]
+  },
+  {
+    "id": "RC-FR-110",
+    "title": "Kesehatan provider dan rate limit",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/retry.ts:3 enam status health",
+      "packages/runtime/src/providers/retry.ts:60-88 recordFailure memetakan 429 ke rate_limited dan 401 ke auth_error",
+      "packages/runtime/src/providers/retry.ts:15-17 dan 84-88 circuit open 30 detik setelah 5 kegagalan dalam 60 detik",
+      "packages/runtime/src/rpc.ts:254-289 probe berkala 60 detik memanggil recordProbe",
+      "packages/runtime/src/providers/retry.ts:35-43 retryAfter dihitung dari Retry-After",
+      "packages/runtime/src/providers/retry.ts:101-104 backoff memakai Retry-After bila ada",
+      "packages/cli/src/main.ts:1978-1985 /providers menampilkan status dan latency",
+      "packages/cli/src/main.ts:993 status bar menampilkan kesehatan provider",
+      "packages/runtime/src/providers/retry.test.ts:42 \"membuka circuit setelah lima kegagalan\""
+    ],
+    "gaps": [
+      "Health check on-demand tidak mencatat status, latensi, atau error: provider.test di rpc.ts:2015-2052 hanya memanggil chat dan mengembalikan hasil, tanpa providerHealth.recordSuccess atau recordFailure."
+    ]
+  },
+  {
+    "id": "RC-FR-111",
+    "title": "Retry dan fallback",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/providers/retry.ts:97-108 backoff 1 detik lalu 2 detik, menghormati Retry-After",
+      "packages/runtime/src/providers/retry.ts:128-155 retryStream mengulang sebelum chunk pertama",
+      "packages/runtime/src/agent.ts:685-700 attempts 2 untuk provider utama dan 1 untuk fallback",
+      "packages/runtime/src/agent.ts:719-739 fallback dicoba bila belum ada teks, lalu teks parsial disimpan",
+      "packages/runtime/src/rpc.ts:1418-1438 daftar fallback dibangun dari config.model.fallback",
+      "packages/runtime/src/providers/sse.ts:51-65 pemetaan 429, 401, dan 5xx ke kode error",
+      "packages/runtime/src/providers/retry.test.ts:6 \"mengulang stream yang gagal sebelum chunk pertama\"",
+      "packages/runtime/src/agent-wiring.test.ts:152 \"menyimpan teks parsial saat stream terputus\""
+    ],
+    "gaps": [
+      "Retry tidak mengikuti matriks ARCHITECTURE 13.3: agent.ts:685-687 memakai 2 percobaan untuk chat (matriks 3) dengan backoff 1s dan 2s tanpa jitter 0-250 ms; stream juga memakai backoff 1s, bukan 500 ms, dan tidak mengirim request id idempoten.",
+      "Fallback tidak memeriksa pin: rpc.ts:1414-1437 membangun fallback dari config.model.fallback tanpa melihat config.routing.pinned atau pin per sesi, dan tidak ada allowFallback.",
+      "Fallback tidak memeriksa capability setara atau lebih tinggi: rpc.ts:1414-1437 hanya memilih provider dan model dari config.model.fallback, tanpa membandingkan capability dengan model utama.",
+      "Output parsial tidak disambung oleh fallback: agent.ts:735-739 melempar error begitu ada teks terkirim, jadi fallback tidak dijalankan.",
+      "Rantai fallback dan biayanya tidak dicatat: recordRoutingLog di rpc.ts:1439-1444 tidak mengirim fallbackChain, dan biaya fallback tidak masuk usage karena hanya usage terakhir yang dicatat (agent.ts:817-828).",
+      "Error akhir tidak memuat rantai percobaan: agent.ts:741 melempar lastProviderError apa adanya, tanpa daftar provider dan kode error yang dicoba."
+    ]
+  },
+  {
+    "id": "RC-FR-112",
+    "title": "Alias dan pemilihan model",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:37-49 models mendukung aliases per model",
+      "packages/runtime/src/models.ts:196-208 alias diselesaikan ke model dan provider",
+      "packages/runtime/src/rpc.ts:1438 setTurnModel mencatat model per turn",
+      "packages/runtime/src/router.ts:131-143 pin mengembalikan model yang dipin",
+      "packages/cli/src/main.ts:1954-1963 /model tanpa argumen menampilkan model aktif dan daftar model",
+      "packages/runtime/src/router.test.ts:63 \"menghormati pin dan alias\"",
+      "packages/runtime/src/models.test.ts:34 \"mengisi registry dari config dan menghormati override\""
+    ],
+    "gaps": [
+      "Sumber model tidak ditampilkan: /model di main.ts:1954-1963 hanya mencetak model aktif dan daftar model, tanpa asal alias atau provider.",
+      "Opsi --pin tidak ada di CLI: parser perintah di packages/cli/src/main.ts tidak mengenal --pin, dan pin hanya bisa diatur lewat config.routing.pinned (config.ts:110).",
+      "/model <nama> tidak menyimpan model ke sesi: main.ts:1954-1963 hanya mengubah variabel lokal yang dikirim sebagai override per turn, sehingga model kembali ke default setelah sesi atau proses baru.",
+      "Model eksplisit tetap bisa diganti fallback: rpc.ts:1418-1438 selalu membangun fallback dan agent.ts:719-739 memakainya tanpa memeriksa apakah model diminta eksplisit.",
+      "Alias tidak stabil lintas provider: models.ts:203-205 melempar E_CONFIG_INVALID bila alias menunjuk provider lain, jadi alias tidak bisa dipakai setelah provider diganti.",
+      "Status bar menampilkan alias, bukan model asli: main.ts:993 memakai variabel model yang diisi teks /model, sehingga nama model hasil resolve tidak terlihat."
+    ]
+  },
+  {
+    "id": "RC-FR-113",
+    "title": "Smart router",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/router.ts:11-25 bobot berbeda per jenis tugas",
+      "packages/runtime/src/router.ts:32-53 klasifikasi coding, review, reasoning, inspect, extraction, writing, vision, embedding",
+      "packages/runtime/src/router.ts:136-171 filter deprecated, health, capability, context window, dan minQuality",
+      "packages/runtime/src/router.ts:186-200 skor memakai quality, context, tool, cost, latency, health, dan prefer",
+      "packages/runtime/src/router.test.ts:20 \"mengklasifikasikan tugas coding dan review\"",
+      "packages/runtime/src/router.test.ts:43 \"memilih model reasoning lebih kuat meski lebih mahal\"",
+      "packages/runtime/src/router.test.ts:71 \"memberi peringatan saat semua kandidat melebihi batas biaya\"",
+      "packages/storage/src/model-repos.ts:154-181 routing_logs menyimpan requested, selected, reason, fallback_chain, latency"
+    ],
+    "gaps": [
+      "Skor dan alasan kandidat tidak disimpan: RouteDecision punya candidates dan rejected (router.ts:57-65), tetapi recordRoutingLog hanya menulis requested/selected/reason (model-repos.ts:154-181), dan tidak ada perintah /route why.",
+      "Router tidak menerima informasi lampiran: routeModel hanya diberi prompt teks (rpc.ts:1385-1396), sehingga gambar tanpa kata kunci vision bisa memilih model non-vision dan baru ditolak setelah routing (rpc.ts:1407-1409).",
+      "Tidak ada error saat tidak ada kandidat: router.ts:170-172 mengembalikan chosen null, lalu rpc.ts:1403-1404 diam-diam memakai model sesi, bukan error E_ROUTE_NO_CANDIDATE.",
+      "Tidak ada pembelajaran dari hasil: ROUTE_WEIGHTS konstan di router.ts:11-25 dan tidak ada pembaruan bobot atau statistik kualitas dari usage maupun verifikasi.",
+      "Klasifikasi tugas hanya regex kata kunci (router.ts:32-53), tanpa metadata task atau estimasi kompleksitas."
+    ]
+  },
+  {
+    "id": "RC-FR-114",
+    "title": "Kebijakan routing dan override",
+    "status": "partial",
+    "evidence": [
+      "packages/shared/src/config.ts:106-116 routing mendukung mode auto/manual, policy, pinned, prefer, min_quality, max_cost_per_task, strict_budget",
+      "packages/runtime/src/router.ts:124-143 pin dihormati sebelum skoring",
+      "packages/runtime/src/router.ts:206-230 strict budget dan pemilihan termurah",
+      "packages/runtime/src/rpc.ts:1381-1402 routing otomatis hanya aktif bila mode auto dan model tidak eksplisit",
+      "packages/runtime/src/rpc.ts:1438-1445 override model per turn dicatat lewat setTurnModel dan routing_logs",
+      "packages/shared/src/config.ts:73-84 subagents.model untuk override per agen",
+      "packages/cli/src/main.ts:2387-2395 /route explain menampilkan keputusan routing"
+    ],
+    "gaps": [
+      "Policy hanya auto dan manual: config.ts:108 tidak mengenal cost-first, quality-first, latency-first, atau mode hemat biaya; router.ts:11-25 selalu memakai bobot balanced per task class.",
+      "Tidak ada aturan routing kustom per project atau per task: schema routing di config.ts:106-116 hanya berisi prefer, pinned, dan ambang global.",
+      "Log routing tidak memuat kandidat, skor, atau alasan yang bisa diperiksa: recordRoutingLog di rpc.ts:1439-1444 hanya mengirim requested, selected, dan reason; fallbackChain tidak diisi.",
+      "Tidak ada opsi allowFallback: fallback di rpc.ts:1418-1438 selalu dibangun, sehingga override eksplisit tetap bisa dialihkan ke model lain."
+    ]
+  }
+]

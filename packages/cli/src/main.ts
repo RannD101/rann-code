@@ -126,6 +126,7 @@ async function main(argv: string[]): Promise<number> {
     if (positionalPrompt.length > 0) return await runPrompt(args, positionalPrompt);
     if (barePrompt) return await runPrompt(args, barePrompt);
     if (process.stdin.isTTY && process.stdout.isTTY) return await chatCommand(args);
+    if (!process.stdin.isTTY) return await chatCommand(args);
   }
   if (flagBool(args, "help") || args.command === undefined) {
     print(HELP);
@@ -1620,6 +1621,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             continue;
           }
           print("pakai: /agents list|get|cancel|profiles|message");
+          continue;
+        }
+        if (line === "/pair" || line.startsWith("/pair ")) {
+          const status = await client.request<GatewayStatus>("gateway.status", {});
+          const result = await client.request<{ code: string; expiresAt: number }>("gateway.pair", {});
+          print(`kode    ${result.code}`);
+          print(`buka    ${status.public_url ?? `http://${status.host}:${String(status.port)}`}`);
+          print(`berlaku ${Math.max(1, Math.round((result.expiresAt - Date.now()) / 60_000))} menit`);
           continue;
         }
         if (line === "/gateway" || line === "/gw" || line.startsWith("/gateway ") || line.startsWith("/gw ")) {

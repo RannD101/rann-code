@@ -1,0 +1,308 @@
+[
+  {
+    "id": "RC-FR-115",
+    "title": "Operasi Git dasar",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:786-826 (git_read: status, diff, log, show, blame, branch, remote)",
+      "packages/runtime/src/tools/index.ts:828-861 (git_write: stage, unstage, commit, branch_create)",
+      "packages/runtime/src/tools/index.ts:925-930 (commit ditolak selama masih ada konflik)",
+      "packages/runtime/src/git.ts:63-66 (trailer Rann-Code-Session)",
+      "packages/runtime/src/tools.test.ts:256 (membaca status git dan commit dengan trailer sesi)",
+      "packages/runtime/src/tools.test.ts:280 (menolak commit saat masih ada konflik)"
+    ],
+    "gaps": [
+      "Pesan commit tidak dibuat dari diff dan tidak ada editor untuk mengubahnya; git_write.commit hanya memakai message yang dikirim pemanggil (tools/index.ts:929)."
+    ]
+  },
+  {
+    "id": "RC-FR-116",
+    "title": "Checkpoint dan rollback",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/agent.ts:854-875 (snapshot file sebelum tool mutasi pertama dan checkpoint state step/plan/tool)",
+      "packages/runtime/src/checkpoint-files.ts:125-163 (restore menyalin balik berkas dari manifest)",
+      "packages/runtime/src/rpc.ts:815-828 (checkpoint.restore dan appendAudit)",
+      "packages/cli/src/main.ts:2525-2545 (perintah /undo dengan konfirmasi)",
+      "packages/runtime/src/checkpoint-files.test.ts:20 (membuat snapshot dan mengembalikan seluruh berkas)",
+      "packages/runtime/src/checkpoint-files.test.ts:35 (menolak rollback bila berkas berubah tanpa force)"
+    ],
+    "gaps": [
+      "Checkpoint setelah verifikasi sukses tidak dibuat; hanya ada checkpoint pre_tool sebelum tool mutasi pertama (agent.ts:854).",
+      "Rollback tidak mengembalikan state task dan tidak menghapus berkas yang dibuat setelah checkpoint; restore hanya menimpa berkas yang ada di manifest (checkpoint-files.ts:136-161).",
+      "Riwayat checkpoint tidak bisa dibersihkan karena pruneFileCheckpoints tidak dipanggil dari RPC maupun CLI (checkpoint-files.ts:165)."
+    ]
+  },
+  {
+    "id": "RC-FR-117",
+    "title": "Worktree dan konflik",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/tools/index.ts:869-882 (worktree_create dengan branch rann/<name>)",
+      "packages/runtime/src/tools/index.ts:893-904 (merge --no-ff lalu deteksi file konflik lewat diff --diff-filter=U)",
+      "packages/runtime/src/tools/index.ts:884-891 (worktree_remove menolak worktree kotor)",
+      "packages/runtime/src/tools/index.ts:906-923 (pull --ff-only dan push tanpa force)"
+    ],
+    "gaps": [
+      "Tidak ada merge queue; worktree_merge langsung menjalankan git merge ke workspace utama tanpa serialisasi antrean (tools/index.ts:893).",
+      "Worktree yang sudah selesai tidak dibersihkan otomatis; penghapusan hanya manual dan gagal bila worktree kotor (tools/index.ts:884).",
+      "Worktree tidak terikat pada task atau agen; nama dan branch dibuat manual oleh pemanggil (tools/index.ts:869)."
+    ]
+  },
+  {
+    "id": "RC-FR-118",
+    "title": "Browser automation dasar",
+    "status": "done",
+    "evidence": [
+      "packages/runtime/src/browser.ts:170-253 (navigate, click, type, scroll, select, extract, screenshot, evaluate, wait, download, upload, close)",
+      "packages/runtime/src/browser.ts:176 (timeout per aksi dibatasi 1 sampai 120 detik)",
+      "packages/runtime/src/browser.ts:211-217 (screenshot disimpan ke artifacts_dir)",
+      "packages/runtime/src/browser.ts:228-237 (download disimpan sebagai artefak)",
+      "packages/runtime/src/tools/index.ts:1537-1546 (aksi mutasi browser memerlukan approval)",
+      "packages/runtime/src/browser.ts:166 (domain blokir ditolak E_PERMISSION)"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-119",
+    "title": "Isolasi sesi dan alur autentikasi browser",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/browser.ts:114-136 (context per taskKey, cookie dan storage terpisah)",
+      "packages/runtime/src/browser.ts:121-125 (profil persisten memuat storageState bila persistent=true)",
+      "packages/runtime/src/browser.ts:138-151 (close menghapus context dari map)",
+      "packages/runtime/src/browser.ts:247-252 (pesan 2FA diterjemahkan menjadi E_APPROVAL_REQUIRED)",
+      "packages/runtime/src/browser.test.ts:39 (menolak domain sensitif dan skrip jaringan; gagal dijalankan karena Chromium belum terpasang)"
+    ],
+    "gaps": [
+      "Profil persisten tidak bisa diaktifkan lewat tool karena skema browser tidak punya opsi persistent, dan storageState tidak pernah disimpan kembali setelah sesi (browser.ts:124).",
+      "Tidak ada jalur kredensial login yang aman; nilai aksi type masuk sebagai argumen tool dan transkrip (browser.ts:193).",
+      "Context tidak dihapus saat task selesai; hanya lewat aksi close, GC idle, atau shutdown daemon (browser.ts:138, rpc.ts:2083)."
+    ]
+  },
+  {
+    "id": "RC-FR-120",
+    "title": "Perbedaan search, fetch, dan browser",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/web.ts:206-212 (webSearch mengembalikan title, url, snippet)",
+      "packages/runtime/src/web.ts:102-141 (httpFetch GET/HEAD/POST, robots, batas 5 MB, timeout 30 detik)",
+      "packages/runtime/src/tools/index.ts:1516-1546 (tool browser untuk halaman yang butuh JavaScript atau interaksi)"
+    ],
+    "gaps": [
+      "Alasan pemilihan search, fetch, atau browser tidak dicatat di event, audit, maupun output tool.",
+      "Tidak ada fallback otomatis; kegagalan httpFetch atau webSearch tidak mencoba metode lain yang masuk akal (web.ts:102,206)."
+    ]
+  },
+  {
+    "id": "RC-FR-121",
+    "title": "Eksekusi dan antrean background",
+    "status": "done",
+    "evidence": [
+      "packages/storage/src/job-repos.ts:59-89 (antrean persisten dan idempotency key)",
+      "packages/storage/src/job-repos.ts:118-138 (klaim transaksional dengan lease)",
+      "packages/runtime/src/rpc.ts:188 (concurrency worker dari config)",
+      "packages/cli/src/main.ts:1671 (perintah /queue) dan 1702 (perintah /background)",
+      "packages/storage/src/job-repos.test.ts:40 (mengantre dengan idempotency key dan klaim transaksional)",
+      "packages/storage/src/job-repos.test.ts:54 (menyelesaikan job dan tidak menjalankannya ulang setelah restart)"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-122",
+    "title": "Persistensi dan pemulihan background",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/schema-v4.ts:5-31 (tabel jobs, lease, dan idempotency key)",
+      "packages/storage/src/job-repos.ts:226-250 (recoverStaleJobs mengembalikan ke queued atau menandai dead)",
+      "packages/storage/src/job-repos.ts:240-247 (setiap pemulihan menulis job_events recovered)",
+      "packages/runtime/src/background.ts:75-80 (pemulihan dijalankan saat worker start)",
+      "packages/storage/src/job-repos.test.ts:78 (mengembalikan job running yang lease-nya kedaluwarsa)"
+    ],
+    "gaps": [
+      "Pemulihan tidak dicatat di audit; hanya job_events yang ditulis, tanpa appendAudit (job-repos.ts:240,247)."
+    ]
+  },
+  {
+    "id": "RC-FR-123",
+    "title": "Monitoring, cancel, retry, dan notifikasi",
+    "status": "partial",
+    "evidence": [
+      "packages/cli/src/main.ts:1702-1790 (/background status, logs, cancel, retry)",
+      "packages/storage/src/job-repos.ts:214-224 (retryJob mengembalikan job failed/dead/cancelled ke queued)",
+      "packages/storage/src/job-repos.ts:180-200 (dead letter setelah percobaan habis)",
+      "packages/runtime/src/background.ts:151-156 (event done dan failed dipancarkan ke onEvent)",
+      "packages/runtime/src/rpc.ts:1231-1245 (event job.update disiarkan ke WebSocket)",
+      "packages/runtime/src/background.test.ts:19 (menjalankan job shell dan menyimpan keluarannya)"
+    ],
+    "gaps": [
+      "Cancel hanya mengubah status job di database; RPC background.cancel tidak memanggil AbortController milik worker, sehingga proses yang sedang berjalan tetap lanjut sampai selesai (rpc.ts:592-598, background.ts:132-160).",
+      "Retry tidak punya pagar idempotensi efek samping; job yang sudah sebagian berjalan diantrekan ulang apa adanya (job-repos.ts:223-233)."
+    ]
+  },
+  {
+    "id": "RC-FR-124",
+    "title": "Jenis jadwal",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/scheduler.ts:52-72 (once, every, dan cron dengan timezone)",
+      "packages/runtime/src/scheduler.ts:144-177 (tick mengantre job dan menghormati skip/queue/replace)",
+      "packages/runtime/src/rpc.ts:600-687 (scheduler add, update, remove, run, history)",
+      "packages/cli/src/main.ts:1789-1863 (/scheduler add, list, run, enable, disable, remove)",
+      "packages/runtime/src/scheduler.test.ts:52 (mengenali once, every, dan cron dengan atau tanpa prefix)"
+    ],
+    "gaps": [
+      "Kebijakan replace tidak menghentikan job yang sedang running; cancelQueuedJobsForRun hanya membatalkan job queued, sehingga eksekusi lama tetap berjalan setelah run ditandai cancelled (scheduler.ts:153-157, job-repos.ts:215-220)."
+    ]
+  },
+  {
+    "id": "RC-FR-125",
+    "title": "Trigger, timezone, dan DST",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/scheduler.ts:57-63 (assertTimezone memvalidasi zona waktu)",
+      "packages/runtime/src/scheduler.ts:65-72 (nextRunFor memakai Cron dengan timezone lokal)",
+      "packages/runtime/src/scheduler.ts:86-110 (catchUp menentukan jalan sekali atau dilewati)",
+      "packages/runtime/src/scheduler.test.ts:74 (menghitung interval dan menghormati timezone cron)",
+      "packages/runtime/src/scheduler.test.ts:113 (melewati jadwal terlewat bila catch_up mati)"
+    ],
+    "gaps": [
+      "Trigger kondisional dan event tidak ada; scheduler hanya menerima once, every, dan cron, tanpa ekspresi status, tanggal, hasil job sebelumnya, atau event (scheduler.ts:52-72)."
+    ]
+  },
+  {
+    "id": "RC-FR-126",
+    "title": "Persistensi, riwayat, dan retry jadwal",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/job-repos.ts:391-419 (job_runs menyimpan status, durasi, output, error)",
+      "packages/storage/src/job-repos.ts:180-190 (backoff eksponensial dan max_attempts)",
+      "packages/storage/src/job-repos.ts:421-428 (listSchedulerRuns dengan limit)",
+      "packages/runtime/src/rpc.ts:654-687 (audit scheduler.run dan scheduler.update/remove)",
+      "packages/cli/src/main.ts:1849-1863 (/scheduler history dengan --json)"
+    ],
+    "gaps": [
+      "Riwayat tidak bisa difilter status atau rentang tanggal; hanya limit, dan ekspor hanya berupa cetak JSON ke stdout (job-repos.ts:421).",
+      "Batas waktu eksekusi memakai background.max_runtime_ms global, bukan batas waktu per job atau per jadwal (config.ts:88-91).",
+      "Job yang gagal berulang tidak menonaktifkan jadwal dan tidak mengirim notifikasi; tidak ada pemanggilan updateScheduler saat job masuk dead letter.",
+      "job_runs.attempt selalu diisi 1, sehingga percobaan retry tidak tercatat per eksekusi (job-repos.ts:399)."
+    ]
+  },
+  {
+    "id": "RC-FR-127",
+    "title": "Gateway server dan transport",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/gateway.ts:257-285 (HTTP server dan WebSocket server)",
+      "packages/runtime/src/gateway.ts:327-355 (/v1/events dengan replay since)",
+      "packages/runtime/src/gateway.ts:418-421 (/v1/health)",
+      "packages/runtime/src/gateway.ts:244-255 (validasi tls_cert dan tls_key saat start)",
+      "packages/shared/src/config.ts:173-185 (validasi host, port, public_url, TLS)",
+      "packages/runtime/src/gateway.test.ts:70 (melayani health publik dan dashboard tanpa token)"
+    ],
+    "gaps": [
+      "Gateway membuka database langsung untuk pairing, device, audit, dan autentikasi (gateway.ts:191,209,216,361), melanggar larangan akses langsung ke database."
+    ]
+  },
+  {
+    "id": "RC-FR-128",
+    "title": "Autentikasi dan pairing",
+    "status": "done",
+    "evidence": [
+      "packages/cli/src/main.ts:1625-1631 (perintah /pair menampilkan kode, URL, dan masa berlaku)",
+      "packages/storage/src/gateway-repos.ts:53-60 (kode acak 8 karakter)",
+      "packages/storage/src/gateway-repos.ts:39 (masa berlaku 10 menit)",
+      "packages/storage/src/gateway-repos.ts:76-118 (redeem sekali pakai, token opaque, hash token)",
+      "packages/runtime/src/gateway.ts:223-232 (revoke menutup koneksi WebSocket aktif)",
+      "packages/runtime/src/gateway.ts:632-650 (rate limit 5 percobaan per 15 menit per IP)",
+      "packages/cli/src/main.ts:1600-1638 (/gateway pair, devices, revoke)",
+      "packages/storage/src/gateway-repos.test.ts:47 (menukar kode pairing sekali saja)"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-129",
+    "title": "Otorisasi, scope, dan RBAC",
+    "status": "partial",
+    "evidence": [
+      "packages/storage/src/gateway-repos.ts:41-50 (scopesForRole dan hasScope)",
+      "packages/storage/src/gateway-repos.ts:138-170 (authenticate mengikat token ke profil)",
+      "packages/runtime/src/gateway.ts:100-106 (requireScope)",
+      "packages/runtime/src/gateway.ts:542 (approve membutuhkan scope approve)",
+      "packages/runtime/src/gateway.ts:595-612 (penolakan otorisasi dicatat dengan required_scope)",
+      "packages/storage/src/gateway-repos.test.ts:38 (memetakan role ke scope dan admin mencakup semua)"
+    ],
+    "gaps": [
+      "Tidak ada pemeriksaan kepemilikan resource; token read mana pun bisa membaca sesi atau perangkat lain lewat endpoint /v1/sessions."
+    ]
+  },
+  {
+    "id": "RC-FR-130",
+    "title": "Routing sesi, task, dan eksekusi remote",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/gateway.ts:681-699 (pemetaan sessionId per device, channel, dan channelKey)",
+      "packages/runtime/src/rpc.ts:1331-1344 (session.create)",
+      "packages/runtime/src/rpc.ts:1353-1360 (session.send dan penolakan E_CONFLICT bila turn aktif)",
+      "packages/runtime/src/messaging.ts:224-272 (sesi Telegram per chat dan thread)",
+      "packages/runtime/src/messaging.test.ts:134 (meneruskan hasil turn ke chat yang terikat)"
+    ],
+    "gaps": [
+      "Sesi baru memakai process.cwd() sebagai project, bukan config.projectPath (rpc.ts:1336).",
+      "Tidak ada antrean per sesi; session.send menolak E_CONFLICT saat turn lain masih berjalan (rpc.ts:1358).",
+      "Sesi tidak terikat pada node asal; tidak ada field node atau mekanisme perpindahan node (gateway.ts:681-699)."
+    ]
+  },
+  {
+    "id": "RC-FR-131",
+    "title": "Health, reconnect, dan multi-node",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/gateway.ts:418-421 (/v1/health memanggil RPC health)",
+      "packages/runtime/src/rpc.ts:1311-1327 (health berisi daemon, database, provider, background, scheduler)",
+      "packages/runtime/src/gateway.ts:310-320 (recent event disimpan maksimal 1000)",
+      "packages/runtime/src/gateway.ts:318-355 (replay event dengan since)",
+      "packages/runtime/src/gateway.ts:270-285 (heartbeat 20 detik dan terminate setelah 3 missed)",
+      "packages/runtime/src/gateway.test.ts:70 (melayani health publik dan dashboard tanpa token)"
+    ],
+    "gaps": [
+      "Multi-node tidak ada; gateway hanya satu proses dengan satu database, tanpa routing berdasarkan project atau beban (gateway.ts:191).",
+      "Node yang mati tidak dilaporkan karena tidak ada registry atau heartbeat antar-node.",
+      "Reconnect dashboard memakai since=0 sehingga event lama dikirim ulang dan bisa menduplikasi pesan atau approval (dashboard.ts:312)."
+    ]
+  },
+  {
+    "id": "RC-FR-132",
+    "title": "Adapter Telegram",
+    "status": "done",
+    "evidence": [
+      "packages/runtime/src/messaging.ts:224-272 (sesi per chat dan message_thread_id)",
+      "packages/runtime/src/messaging.ts:280-330 (/status, /cancel, /resume, /model, /cost, /approve, /deny)",
+      "packages/runtime/src/messaging.ts:390-420 (approval inline dengan dampak dan alasan)",
+      "packages/runtime/src/messaging.ts:458-487 (unduh foto dan dokumen masuk ke folder .rann/telegram)",
+      "packages/runtime/src/messaging.ts:106-115 (pemotongan pesan dengan penanda terpotong)",
+      "packages/runtime/src/messaging.test.ts:90 (memecah pesan panjang dengan penanda bagian)",
+      "packages/runtime/src/messaging.test.ts:97 (membuat sesi dari chat yang diizinkan lalu mengirim prompt)"
+    ],
+    "gaps": []
+  },
+  {
+    "id": "RC-FR-133",
+    "title": "Adapter Discord dan Slack",
+    "status": "partial",
+    "evidence": [
+      "packages/runtime/src/messaging-discord.ts:132-136 (allowlist channel dan role)",
+      "packages/runtime/src/messaging-discord.ts:300-370 (pesan, thread, dan perintah teks)",
+      "packages/runtime/src/messaging-discord.ts:469-490 (attachment disimpan ke artefak)",
+      "packages/runtime/src/messaging-slack.ts:110-115 (allowlist user)",
+      "packages/runtime/src/messaging-slack.ts:260-300 (pesan, thread, dan perintah teks)",
+      "packages/runtime/src/messaging-slack.ts:399-480 (approval dikirim sebagai pesan Block Kit)",
+      "packages/runtime/src/messaging-discord.test.ts:132 (poll memetakan satu pesan ke sesi dan membalas di thread)",
+      "packages/runtime/src/messaging-slack.test.ts:124 (membalas di thread dan tidak memproses ulang cursor yang sama)"
+    ],
+    "gaps": [
+      "Discord dan Slack tidak mendaftarkan slash command atau endpoint interaction; perintah hanya diproses sebagai pesan teks (messaging-discord.ts:308, messaging-slack.ts:282).",
+      "Slack hanya punya allowlist user, tidak ada access control per role (messaging-slack.ts:110)."
+    ]
+  }
+]

@@ -6,6 +6,7 @@ export const ERROR_CODES = [
   "E_TURN_NOT_FOUND",
   "E_CONFIG_INVALID",
   "E_PERMISSION",
+  "E_SCOPE",
   "E_APPROVAL_REQUIRED",
   "E_SANDBOX",
   "E_CONFLICT",
@@ -53,6 +54,7 @@ const EXIT_CODES: Record<ErrorCode, number> = {
   E_TURN_NOT_FOUND: 6,
   E_CONFIG_INVALID: 2,
   E_PERMISSION: 3,
+  E_SCOPE: 3,
   E_APPROVAL_REQUIRED: 3,
   E_SANDBOX: 3,
   E_CONFLICT: 6,
@@ -149,6 +151,7 @@ export interface RpcErrorShape {
 }
 
 const HINTS: Partial<Record<ErrorCode, string>> = {
+  E_SCOPE: "Minta token baru dengan scope yang diperlukan dari admin gateway.",
   E_PROVIDER_AUTH: "Periksa API key provider dengan rann provider test, lalu login ulang bila perlu.",
   E_PROVIDER_RATE_LIMIT: "Tunggu atau ganti provider lewat rann provider use.",
   E_PROVIDER_UNAVAILABLE: "Cek koneksi dan endpoint provider; circuit breaker terbuka sementara.",

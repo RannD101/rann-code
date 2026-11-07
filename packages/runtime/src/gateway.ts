@@ -99,7 +99,7 @@ function clientIp(request: IncomingMessage): string {
 
 function requireScope(device: GatewayDeviceView, scope: GatewayScope): void {
   if (!hasScope(device.scopes, scope)) {
-    throw new RannError("E_PERMISSION", `Token tidak punya scope ${scope}`, {
+    throw new RannError("E_SCOPE", `Token tidak punya scope ${scope}`, {
       data: { scope, scopes: device.scopes }
     });
   }
@@ -146,7 +146,7 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
 function sendError(response: ServerResponse, error: unknown): void {
   const err = toRannError(error);
   const status =
-    err.code === "E_PERMISSION" || err.code === "E_GATEWAY_AUTH"
+    (err.code === "E_PERMISSION" || err.code === "E_SCOPE") || err.code === "E_GATEWAY_AUTH"
       ? 403
       : err.code === "E_NOT_FOUND" || err.code === "E_SESSION_NOT_FOUND" || err.code === "E_TURN_NOT_FOUND"
         ? 404
@@ -595,7 +595,7 @@ export class GatewayServer {
       throw new RannError("E_NOT_FOUND", `Endpoint tidak ditemukan: ${path}`);
     } catch (error) {
       const err = toRannError(error);
-      if (err.code === "E_PERMISSION") {
+      if (err.code === "E_PERMISSION" || err.code === "E_SCOPE") {
         try {
           appendAudit(this.db, {
             actor: "gateway",

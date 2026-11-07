@@ -2,6 +2,7 @@ import { Cron } from "croner";
 import type { Db, SchedulerRow, SchedulerRunRow } from "@rann/storage";
 import {
   dueSchedulers,
+  cancelQueuedJobsForRun,
   enqueueJob,
   finishSchedulerRun,
   getScheduler,
@@ -150,7 +151,10 @@ export class SchedulerEngine {
             continue;
           }
           if (plan.shouldRun && running.length > 0 && row.overlap_policy === "replace") {
-            for (const run of running) finishSchedulerRun(this.db, run.id, "cancelled", undefined, "diganti jadwal baru");
+            for (const run of running) {
+              cancelQueuedJobsForRun(this.db, run.id, "diganti jadwal baru");
+              finishSchedulerRun(this.db, run.id, "cancelled", undefined, "diganti jadwal baru");
+            }
           }
           let run: SchedulerRunRow | undefined;
           if (plan.shouldRun) {

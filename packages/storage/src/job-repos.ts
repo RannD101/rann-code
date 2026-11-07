@@ -1,5 +1,6 @@
 import { newId } from "@rann/shared";
 import type { Db } from "./db.js";
+import { appendAudit } from "./repos.js";
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "dead";
 
@@ -124,7 +125,7 @@ export function claimJob(db: Db, options: ClaimJobOptions): JobRow | undefined {
       .prepare(
         `SELECT * FROM jobs
          WHERE status = 'queued' AND queue IN (${placeholders}) AND next_run_at <= ?
-         ORDER BY priority DESC, next_run_at ASC, created_at ASC LIMIT 1`
+         ORDER BY priority ASC, next_run_at ASC, created_at ASC LIMIT 1`
       )
       .get(...queues, at) as JobRow | undefined;
     if (!candidate) return undefined;
@@ -211,6 +212,14 @@ export function cancelJob(db: Db, id: string, reason = "cancelled by user"): boo
   return changed.changes === 1;
 }
 
+export function cancelQueuedJobsForRun(db: Db, runId: string, reason: string): number {
+  const rows = db
+    .prepare("SELECT id FROM jobs WHERE status = 'queued' AND json_extract(payload_json, '$.runId') = ?")
+    .all(runId) as Array<{ id: string }>;
+  for (const row of rows) cancelJob(db, row.id, reason);
+  return rows.length;
+}
+
 export function retryJob(db: Db, id: string, delayMs = 0): boolean {
   const at = now();
   const changed = db
@@ -238,6 +247,7 @@ export function recoverStaleJobs(db: Db, options: { leaseGraceMs?: number; now?:
            next_run_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`
       ).run(at, at, job.id);
       appendJobEvent(db, job.id, "recovered", { action: "requeued" });
+      appendAudit(db, { actor: "system", action: "job.recover", resource: `job:${job.id}`, decision: "allow", metadata: { action: "requeued", attempts: job.attempts } });
       requeued += 1;
     } else {
       db.prepare(
@@ -245,6 +255,7 @@ export function recoverStaleJobs(db: Db, options: { leaseGraceMs?: number; now?:
            lease_owner = NULL, lease_expires_at = NULL WHERE id = ? AND status = 'running'`
       ).run("lease expired after maximum attempts", at, at, job.id);
       appendJobEvent(db, job.id, "recovered", { action: "dead" });
+      appendAudit(db, { actor: "system", action: "job.recover", resource: `job:${job.id}`, decision: "deny", metadata: { action: "dead", attempts: job.attempts } });
       dead += 1;
     }
   }

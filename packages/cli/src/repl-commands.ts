@@ -164,6 +164,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("secrets", ["keys"], "/secrets", "Kelola secret", "konfigurasi", "secret"),
   cmd("env", [], "/env", "Lihat environment tool", "konfigurasi", "admin"),
   cmd("sandbox", [], "/sandbox", "Status dan batas sandbox", "konfigurasi", "admin"),
+  cmd("pair", [], "/pair", "Buat kode pairing perangkat gateway", "infra", "admin"),
   cmd("gateway", ["gw"], "/gateway <status|start|stop|pair|devices|revoke|role>", "Kelola gateway web dan perangkat", "infra", "admin"),
   cmd("messaging", ["msg"], "/messaging <status|send>", "Kelola adapter messaging", "infra", "admin"),
   cmd("agents", [], "/agents <list|get|cancel|profiles|message>", "Kelola subagent", "infra", "admin"),
