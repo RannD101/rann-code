@@ -7,6 +7,7 @@ import {
   createSession,
   createTurn,
   eventsForTurn,
+  finishTurn,
   getSession,
   getTurn,
   listMessages,
@@ -424,10 +425,42 @@ export class RpcServer {
     if (this.activeTurns.has(sessionId)) throw new RannError("E_CONFLICT", `Sesi ${sessionId} masih menjalankan turn lain`);
 
     const config = this.options.config.config;
-    const providerConfig = providerFor(config);
-    const provider = createProvider(config.provider, providerConfig, process.env, this.secrets);
     seedRegistry(this.db, config);
-    const descriptor = resolveDescriptor(this.db, config, config.provider, (input.model as string | undefined) ?? session.model);
+    const requested = ((input.model as string | undefined) ?? session.model ?? "").trim();
+    const target = this.resolveTarget(config, requested);
+    let providerName = target.providerName;
+    let providerConfig = providerFor(config, providerName);
+    let descriptor = resolveDescriptor(this.db, config, providerName, target.model);
+    let reason = input.model ? "override request" : "model sesi";
+    const asksAuto = input.model === undefined || input.model === "auto";
+    if (config.routing.mode === "auto" && asksAuto) {
+      const snapshot = providerHealth.snapshot();
+      const health: Record<string, HealthState> = {};
+      for (const [name, entry] of Object.entries(snapshot)) health[name] = entry.status;
+      const decision = routeModel({
+        prompt: input.text as string,
+        descriptors: registrySnapshot(this.db, config),
+        health,
+        policy: config.routing.policy,
+        ...(config.routing.pinned ? { pinned: config.routing.pinned } : {}),
+        prefer: config.routing.prefer,
+        ...(config.routing.min_quality !== undefined ? { minQuality: config.routing.min_quality } : {}),
+        ...(config.routing.max_cost_per_task !== undefined ? { maxCostPerTask: config.routing.max_cost_per_task } : {}),
+        strictBudget: config.routing.strict_budget
+      });
+      const picked = decision.chosen
+        ? registrySnapshot(this.db, config).find((item) => item.id === decision.chosen)
+        : undefined;
+      if (picked) {
+        descriptor = picked;
+        providerName = picked.provider;
+        providerConfig = providerFor(config, providerName);
+        reason = `routing otomatis: ${decision.taskClass} skor ${decision.score.toFixed(3)}${decision.warning ? ` (${decision.warning})` : ""}`;
+      } else {
+        reason = `routing otomatis gagal, memakai ${descriptor.id}${decision.warning ? ` (${decision.warning})` : ""}`;
+      }
+    }
+    const provider = createProvider(providerName, providerConfig, process.env, this.secrets);
     const model = descriptor.model;
     const fallbacks: NonNullable<RunTurnOptions["fallbacks"]> = [];
     for (const id of config.model.fallback) {
@@ -437,7 +470,8 @@ export class RpcServer {
       const providerEntry = config.providers[providerName];
       if (!providerEntry) continue;
       try {
-        const candidate = resolveDescriptor(this.db, config, providerName, id);
+        const modelId = slash > 0 ? id.slice(slash + 1) : id;
+        const candidate = resolveDescriptor(this.db, config, providerName, modelId);
         fallbacks.push({
           provider: createProvider(providerName, providerEntry, process.env, this.secrets),
           model: candidate.model,
@@ -453,9 +487,9 @@ export class RpcServer {
     recordRoutingLog(this.db, {
       sessionId,
       turnId: turn.id,
-      requestedModel: (input.model as string | undefined) ?? session.model,
+      requestedModel: asksAuto && config.routing.mode === "auto" ? "auto" : (input.model as string | undefined) ?? session.model,
       selectedModel: descriptor.id,
-      reason: input.model ? "override request" : "model sesi"
+      reason
     });
 
     const controller = new AbortController();
@@ -538,7 +572,8 @@ export class RpcServer {
       contextWindow: descriptor.contextWindow,
       maxOutputTokens: descriptor.maxOutputTokens,
       fallbacks,
-      costUsd: (inputTokens, outputTokens) => costFor(descriptor, inputTokens, outputTokens),
+      costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>
+        costFor(descriptor, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens),
       approvePlan: async (plan) => {
         const decision = await this.requestApproval(sessionId, turn.id, "plan", {
           goal: plan.goal,
@@ -550,12 +585,45 @@ export class RpcServer {
       signal: controller.signal,
       emit: (event) => this.broadcast(event)
     })
-      .catch(() => {
-        // kegagalan sudah dicatat sebagai event turn.failed dan status turn
+      .catch((error: unknown) => {
+        const failure = error instanceof RannError ? error : new RannError("E_INTERNAL", error instanceof Error ? error.message : String(error));
+        try {
+          finishTurn(this.db, { id: turn.id, status: "failed", error: { code: failure.code, message: failure.message } });
+          const event = appendEvent(this.db, {
+            type: "turn.failed",
+            sessionId,
+            turnId: turn.id,
+            data: { error_code: failure.code, message: failure.message }
+          });
+          this.broadcast(event);
+        } catch {
+          // kegagalan pencatatan tidak boleh menutupi kegagalan turn
+        }
       })
       .finally(() => this.activeTurns.delete(sessionId));
 
     return { turnId: turn.id, status: "running", sessionId };
+  }
+
+  private resolveTarget(config: LoadedConfig["config"], requested: string): { providerName: string; model: string } {
+    const aliasMatch = Object.entries(config.models ?? {}).find(([, value]) => value.aliases.includes(requested));
+    if (aliasMatch) {
+      const slash = aliasMatch[0].indexOf("/");
+      if (slash > 0) {
+        return { providerName: aliasMatch[0].slice(0, slash), model: aliasMatch[0].slice(slash + 1) };
+      }
+    }
+    const slash = requested.indexOf("/");
+    if (slash > 0) {
+      const providerName = requested.slice(0, slash);
+      if (providerName === "mock" || config.providers[providerName]) {
+        return { providerName, model: requested.slice(slash + 1) };
+      }
+    }
+    const providerName = config.provider;
+    const entry = providerFor(config, providerName);
+    const model = requested && requested !== "auto" ? requested : resolveModel(entry, undefined);
+    return { providerName, model };
   }
 
   private async runSubagent(options: {
@@ -689,17 +757,29 @@ export class RpcServer {
 
   private providerList(): unknown {
     const config = this.options.config.config;
-    return Object.entries(config.providers).map(([name, provider]) => ({
+    const entries = Object.entries(config.providers).map(([name, provider]) => ({
       name,
       kind: provider.kind,
       base_url: provider.base_url,
       default_model: provider.default_model,
       models: provider.models,
       has_key: Boolean(
-        (provider.api_key_env && process.env[provider.api_key_env]) ||
-        (provider.api_key_file && existsSync(provider.api_key_file))
+        provider.api_key_ref ||
+          (provider.api_key_env && process.env[provider.api_key_env]) ||
+          (provider.api_key_file && existsSync(provider.api_key_file))
       )
     }));
+    if (!config.providers.mock) {
+      entries.unshift({
+        name: "mock",
+        kind: "mock",
+        base_url: undefined,
+        default_model: "mock-1",
+        models: ["mock-1"],
+        has_key: true
+      } as (typeof entries)[number]);
+    }
+    return entries;
   }
 
   private async providerTest(input: Record<string, unknown>): Promise<unknown> {

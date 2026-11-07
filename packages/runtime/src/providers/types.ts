@@ -32,7 +32,7 @@ export interface ChatRequest {
 export type ProviderChunk =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
-  | { type: "usage"; inputTokens: number; outputTokens: number }
+  | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   | { type: "done"; finishReason: string };
 
 export interface Provider {

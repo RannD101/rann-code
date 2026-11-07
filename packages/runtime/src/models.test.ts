@@ -52,6 +52,42 @@ describe("model registry", () => {
     expect(costFor(descriptor, 1000, 1000)).toBeNull();
   });
 
+  it("menghitung biaya cache read dan write", () => {
+    const descriptor = builtinDescriptor("x", "cache-model");
+    const priced = {
+      ...descriptor,
+      pricing: {
+        inputPerMTok: 10,
+        outputPerMTok: 30,
+        cacheReadPerMTok: 1,
+        cacheWritePerMTok: 12.5,
+        currency: "USD" as const,
+        source: "uji",
+        updatedAt: "2026-11-07"
+      }
+    };
+    // 1 juta token input, 1 juta output, 1 juta cache read, 1 juta cache write = 10 + 30 + 1 + 12.5
+    expect(costFor(priced, 1_000_000, 1_000_000, 1_000_000, 1_000_000)).toBe(53.5);
+    // Harga cache tidak diisi memakai harga input, bukan nol.
+    const tanpaHargaCache = { ...priced, pricing: { ...priced.pricing, cacheReadPerMTok: undefined, cacheWritePerMTok: undefined } };
+    expect(costFor(tanpaHargaCache, 1_000_000, 0, 1_000_000, 0)).toBe(20);
+  });
+
+  it("meneruskan harga cache lewat override", () => {
+    const descriptor = resolveDescriptor(fresh(), config, "rann", "rann/gpt-6-astra", {
+      inputPrice: 3,
+      outputPrice: 15,
+      cacheReadPrice: 0.3,
+      cacheWritePrice: 3.75
+    });
+    expect(descriptor.pricing).toMatchObject({
+      inputPerMTok: 3,
+      outputPerMTok: 15,
+      cacheReadPerMTok: 0.3,
+      cacheWritePerMTok: 3.75
+    });
+  });
+
   it("menggabungkan capability tanpa menghapus default", () => {
     const merged = mergeCapabilities(builtinDescriptor("x", "m").capabilities, { vision: true, audio: false });
     expect(merged.vision).toBe(true);

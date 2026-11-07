@@ -113,6 +113,7 @@ export class OpenAiResponsesProvider implements Provider {
 
       let inputTokens = 0;
       let outputTokens = 0;
+      let cacheReadTokens = 0;
       let finishReason = "stop";
       let textChars = 0;
       let completed = false;
@@ -164,10 +165,14 @@ export class OpenAiResponsesProvider implements Provider {
         } else if (type === "response.completed") {
           completed = true;
           const result = payload.response as
-            | { status?: string; usage?: { input_tokens?: number; output_tokens?: number } }
+            | {
+                status?: string;
+                usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } };
+              }
             | undefined;
           inputTokens = result?.usage?.input_tokens ?? inputTokens;
           outputTokens = result?.usage?.output_tokens ?? outputTokens;
+          cacheReadTokens = result?.usage?.input_tokens_details?.cached_tokens ?? cacheReadTokens;
           if (result?.status && result.status !== "completed") finishReason = result.status;
         } else if (type === "response.failed" || type === "error") {
           const responseError = (payload.response as { error?: { message?: string } } | undefined)?.error;
@@ -183,7 +188,12 @@ export class OpenAiResponsesProvider implements Provider {
         yield { type: "tool_call", id: call.id, name: call.name, args: safeArgs(call.args) };
       }
       if (outputTokens === 0) outputTokens = Math.ceil(textChars / 4);
-      yield { type: "usage", inputTokens, outputTokens };
+      yield {
+        type: "usage",
+        inputTokens,
+        outputTokens,
+        ...(cacheReadTokens > 0 ? { cacheReadTokens } : {})
+      };
       yield { type: "done", finishReason };
     } finally {
       clearTimeout(timer);

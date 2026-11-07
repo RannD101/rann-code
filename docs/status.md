@@ -62,9 +62,14 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 - `packages/runtime/src/rpc.ts`: `route.explain`, `budget.status`, dan audit untuk operasi secret.
 - `packages/cli/src/main.ts`: `rann route explain "<prompt>"`, `rann usage` menampilkan biaya dan budget hari ini.
 - `packages/storage/src/secrets.ts`: vault XChaCha20-Poly1305, kunci 0600 atau passphrase scrypt, audit untuk set/remove, CLI `rann secret`.
-- Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 88 tes (19 berkas).
+- `packages/storage/src/schema-v5.ts`: migrasi 5 `cache-pricing`, kolom harga cache read/write pada `models`.
+- `packages/runtime/src/models.ts`: `costFor` menghitung token cache read/write; harga cache yang tidak diisi memakai harga input supaya biaya tidak tercatat terlalu rendah.
+- `packages/runtime/src/providers/`: adapter memetakan `cache_read_input_tokens`/`cache_creation_input_tokens` (Anthropic), `prompt_tokens_details.cached_tokens` (OpenAI), `input_tokens_details.cached_tokens` (OpenAI Responses), dan `cachedContentTokenCount` (Gemini) ke usage.
+- `packages/runtime/src/agent.ts`: usage menyimpan token cache, `costFor` menerima empat angka, dan kegagalan `runTurn` selalu menghasilkan `turn.failed` supaya CLI tidak menggantung.
+- `packages/runtime/src/rpc.ts`: `routing.mode = auto` memilih model lewat router, alias dan `provider/model` memindahkan provider, dan `route.explain` memakai config routing.
+- Tes: `models.test.ts`, `router.test.ts`, `providers/retry.test.ts`, `providers/provider-contract.test.ts`, `secrets.test.ts` lulus. `pnpm check` lulus 90 tes (19 berkas).
 
-Sisa M2: routing otomatis saat `model.default = auto` dan biaya cache read/write pada `costFor`.
+Sisa M2: perintah `/provider`, `/model`, `/models` di REPL dan bukti tidak ada API key di log atau database.
 
 ## Aturan
 

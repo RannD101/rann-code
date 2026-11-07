@@ -128,6 +128,7 @@ export class GeminiProvider implements Provider {
 
       let inputTokens = 0;
       let outputTokens = 0;
+      let cacheReadTokens = 0;
       let finishReason = "stop";
       let sawFinish = false;
       let textChars = 0;
@@ -140,11 +141,12 @@ export class GeminiProvider implements Provider {
           continue;
         }
         const usage = payload.usageMetadata as
-          | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+          | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number; cachedContentTokenCount?: number }
           | undefined;
         if (usage) {
           inputTokens = usage.promptTokenCount ?? inputTokens;
           outputTokens = usage.candidatesTokenCount ?? outputTokens;
+          cacheReadTokens = usage.cachedContentTokenCount ?? cacheReadTokens;
         }
         const candidates = payload.candidates as
           | Array<{
@@ -179,7 +181,12 @@ export class GeminiProvider implements Provider {
 
       if (!sawFinish) throw new RannError("E_STREAM_TRUNCATED", `Stream dari ${this.name} berakhir tanpa finishReason`);
       if (outputTokens === 0) outputTokens = Math.ceil(textChars / 4);
-      yield { type: "usage", inputTokens, outputTokens };
+      yield {
+        type: "usage",
+        inputTokens,
+        outputTokens,
+        ...(cacheReadTokens > 0 ? { cacheReadTokens } : {})
+      };
       yield { type: "done", finishReason };
     } finally {
       clearTimeout(timer);

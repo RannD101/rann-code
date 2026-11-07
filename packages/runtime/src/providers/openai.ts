@@ -21,7 +21,7 @@ interface OpenAiStreamChunk {
     delta?: { content?: string | null; tool_calls?: OpenAiToolCallDelta[] };
     finish_reason?: string | null;
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
   error?: { message?: string; type?: string };
 }
 
@@ -130,7 +130,7 @@ export class OpenAiCompatibleProvider implements Provider {
       if (!this.useStream) {
         const json = (await response.json()) as {
           choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string }>;
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
+          usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
         };
         const choice = json.choices?.[0];
         if (choice?.message?.content) yield { type: "text", text: choice.message.content };
@@ -143,7 +143,13 @@ export class OpenAiCompatibleProvider implements Provider {
           };
         }
         if (json.usage) {
-          yield { type: "usage", inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 };
+          const cached = (json.usage as { prompt_tokens_details?: { cached_tokens?: number } }).prompt_tokens_details?.cached_tokens;
+          yield {
+            type: "usage",
+            inputTokens: json.usage.prompt_tokens ?? 0,
+            outputTokens: json.usage.completion_tokens ?? 0,
+            ...(cached !== undefined ? { cacheReadTokens: cached } : {})
+          };
         }
         yield { type: "done", finishReason: choice?.finish_reason ?? "stop" };
         return;
@@ -155,7 +161,7 @@ export class OpenAiCompatibleProvider implements Provider {
       const decoder = new TextDecoder();
       let buffer = "";
       let finishReason = "stop";
-      let usage: { inputTokens: number; outputTokens: number } | undefined;
+      let usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } | undefined;
       const pending = new Map<number, { id: string; name: string; args: string }>();
       let sawDone = false;
       let sawFinish = false;
@@ -199,7 +205,12 @@ export class OpenAiCompatibleProvider implements Provider {
             sawFinish = true;
           }
           if (chunk.usage) {
-            usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 };
+            const cached = chunk.usage.prompt_tokens_details?.cached_tokens;
+            usage = {
+              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              outputTokens: chunk.usage.completion_tokens ?? 0,
+              ...(cached !== undefined ? { cacheReadTokens: cached } : {})
+            };
           }
         }
       }

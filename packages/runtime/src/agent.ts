@@ -96,14 +96,14 @@ export interface RunTurnOptions {
   contextWindow?: number;
   maxOutputTokens?: number;
   fallbacks?: Array<{ provider: Provider; model: string; contextWindow: number; maxOutputTokens: number }>;
-  costUsd?: (inputTokens: number, outputTokens: number) => number | null;
+  costUsd?: (inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number) => number | null;
   emit?: (event: EventEnvelope) => void;
 }
 
 export interface RunTurnResult {
   text: string;
   steps: number;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
   compacted: boolean;
   plan?: { id: string; text: string; verified: boolean; gaps: string[] };
 }
@@ -266,7 +266,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const { db, session, turnId, provider, model, workspaceRoot, config, signal, emit } = options;
   const contextOptions: ContextOptions = options.context ?? { maxTokens: 24_000, keepRecent: 20, summaryChars: 6_000 };
   const budget: BudgetOptions = options.budget ?? { maxTokensPerTurn: 0, maxTokensPerDay: 0, maxUsdPerDay: 0 };
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let finalText = "";
   let steps = 0;
   let finished = false;
@@ -525,6 +525,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             } else if (chunk.type === "usage") {
               usage.inputTokens += chunk.inputTokens;
               usage.outputTokens += chunk.outputTokens;
+              usage.cacheReadTokens += chunk.cacheReadTokens ?? 0;
+              usage.cacheWriteTokens += chunk.cacheWriteTokens ?? 0;
               if (budget.maxTokensPerTurn > 0 && usage.inputTokens + usage.outputTokens > budget.maxTokensPerTurn) {
                 throw new RannError(
                   "E_BUDGET_EXHAUSTED",
@@ -602,9 +604,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           turnId,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
-          costUsd: options.costUsd?.(usage.inputTokens, usage.outputTokens) ?? null
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+          costUsd:
+            options.costUsd?.(usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens) ?? null
         });
-        publish("usage.update", { ...usage, cost_usd: options.costUsd?.(usage.inputTokens, usage.outputTokens) ?? null });
+        publish("usage.update", {
+          ...usage,
+          cost_usd: options.costUsd?.(usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens) ?? null
+        });
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
         publish("turn.end", { status: "done", steps, usage, text: finalText });
         finalize("done");

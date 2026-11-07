@@ -26,6 +26,8 @@ export interface ModelRow {
   max_output_tokens: number | null;
   input_price: number | null;
   output_price: number | null;
+  cache_read_price: number | null;
+  cache_write_price: number | null;
   capabilities_json: string;
   created_at: number;
   updated_at: number;
@@ -52,6 +54,8 @@ export interface AddModelInput {
   maxOutputTokens?: number;
   inputPrice?: number;
   outputPrice?: number;
+  cacheReadPrice?: number;
+  cacheWritePrice?: number;
   capabilities?: Record<string, boolean>;
 }
 
@@ -102,14 +106,16 @@ export function upsertModel(db: Db, input: AddModelInput): ModelRow {
   if (!provider) throw new Error(`Provider belum terdaftar: ${input.provider}`);
   const now = Date.now();
   db.prepare(
-    `INSERT INTO models (id, provider_id, name, display_name, context_window, max_output_tokens, input_price, output_price, capabilities_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO models (id, provider_id, name, display_name, context_window, max_output_tokens, input_price, output_price, cache_read_price, cache_write_price, capabilities_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(provider_id, name) DO UPDATE SET
        display_name = excluded.display_name,
        context_window = excluded.context_window,
        max_output_tokens = excluded.max_output_tokens,
        input_price = excluded.input_price,
        output_price = excluded.output_price,
+       cache_read_price = excluded.cache_read_price,
+       cache_write_price = excluded.cache_write_price,
        capabilities_json = excluded.capabilities_json,
        updated_at = excluded.updated_at`
   ).run(
@@ -121,6 +127,8 @@ export function upsertModel(db: Db, input: AddModelInput): ModelRow {
     input.maxOutputTokens ?? null,
     input.inputPrice ?? null,
     input.outputPrice ?? null,
+    input.cacheReadPrice ?? null,
+    input.cacheWritePrice ?? null,
     JSON.stringify(input.capabilities ?? {}),
     now,
     now

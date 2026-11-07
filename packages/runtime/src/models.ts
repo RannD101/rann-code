@@ -179,6 +179,8 @@ export interface ModelOverrides {
   capabilities?: Record<string, unknown>;
   inputPrice?: number;
   outputPrice?: number;
+  cacheReadPrice?: number;
+  cacheWritePrice?: number;
   aliases?: string[];
 }
 
@@ -215,8 +217,16 @@ export function resolveDescriptor(
   const base = builtinDescriptor(providerName, modelName, kind);
   const row = db ? getModel(db, providerName, modelName) : undefined;
   const rowCaps = row ? (JSON.parse(row.capabilities_json) as Record<string, unknown>) : undefined;
-  const rowHasPrice = row !== undefined && (row.input_price !== null || row.output_price !== null);
-  const hasPriceOverride = overrides?.inputPrice !== undefined || overrides?.outputPrice !== undefined;
+  const rowHasPrice =
+    row !== undefined &&
+    (row.input_price !== null || row.output_price !== null || row.cache_read_price !== null || row.cache_write_price !== null);
+  const hasPriceOverride =
+    overrides?.inputPrice !== undefined ||
+    overrides?.outputPrice !== undefined ||
+    overrides?.cacheReadPrice !== undefined ||
+    overrides?.cacheWritePrice !== undefined;
+  const cacheReadPrice = overrides?.cacheReadPrice ?? row?.cache_read_price ?? base.pricing?.cacheReadPerMTok;
+  const cacheWritePrice = overrides?.cacheWritePrice ?? row?.cache_write_price ?? base.pricing?.cacheWritePerMTok;
   const merged: ModelDescriptor = {
     ...base,
     displayName: row?.display_name ?? base.displayName,
@@ -226,8 +236,10 @@ export function resolveDescriptor(
     ...(hasPriceOverride || rowHasPrice
       ? {
           pricing: {
-            inputPerMTok: overrides?.inputPrice ?? row?.input_price ?? 0,
-            outputPerMTok: overrides?.outputPrice ?? row?.output_price ?? 0,
+            inputPerMTok: overrides?.inputPrice ?? row?.input_price ?? base.pricing?.inputPerMTok ?? 0,
+            outputPerMTok: overrides?.outputPrice ?? row?.output_price ?? base.pricing?.outputPerMTok ?? 0,
+            ...(cacheReadPrice !== undefined ? { cacheReadPerMTok: cacheReadPrice } : {}),
+            ...(cacheWritePrice !== undefined ? { cacheWritePerMTok: cacheWritePrice } : {}),
             currency: "USD" as const,
             source: "manual",
             updatedAt: new Date().toISOString()
@@ -262,7 +274,9 @@ export function seedRegistry(db: Db, config: RannConfig): void {
         maxOutputTokens: override?.max_output_tokens ?? descriptor.maxOutputTokens,
         capabilities: override?.capabilities ?? descriptor.capabilities,
         ...(override?.input_price !== undefined ? { inputPrice: override.input_price } : {}),
-        ...(override?.output_price !== undefined ? { outputPrice: override.output_price } : {})
+        ...(override?.output_price !== undefined ? { outputPrice: override.output_price } : {}),
+        ...(override?.cache_read_price !== undefined ? { cacheReadPrice: override.cache_read_price } : {}),
+        ...(override?.cache_write_price !== undefined ? { cacheWritePrice: override.cache_write_price } : {})
       });
     }
     if (provider.default_model && !provider.models.includes(provider.default_model)) {
@@ -310,9 +324,18 @@ export function requireCapability(descriptor: ModelDescriptor, capability: Capab
   }
 }
 
-export function costFor(descriptor: ModelDescriptor, inputTokens: number, outputTokens: number): number | null {
+export function costFor(
+  descriptor: ModelDescriptor,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0
+): number | null {
   if (!descriptor.pricing) return null;
   const input = (inputTokens / 1_000_000) * descriptor.pricing.inputPerMTok;
   const output = (outputTokens / 1_000_000) * descriptor.pricing.outputPerMTok;
-  return Math.round((input + output) * 1_000_000) / 1_000_000;
+  // Harga cache yang tidak diisi memakai harga input biasa supaya biaya tidak tercatat terlalu rendah.
+  const cacheRead = (cacheReadTokens / 1_000_000) * (descriptor.pricing.cacheReadPerMTok ?? descriptor.pricing.inputPerMTok);
+  const cacheWrite = (cacheWriteTokens / 1_000_000) * (descriptor.pricing.cacheWritePerMTok ?? descriptor.pricing.inputPerMTok);
+  return Math.round((input + output + cacheRead + cacheWrite) * 1_000_000) / 1_000_000;
 }

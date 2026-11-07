@@ -125,6 +125,8 @@ export class AnthropicProvider implements Provider {
 
       let inputTokens = 0;
       let outputTokens = 0;
+      let cacheReadTokens = 0;
+      let cacheWriteTokens = 0;
       let finishReason = "stop";
       let textChars = 0;
       let toolChars = 0;
@@ -140,8 +142,12 @@ export class AnthropicProvider implements Provider {
         }
         const type = (payload.type as string | undefined) ?? event.event;
         if (type === "message_start") {
-          const message = payload.message as { usage?: { input_tokens?: number; output_tokens?: number } } | undefined;
+          const message = payload.message as
+            | { usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }
+            | undefined;
           inputTokens = message?.usage?.input_tokens ?? 0;
+          cacheReadTokens = message?.usage?.cache_read_input_tokens ?? 0;
+          cacheWriteTokens = message?.usage?.cache_creation_input_tokens ?? 0;
         } else if (type === "content_block_start") {
           const index = Number(payload.index ?? 0);
           const block = payload.content_block as { type?: string; id?: string; name?: string } | undefined;
@@ -183,7 +189,13 @@ export class AnthropicProvider implements Provider {
 
       if (!sawStop) throw new RannError("E_STREAM_TRUNCATED", `Stream dari ${this.name} berakhir tanpa message_stop`);
       if (outputTokens === 0) outputTokens = Math.ceil((textChars + toolChars) / 4);
-      yield { type: "usage", inputTokens, outputTokens };
+      yield {
+        type: "usage",
+        inputTokens,
+        outputTokens,
+        ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {})
+      };
       yield { type: "done", finishReason };
     } finally {
       clearTimeout(timer);

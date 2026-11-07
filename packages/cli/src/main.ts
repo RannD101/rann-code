@@ -533,7 +533,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line.length === 0) continue;
         if (line === "/exit" || line === "/quit" || line === "/q") break;
         if (line === "/help") {
-          print("Perintah: /new [judul], /status, /model [nama], /permission [mode], /plan <tugas>, /tools, /usage, /sessions, /exit");
+          print("Perintah: /new [judul], /status, /model [nama], /models, /provider [nama], /permission [mode], /plan <tugas>, /tools, /usage, /sessions, /exit");
           continue;
         }
         if (line === "/status") {
@@ -567,7 +567,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(ui.dim(`sesi baru ${sessionId}`));
           continue;
         }
-        if (line.startsWith("/model")) {
+        if (line === "/model" || line.startsWith("/model ")) {
           const name = line.slice(6).trim();
           if (name.length === 0) {
             const data = await client.request<Record<string, unknown>>("model.list");
@@ -577,6 +577,42 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             model = name;
             print(ui.dim(`model ${model}`));
           }
+          continue;
+        }
+        if (line === "/models") {
+          const data = await client.request<Record<string, unknown>>("model.list");
+          print(`provider ${String(data.provider)}  default ${String(data.default)}`);
+          for (const descriptor of (data.descriptors as Array<Record<string, unknown>> | undefined) ?? []) {
+            const caps = Object.entries((descriptor.capabilities as Record<string, boolean>) ?? {})
+              .filter(([, enabled]) => enabled)
+              .map(([name]) => name)
+              .join(",");
+            print(`${String(descriptor.id)}  ctx ${String(descriptor.contextWindow)}  ${caps}`);
+          }
+          continue;
+        }
+        if (line === "/provider" || line.startsWith("/provider ")) {
+          const name = line.slice(9).trim();
+          const list = await client.request<Array<Record<string, unknown>>>("provider.list");
+          if (name.length === 0) {
+            for (const item of list) {
+              const active = item.name === (model?.includes("/") ? model.split("/")[0] : undefined);
+              print(`${active ? "*" : " "} ${String(item.name)}  ${String(item.kind)}  key ${item.has_key ? "ada" : "belum"}  default ${String(item.default_model ?? "-")}`);
+            }
+            continue;
+          }
+          const picked = list.find((item) => item.name === name);
+          if (!picked) {
+            print(ui.red(`provider tidak dikenal: ${name}`));
+            continue;
+          }
+          const defaultModel = String(picked.default_model ?? (picked.models as string[] | undefined)?.[0] ?? "");
+          if (!defaultModel) {
+            print(ui.red(`provider ${name} belum punya model default`));
+            continue;
+          }
+          model = `${name}/${defaultModel}`;
+          print(ui.dim(`provider ${name}, model ${model}`));
           continue;
         }
         if (line.startsWith("/permission")) {
