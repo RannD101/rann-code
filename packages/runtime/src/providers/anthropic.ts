@@ -13,6 +13,7 @@ export interface AnthropicOptions {
 
 type AnthropicContent =
   | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
@@ -49,7 +50,11 @@ function toMessages(messages: ChatMessage[]): { system: string; messages: Anthro
       if (content.length > 0) output.push({ role: "assistant", content });
       continue;
     }
-    output.push({ role: "user", content: [{ type: "text", text: message.content }] });
+    const content: AnthropicContent[] = [{ type: "text", text: message.content }];
+    for (const attachment of message.attachments ?? []) {
+      content.push({ type: "image", source: { type: "base64", media_type: attachment.mime, data: attachment.dataBase64 } });
+    }
+    output.push({ role: "user", content });
   }
   return { system: systemParts.join("\n\n"), messages: output };
 }

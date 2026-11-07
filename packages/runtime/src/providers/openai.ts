@@ -41,6 +41,17 @@ function mapMessages(messages: ChatMessage[]): unknown[] {
     if (message.role === "tool") {
       return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
     }
+    if (message.attachments && message.attachments.length > 0) {
+      const parts: Array<Record<string, unknown>> = [];
+      if (message.content.length > 0) parts.push({ type: "text", text: message.content });
+      for (const attachment of message.attachments) {
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${attachment.mime};base64,${attachment.dataBase64}` }
+        });
+      }
+      return { role: message.role, content: parts };
+    }
     return { role: message.role, content: message.content };
   });
 }

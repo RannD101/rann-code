@@ -88,6 +88,14 @@ export function upsertProject(db: Db, path: string): ProjectRow {
   return db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow;
 }
 
+export function listProjects(db: Db): Array<ProjectRow & { session_count: number; last_session_at: number | null }> {
+  return db.prepare(`
+    SELECT p.*, COUNT(s.id) AS session_count, MAX(s.updated_at) AS last_session_at
+    FROM projects p LEFT JOIN sessions s ON s.project_id = p.id
+    GROUP BY p.id ORDER BY COALESCE(MAX(s.updated_at), p.updated_at) DESC
+  `).all() as Array<ProjectRow & { session_count: number; last_session_at: number | null }>;
+}
+
 export interface CreateSessionInput {
   projectPath?: string;
   parentId?: string;

@@ -12,6 +12,7 @@ export interface GeminiOptions {
 
 type GeminiPart =
   | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
   | { functionCall: { name: string; args: unknown } }
   | { functionResponse: { name: string; response: unknown } };
 
@@ -47,7 +48,11 @@ function toContents(messages: ChatMessage[]): { systemInstruction?: string; cont
       if (parts.length > 0) contents.push({ role: "model", parts });
       continue;
     }
-    contents.push({ role: "user", parts: [{ text: message.content }] });
+    const parts: GeminiPart[] = [{ text: message.content }];
+    for (const attachment of message.attachments ?? []) {
+      parts.push({ inlineData: { mimeType: attachment.mime, data: attachment.dataBase64 } });
+    }
+    contents.push({ role: "user", parts });
   }
   return { ...(system.length > 0 ? { systemInstruction: system.join("\n\n") } : {}), contents };
 }

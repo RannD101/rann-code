@@ -38,7 +38,14 @@ function toInput(messages: ChatMessage[]): { instructions?: string; input: Input
       }
       continue;
     }
-    input.push({ type: "message", role: "user", content: [{ type: "input_text", text: message.content }] });
+    const content: InputItem[] = [{ type: "input_text", text: message.content }];
+    for (const attachment of message.attachments ?? []) {
+      content.push({
+        type: "input_image",
+        image_url: `data:${attachment.mime};base64,${attachment.dataBase64}`
+      });
+    }
+    input.push({ type: "message", role: "user", content });
   }
   return { ...(system.length > 0 ? { instructions: system.join("\n\n") } : {}), input };
 }

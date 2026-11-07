@@ -43,6 +43,7 @@ export interface SendOptions {
   output?: OutputFormat;
   planOnly?: boolean;
   forcePlan?: boolean;
+  attachments?: Array<{ path: string; name?: string }>;
   onApproval?: (request: ApprovalRequest) => Promise<ApprovalDecision>;
 }
 
@@ -72,7 +73,8 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
       ...(options.model ? { model: options.model } : {}),
       ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
       ...(options.planOnly ? { planOnly: true } : {}),
-      ...(options.forcePlan ? { forcePlan: true } : {})
+      ...(options.forcePlan ? { forcePlan: true } : {}),
+      ...(options.attachments && options.attachments.length > 0 ? { attachments: options.attachments } : {})
     });
   } catch (error) {
     unsubscribe();

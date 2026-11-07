@@ -98,4 +98,26 @@ describe("provider openai-compatible", () => {
       { type: "done", finishReason: "stop" }
     ]);
   });
+  it("mengirim gambar sebagai data URL, bukan base64 di content teks", async () => {
+    let captured: Record<string, unknown> = {};
+    const baseUrl = await startServer((body, res) => {
+      captured = JSON.parse(body) as Record<string, unknown>;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n');
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+    const provider = new OpenAiCompatibleProvider({ name: "uji", baseUrl, apiKey: "k" });
+    await collect(provider, {
+      model: "uji-1",
+      messages: [{
+        role: "user",
+        content: "lihat gambar",
+        attachments: [{ name: "a.png", mime: "image/png", dataBase64: "AAAA" }]
+      }]
+    });
+    const messages = captured.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(messages[0]?.content[0]).toEqual({ type: "text", text: "lihat gambar" });
+    expect(messages[0]?.content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } });
+  });
 });

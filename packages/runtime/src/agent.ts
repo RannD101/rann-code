@@ -16,7 +16,8 @@ import {
   updateGoalProgress
 } from "@rann/storage";
 import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
-import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
+import { existsSync, readFileSync } from "node:fs";
+import type { ChatAttachment, ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
 import { analyzeFailure } from "./failure-analysis.js";
@@ -24,6 +25,7 @@ import { createFileCheckpoint } from "./checkpoint-files.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
 import { loadInstructions } from "./instructions.js";
+import { attachmentText, type AttachmentRef } from "./attachments.js";
 import type { MemoryService } from "./memory.js";
 import type { SkillStore } from "./skills.js";
 import { classifyTask, generatePlan, needsPlan, planToMarkdown, workspaceBrief, type TaskClass } from "./planner.js";
@@ -82,6 +84,7 @@ export interface RunTurnOptions {
   session: SessionRow;
   turnId: string;
   userText: string;
+  attachments?: AttachmentRef[];
   provider: Provider;
   model: string;
   workspaceRoot: string;
@@ -160,6 +163,37 @@ function systemPrompt(
 function toChatMessages(rows: MessageRow[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   for (const row of rows) {
+    if (row.role === "user" && row.content_json) {
+      let attachments: AttachmentRef[] = [];
+      try {
+        const parsed = JSON.parse(row.content_json) as { attachments?: AttachmentRef[] };
+        attachments = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+      } catch {
+        attachments = [];
+      }
+      if (attachments.length > 0) {
+        let content = row.content;
+        const images: ChatAttachment[] = [];
+        for (const attachment of attachments) {
+          if (!existsSync(attachment.path)) {
+            content += `\n\n[lampiran hilang: ${attachment.name}]`;
+            continue;
+          }
+          if (attachment.kind === "image") {
+            images.push({
+              name: attachment.name,
+              mime: attachment.mime,
+              dataBase64: readFileSync(attachment.path).toString("base64")
+            });
+            continue;
+          }
+          const text = attachmentText(attachment);
+          content += `\n\n--- lampiran ${attachment.name} ---\n${text.length > 0 ? text : "[isi teks tidak dapat diekstrak]"}`;
+        }
+        messages.push({ role: "user", content, ...(images.length > 0 ? { attachments: images } : {}) });
+        continue;
+      }
+    }
     if (row.role === "tool") {
       let meta: { toolCallId?: string; toolName?: string } = {};
       if (row.content_json) {
@@ -197,7 +231,8 @@ export interface BuiltContext {
 
 function messageTokens(message: ChatMessage): number {
   const calls = message.toolCalls ? JSON.stringify(message.toolCalls) : "";
-  return estimateTokens(message.content) + (calls.length > 0 ? estimateTokens(calls) : 0);
+  const images = message.attachments?.reduce((total, attachment) => total + Math.ceil(attachment.dataBase64.length / 4), 0) ?? 0;
+  return estimateTokens(message.content) + (calls.length > 0 ? estimateTokens(calls) : 0) + images;
 }
 
 function digestRows(rows: MessageRow[], maxChars: number): string {
@@ -297,7 +332,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     emit?.(event);
   };
 
-  addMessage(db, { sessionId: session.id, turnId, role: "user", content: options.userText });
+  addMessage(db, {
+    sessionId: session.id,
+    turnId,
+    role: "user",
+    content: options.userText,
+    ...(options.attachments && options.attachments.length > 0 ? { contentJson: { attachments: options.attachments } } : {})
+  });
   if (session.title === "Sesi baru") {
     const title = options.userText.replace(/\s+/g, " ").trim().slice(0, 70) || "Sesi baru";
     touchSession(db, session.id, { title });

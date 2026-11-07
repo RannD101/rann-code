@@ -63,7 +63,11 @@ export const sessionSendParams = z.object({
   permissionMode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).optional(),
   idempotencyKey: z.string().min(8).max(200).optional(),
   planOnly: z.boolean().optional(),
-  forcePlan: z.boolean().optional()
+  forcePlan: z.boolean().optional(),
+  attachments: z.array(z.object({
+    path: z.string().min(1).max(4096),
+    name: z.string().min(1).max(255).optional()
+  })).max(20).optional()
 });
 
 export const sessionCancelParams = z.object({
@@ -213,6 +217,7 @@ export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
   "session.create": sessionCreateParams,
+  "project.list": empty,
   "session.list": sessionListParams,
   "session.get": sessionGetParams,
   "session.send": sessionSendParams,

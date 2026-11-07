@@ -6,12 +6,19 @@ export interface ToolCallPart {
   args: unknown;
 }
 
+export interface ChatAttachment {
+  name: string;
+  mime: string;
+  dataBase64: string;
+}
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
   toolCallId?: string;
   toolName?: string;
   toolCalls?: ToolCallPart[];
+  attachments?: ChatAttachment[];
 }
 
 export interface ToolSpec {

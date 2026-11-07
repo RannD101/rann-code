@@ -36,6 +36,7 @@ export interface LineEditorOptions {
   onCtrlD?: (busy: boolean) => Promise<CtrlDChoice>;
   onExpand?: () => string | Promise<string | undefined>;
   prompt?: () => string;
+  disabledShortcuts?: string[];
 }
 
 export class ReplExit extends Error {
@@ -77,6 +78,8 @@ const KEY_SEQUENCES: Array<{ sequence: string; action: string }> = [
   { sequence: "\u001b[8~", action: "end" },
   { sequence: "\u001b[3~", action: "delete" },
   { sequence: "\u001b[Z", action: "backtab" },
+  { sequence: "\u001b[5~", action: "scroll-up" },
+  { sequence: "\u001b[6~", action: "scroll-down" },
   { sequence: "\u001b[1;3A", action: "line-up" },
   { sequence: "\u001b[1;3B", action: "line-down" },
   { sequence: "\u001b[1;5A", action: "line-up" },
@@ -153,11 +156,21 @@ export class LineEditor {
   private attached = false;
   private listening = false;
   private queuedInput = "";
+  private escapeTimer?: NodeJS.Timeout;
+  private escapeSubmits = false;
+  private cancelInFlight = false;
+  private followCursor = true;
+  private viewLine = 0;
+  private lastViewStart = 0;
   private closed = false;
   private fallback?: Awaited<ReturnType<typeof import("node:readline/promises").createInterface>>;
   private readonly onData = (chunk: Buffer | string): void => {
     const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
     if (!this.listening) {
+      if (text.includes("\u0003") && (this.options.busy?.() ?? false)) {
+        void this.cancelWhileBusy();
+        return;
+      }
       this.queuedInput += text;
       return;
     }
@@ -184,9 +197,10 @@ export class LineEditor {
     return `rann ${process.cwd()}> `;
   }
 
-  async readLine(prompt?: string): Promise<string> {
+  async readLine(prompt?: string, options: { escapeSubmits?: boolean } = {}): Promise<string> {
     if (this.closed) throw new Error("editor sudah ditutup");
     if (!this.tty()) return this.fallbackReadLine(prompt);
+    this.escapeSubmits = options.escapeSubmits === true;
     this.promptText = prompt ?? this.promptValue();
     this.buffer = "";
     this.cursor = 0;
@@ -289,6 +303,10 @@ export class LineEditor {
   }
 
   private feed(chunk: string): void {
+    if (this.escapeTimer) {
+      clearTimeout(this.escapeTimer);
+      this.escapeTimer = undefined;
+    }
     this.pending += chunk;
     for (;;) {
       if (!this.listening) {
@@ -323,6 +341,26 @@ export class LineEditor {
       }
       if (this.pending.startsWith("\u001b")) {
         if (KEY_SEQUENCES.some((entry) => entry.sequence.startsWith(this.pending))) return;
+        // eslint-disable-next-line no-control-regex
+        const known = /^\u001b\[[0-9;?]*[A-Za-z~]/.exec(this.pending);
+        if (known) {
+          this.pending = this.pending.slice(known[0].length);
+          continue;
+        }
+        if (this.pending === "\u001b") {
+          this.escapeTimer = setTimeout(() => {
+            this.escapeTimer = undefined;
+            if (this.pending !== "\u001b") return;
+            this.pending = "";
+            if (this.escapeSubmits) this.finish("");
+            else {
+              this.cancelOverlay();
+              this.render();
+            }
+          }, 40);
+          this.escapeTimer.unref();
+          return;
+        }
         if (this.pending.length >= 2) {
           this.pending = this.pending.slice(1);
           this.cancelOverlay();
@@ -368,7 +406,14 @@ export class LineEditor {
   }
 
   private handleAction(action: string): void {
+    if (action !== "scroll-up" && action !== "scroll-down") this.followCursor = true;
     switch (action) {
+      case "scroll-up":
+        this.scrollView(-5);
+        return;
+      case "scroll-down":
+        this.scrollView(5);
+        return;
       case "left":
         this.overlay = undefined;
         this.moveCursor(-1);
@@ -554,6 +599,17 @@ export class LineEditor {
     this.finish(line);
   }
 
+  private async cancelWhileBusy(): Promise<void> {
+    if (this.cancelInFlight) return;
+    this.cancelInFlight = true;
+    try {
+      const handled = (await this.options.onCancel?.()) ?? false;
+      process.stdout.write(handled ? "\nTurn dibatalkan.\n" : "\nTidak ada turn aktif.\n");
+    } finally {
+      this.cancelInFlight = false;
+    }
+  }
+
   private async handleCtrlC(): Promise<void> {
     const now = Date.now();
     if (now - this.ctrlCAt > 1_500) this.ctrlCCount = 0;
@@ -570,6 +626,15 @@ export class LineEditor {
       this.render();
       return;
     }
+    if ((this.options.busy?.() ?? false) && this.options.onCancel) {
+      await this.withPrompt(async () => {
+        const handled = await this.options.onCancel?.();
+        if (handled) process.stdout.write("\nTurn dibatalkan.\n");
+        else process.stdout.write("\nTidak ada turn aktif.\n");
+      });
+      this.render();
+      return;
+    }
     this.ctrlCCount += 1;
     if (this.ctrlCCount === 1) {
       process.stdout.write("\nTekan Ctrl+C lagi untuk membatalkan turn, tiga kali untuk keluar.\n");
@@ -577,16 +642,7 @@ export class LineEditor {
       return;
     }
     if (this.ctrlCCount === 2) {
-      const busy = this.options.busy?.() ?? false;
-      if (busy && this.options.onCancel) {
-        await this.withPrompt(async () => {
-          const handled = await this.options.onCancel?.();
-          if (handled) process.stdout.write("Turn dibatalkan.\n");
-          else process.stdout.write("Tidak ada turn aktif.\n");
-        });
-      } else {
-        process.stdout.write("Tidak ada turn aktif. Tekan Ctrl+C sekali lagi untuk keluar.\n");
-      }
+      process.stdout.write("Tidak ada turn aktif. Tekan Ctrl+C sekali lagi untuk keluar.\n");
       this.render();
       return;
     }
@@ -823,6 +879,14 @@ export class LineEditor {
     return lines;
   }
 
+  private scrollView(delta: number): void {
+    const lines = this.buffer.split("\n").length;
+    const next = Math.max(0, Math.min(lines - 1, this.lastViewStart + delta));
+    this.viewLine = next;
+    this.followCursor = false;
+    this.render();
+  }
+
   private render(): void {
     if (!this.listening) return;
     const width = this.width();
@@ -832,6 +896,13 @@ export class LineEditor {
     const lines = this.buffer.split("\n");
     const beforeLines = beforeCursor.split("\n");
     const cursorLineIndex = beforeLines.length - 1;
+    const promptWidth = displayWidth(prompt);
+    const prefixFor = (index: number): number => (index === 0 ? promptWidth : 2);
+    const heightOf = (index: number): number => {
+      const content = lines[index] ?? "";
+      return Math.max(1, Math.ceil(Math.max(1, prefixFor(index) + displayWidth(content)) / width));
+    };
+
     let rows = 0;
     const output: string[] = [];
     for (const line of overlay) {
@@ -839,20 +910,47 @@ export class LineEditor {
       rows += Math.max(1, Math.ceil(Math.max(1, displayWidth(line)) / width));
     }
     const overlayRows = rows;
+    const maxBodyRows = Math.max(2, (process.stdout.rows ?? 24) - overlayRows - 1);
+
+    let start = 0;
+    if (this.followCursor) {
+      let used = 0;
+      for (let index = cursorLineIndex; index >= 0; index -= 1) {
+        used += heightOf(index);
+        if (used > maxBodyRows) {
+          start = index + 1;
+          break;
+        }
+      }
+      start = Math.min(start, cursorLineIndex);
+    } else {
+      start = Math.max(0, Math.min(this.viewLine, lines.length - 1));
+    }
+    let end = start;
+    let bodyRows = 0;
+    while (end < lines.length) {
+      const height = heightOf(end);
+      if (bodyRows + height > maxBodyRows && end > start) break;
+      bodyRows += height;
+      end += 1;
+    }
+    if (this.followCursor && cursorLineIndex >= end) {
+      start = cursorLineIndex;
+      end = cursorLineIndex + 1;
+      bodyRows = heightOf(start);
+    }
+    this.lastViewStart = start;
+    this.viewLine = start;
+
     const rendered: string[] = [];
-    lines.forEach((line, index) => {
+    for (let index = start; index < end; index += 1) {
       const prefix = index === 0 ? prompt : "  ";
-      rendered.push(`${prefix}${line}`);
-    });
-    rows += rendered.reduce((total, line) => total + Math.max(1, Math.ceil(Math.max(1, displayWidth(line)) / width)), 0);
-    const promptWidth = displayWidth(prompt);
-    const prefixFor = (index: number): number => (index === 0 ? promptWidth : 2);
-    const lineRows = (index: number): number => {
-      const content = lines[index] ?? "";
-      return Math.max(1, Math.ceil(Math.max(1, prefixFor(index) + displayWidth(content)) / width));
-    };
+      rendered.push(`${prefix}${lines[index] ?? ""}`);
+    }
+    rows += bodyRows;
+
     let cursorRow = overlayRows;
-    for (let index = 0; index < cursorLineIndex; index += 1) cursorRow += lineRows(index);
+    for (let index = start; index < cursorLineIndex; index += 1) cursorRow += heightOf(index);
     const currentLineText = beforeLines[cursorLineIndex] ?? "";
     const cursorAbsolute = prefixFor(cursorLineIndex) + displayWidth(currentLineText);
     cursorRow += Math.floor(cursorAbsolute / width);

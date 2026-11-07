@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, toRannError } from "@rann/shared";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
@@ -459,14 +459,21 @@ function makeApprovalHandler(
   if (flagBool(args, "yes")) return async () => ({ approved: true });
   if (process.stdin.isTTY !== true) return undefined;
   return async (request) => {
-    const detail =
-      request.args !== null && typeof request.args === "object" && "command" in (request.args as Record<string, unknown>)
-        ? String((request.args as Record<string, unknown>).command)
-        : JSON.stringify(request.args ?? {});
-    const prompt = `\nPerlu izin: ${request.tool}\n  ${detail.slice(0, 500)}`;
+    const args = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
+    const detail = "command" in args ? String(args.command) : JSON.stringify(request.args ?? {});
+    const impact = request.tool === "shell_run"
+      ? "menjalankan perintah shell di folder project"
+      : request.tool === "git_write"
+        ? "mengubah riwayat git atau mendorong commit ke remote"
+        : request.tool === "checkpoint_restore"
+          ? "mengembalikan berkas ke snapshot lama"
+          : /write|edit|delete|patch|apply/.test(request.tool)
+            ? "menulis atau mengubah berkas di workspace"
+            : "menjalankan tool dengan izin tulis di workspace";
+    const prompt = `\nPerlu izin: ${request.tool}\n  args: ${detail.slice(0, 400)}\n  dampak: ${impact}`;
     const choices = [
-      { key: "once", label: "Setujui sekali" },
-      { key: "always", label: "Selalu untuk tool ini di sesi ini" },
+      { key: "once", label: "Izinkan sekali" },
+      { key: "always", label: "Selalu izinkan tool ini di sesi ini" },
       { key: "deny", label: "Tolak" }
     ] as const;
     const answer = ask ? await chooseWith(ask, prompt, [...choices], "deny") : await choose(prompt, [...choices], "deny");
@@ -475,6 +482,21 @@ function makeApprovalHandler(
 }
 
 const PERMISSION_MODES = ["read-only", "ask", "accept-edits", "trusted", "custom"] as const;
+
+function extractAttachments(line: string): { text: string; attachments: Array<{ path: string; name: string }> } {
+  const attachments: Array<{ path: string; name: string }> = [];
+  const pattern = /(^|\s)@(?:"([^"]+)"|'([^']+)'|(\S+))/g;
+  for (const match of line.matchAll(pattern)) {
+    const raw = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+    if (raw.length === 0) continue;
+    const expanded = raw.startsWith("~") ? join(process.env.HOME ?? process.env.USERPROFILE ?? "", raw.slice(1)) : raw;
+    const absolute = isAbsolute(expanded) ? expanded : join(process.cwd(), expanded);
+    if (!existsSync(absolute)) continue;
+    const name = basename(absolute);
+    if (!attachments.some((item) => item.path === absolute)) attachments.push({ path: absolute, name });
+  }
+  return { text: line, attachments };
+}
 
 async function chatCommand(args: ParsedArgs): Promise<number> {
   const client = await ensureDaemon();
@@ -522,23 +544,52 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     let busy = false;
     let totalTokens = 0;
     let totalCost = 0;
+    let lastInputTokens = 0;
+    let lastOutputTokens = 0;
+    let contextLimit = 24_000;
     let lastTurnId: string | undefined;
     let lastResponse = "";
     let pendingAttachment: { name: string; content: string } | undefined;
+    const onSigint = async (): Promise<void> => {
+      if (!busy) return;
+      try {
+        await client.request("session.cancel", { sessionId });
+        print(ui.yellow("SIGINT: turn dibatalkan"));
+      } catch (error) {
+        printErr(ui.red(`gagal membatalkan turn: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    };
+    const sigintListener = (): void => { void onSigint(); };
+    process.on("SIGINT", sigintListener);
 
     const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
       const parts = [model ?? "default"];
       if (totalTokens > 0) parts.push(`${(totalTokens / 1000).toFixed(1)}k tok`);
-      if (totalCost > 0) parts.push(`$${totalCost.toFixed(3)}`);
+      if (lastInputTokens > 0 || lastOutputTokens > 0) parts.push(`in ${lastInputTokens} out ${lastOutputTokens}`);
+      if (contextLimit > 0) parts.push(`${Math.min(100, Math.round((lastInputTokens / contextLimit) * 100))}% ctx`);
+      parts.push(totalCost > 0 ? `$${totalCost.toFixed(3)}` : "$?");
       parts.push(permissionMode ?? "ask");
       if (pendingAttachment) parts.push(`lampiran ${pendingAttachment.name}`);
       const text = parts.join("  ");
       return ui.cyan("› ") + (width >= 64 ? ui.dim(`${truncateWidth(text, Math.max(10, width - 8))} `) : "");
     };
 
+    let disabledShortcuts: string[] = (process.env.RANN_DISABLED_SHORTCUTS ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+    try {
+      const configReply = await client.request<Record<string, unknown>>("config.get", {});
+      const configValue = (configReply.config as Record<string, unknown> | undefined) ?? configReply;
+      const contextValue = configValue.context as Record<string, unknown> | undefined;
+      if (typeof contextValue?.max_tokens === "number" && contextValue.max_tokens > 0) contextLimit = contextValue.max_tokens;
+      const uiValue = configValue.ui as Record<string, unknown> | undefined;
+      const configured = uiValue?.disabled_shortcuts ?? uiValue?.disable_shortcuts;
+      if (Array.isArray(configured)) disabledShortcuts = configured.map((item) => String(item));
+    } catch {
+      // config lama atau daemon yang belum siap tidak boleh menghalangi sesi chat
+    }
     const editor = new LineEditor({
+      disabledShortcuts,
       history,
       busy: () => busy,
       prompt: statusPrompt,
@@ -645,7 +696,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         return blocks.length > 0 ? blocks.join("\n\n") : lastResponse || undefined;
       }
     });
-    const onApproval = makeApprovalHandler(args, (question) => editor.readLine(question));
+    const onApproval = makeApprovalHandler(args, (question) => editor.readLine(question, { escapeSubmits: true }));
 
     const header = (): void => {
       print(ui.bold("Rann Code") + ui.dim(`  ${process.cwd()}${branch ? `  (${branch})` : ""}`));
@@ -661,6 +712,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     };
 
     const recordResult = async (result: StreamResult): Promise<void> => {
+      lastInputTokens = result.usage.inputTokens;
+      lastOutputTokens = result.usage.outputTokens;
       totalTokens += result.usage.inputTokens + result.usage.outputTokens;
       lastResponse = result.text;
       lastTurnId = result.turnId;
@@ -1272,18 +1325,56 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           sessionId = String(data.id);
           if (data.model) model = String(data.model);
           if (data.permission_mode) permissionMode = String(data.permission_mode);
-          print(ui.dim(`sesi ${sessionId}  model ${model ?? "default"}`));
+          if (typeof data.project_path === "string" && existsSync(data.project_path)) {
+            process.chdir(data.project_path);
+            try {
+              branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+            } catch {
+              branch = "";
+            }
+          }
+          print(ui.dim(`sesi ${sessionId}  model ${model ?? "default"}  folder ${process.cwd()}`));
           const messages = ((data.messages as Array<Record<string, unknown>> | undefined) ?? []).slice(-6);
           for (const message of messages) print(`${String(message.role).padEnd(9)} ${String(message.content ?? "").replace(/\s+/g, " ").slice(0, 200)}`);
           continue;
         }
         if (line === "/project" || line.startsWith("/project ")) {
           const sub = line.slice(8).trim();
-          if (sub.length > 0 && sub !== "show") {
-            print(ui.dim("subcommand project belum tersedia di REPL, pakai rann init atau edit .rann/project-map.json"));
+          const projects = await client.request<Array<Record<string, unknown>>>("project.list");
+          if (sub.length === 0 || sub === "show") {
+            if (projects.length === 0) print(ui.dim("belum ada project terdaftar"));
+            for (const project of projects) {
+              const active = project.path === process.cwd() ? "*" : " ";
+              print(`${active} ${String(project.path)}  ${String(project.session_count ?? 0)} sesi  ${String(project.name ?? "")}`);
+            }
+            print(ui.dim("pakai /project switch <path> untuk pindah project"));
             continue;
           }
-          print(projectMapSummary(buildProjectMap(process.cwd())));
+          const parts = sub.split(/\s+/);
+          const action = parts[0] === "switch" || parts[0] === "add" ? parts[0] : "switch";
+          const requested = action === parts[0] ? parts.slice(1).join(" ") : sub;
+          if (requested.length === 0) {
+            print(ui.red("Pakai: /project switch <path>"));
+            continue;
+          }
+          const target = resolve(process.cwd(), requested);
+          if (!existsSync(target) || !statSync(target).isDirectory()) {
+            print(ui.red(`folder project tidak ditemukan: ${target}`));
+            continue;
+          }
+          const session = await client.request<Record<string, unknown>>("session.create", { projectPath: target, model, permissionMode });
+          process.chdir(target);
+          sessionId = String(session.id);
+          model = String(session.model ?? model ?? "default");
+          permissionMode = String(session.permission_mode ?? permissionMode ?? "ask");
+          try {
+            branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+          } catch {
+            branch = "";
+          }
+          clearScreen();
+          header();
+          print(ui.green(`pindah ke ${target}`));
           continue;
         }
         if (line === "/init") {
@@ -1449,11 +1540,16 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
 
+        const parsedInput = extractAttachments(line);
+        if (parsedInput.attachments.length > 0) {
+          print(ui.dim(`lampiran: ${parsedInput.attachments.map((item) => item.name).join(", ")}`));
+        }
         busy = true;
         try {
           const result = await runStreaming(client, sessionId, outgoing(line), {
             ...(model ? { model } : {}),
             ...(permissionMode ? { permissionMode } : {}),
+            ...(parsedInput.attachments.length > 0 ? { attachments: parsedInput.attachments } : {}),
             ...(onApproval ? { onApproval } : {})
           });
           await recordResult(result);
@@ -1466,6 +1562,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       if (error instanceof ReplExit) return error.code;
       throw error;
     } finally {
+      process.off("SIGINT", sigintListener);
       editor.close();
     }
     return 0;

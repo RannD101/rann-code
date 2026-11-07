@@ -19,6 +19,7 @@ import {
   getTurnRuntime,
   listGoals,
   listMessages,
+  listProjects,
   listPlans,
   listSessions,
   listTasks,
@@ -42,6 +43,7 @@ import type { Layout } from "./paths.js";
 import { routeModel, type HealthState } from "./router.js";
 import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
 import { analyzeFailure } from "./failure-analysis.js";
+import { prepareAttachments, type RawAttachment } from "./attachments.js";
 import { listFileCheckpoints, restoreFileCheckpoint } from "./checkpoint-files.js";
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
@@ -224,6 +226,8 @@ export class RpcServer {
         return { ok: true };
       case "session.create":
         return this.sessionCreate(input);
+      case "project.list":
+        return listProjects(this.db);
       case "session.list":
         return listSessions(this.db, {
           status: input.status as string | undefined,
@@ -233,7 +237,10 @@ export class RpcServer {
       case "session.get": {
         const session = getSession(this.db, input.sessionId as string);
         if (!session) throw new RannError("E_SESSION_NOT_FOUND", `Sesi tidak ditemukan: ${input.sessionId}`);
-        return { ...session, messages: listMessages(this.db, session.id, 200) };
+        const project = session.project_id
+          ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)
+          : undefined;
+        return { ...session, project_path: project?.path ?? null, messages: listMessages(this.db, session.id, 200) };
       }
       case "session.send":
         return this.sessionSend(input);
@@ -586,6 +593,15 @@ export class RpcServer {
 
     const config = this.options.config.config;
     seedRegistry(this.db, config);
+    const projectPath = session.project_id
+      ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)?.path
+      : process.cwd();
+    const workspaceRoot = projectPath ?? process.cwd();
+    const attachments = prepareAttachments(
+      input.attachments as RawAttachment[] | undefined,
+      workspaceRoot,
+      this.options.layout.artifactsDir
+    );
     const requested = ((input.model as string | undefined) ?? session.model ?? "").trim();
     const target = this.resolveTarget(config, requested);
     let providerName = target.providerName;
@@ -619,6 +635,9 @@ export class RpcServer {
       } else {
         reason = `routing otomatis gagal, memakai ${descriptor.id}${decision.warning ? ` (${decision.warning})` : ""}`;
       }
+    }
+    if (attachments.some((attachment) => attachment.kind === "image") && descriptor.capabilities.vision !== true) {
+      throw new RannError("E_UNSUPPORTED", `Model ${descriptor.id} tidak mendukung gambar. Pilih model vision lewat /model.`);
     }
     const provider = createProvider(providerName, providerConfig, process.env, this.secrets);
     const model = descriptor.model;
@@ -661,11 +680,6 @@ export class RpcServer {
     this.activeTurns.set(sessionId, controller);
     const approvals = this.sessionApprovals.get(sessionId) ?? new Set<string>();
     this.sessionApprovals.set(sessionId, approvals);
-
-    const projectPath = session.project_id
-      ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)?.path
-      : process.cwd();
-    const workspaceRoot = projectPath ?? process.cwd();
 
     const agentConfig: AgentConfig = {
       permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? session.permission_mode,
@@ -715,6 +729,7 @@ export class RpcServer {
       session,
       turnId: turn.id,
       userText: input.text as string,
+      ...(attachments.length > 0 ? { attachments } : {}),
       provider,
       model,
       workspaceRoot,
