@@ -1,16 +1,32 @@
 import { createServer, type Server, type Socket } from "node:net";
+import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import { RannError, PROTOCOL_VERSION, methodParamsSchema, newId, redactSecrets, toRpcError, type EventEnvelope, type RpcRequest } from "@rann/shared";
 import {
   appendAudit,
   appendEvent,
+  appendJobEvent,
+  cancelJob,
+  createScheduler,
   createSession,
   createTurn,
+  dueSchedulers,
+  enqueueJob,
   eventsForTurn,
+  finishSchedulerRun,
   finishTurn,
   finishTurnRuntime,
   finishGoal,
+  getJob,
+  getScheduler,
   heartbeatTurnRuntime,
+  listJobEvents,
+  listJobs,
+  listSchedulerRuns,
+  listSchedulers,
+  removeScheduler,
+  retryJob,
+  startSchedulerRun,
   startTurnRuntime,
   markStalledTurns,
   getActiveGoal,
@@ -34,8 +50,10 @@ import {
   sumTokensSince,
   touchSession,
   updateGoalProgress,
+  updateScheduler,
   SecretStore,
   type Db,
+  type JobRow,
   type SessionRow
 } from "@rann/storage";
 import { providerFor, type LoadedConfig } from "@rann/shared";
@@ -51,6 +69,8 @@ import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
 import { SkillStore } from "./skills.js";
 import { McpManager } from "./mcp.js";
+import { BackgroundQueue, type JobContext } from "./background.js";
+import { SchedulerEngine, nextRunFor } from "./scheduler.js";
 
 export interface RpcServerOptions {
   layout: Layout;
@@ -72,6 +92,16 @@ interface PendingApproval {
 
 const MAX_LINE = 8 * 1024 * 1024;
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+const SENSITIVE_ENV = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
+
+function sanitizedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined || SENSITIVE_ENV.test(name)) continue;
+    env[name] = value;
+  }
+  return env;
+}
 
 export class RpcServer {
   private readonly server: Server;
@@ -83,6 +113,8 @@ export class RpcServer {
   private readonly db: Db;
   private readonly secrets: SecretStore;
   private readonly mcp: McpManager;
+  private readonly background: BackgroundQueue;
+  private readonly scheduler: SchedulerEngine;
   private readonly startedAt = Date.now();
   private watchdog?: NodeJS.Timeout;
   recoveredTurns: ReturnType<typeof recoverInterruptedTurns> = [];
@@ -101,6 +133,26 @@ export class RpcServer {
       ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
     });
     this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
+    this.background = new BackgroundQueue({
+      db: this.db,
+      concurrency: options.config.config.background.concurrency,
+      pollMs: options.config.config.background.poll_ms,
+      leaseMs: options.config.config.background.lease_ms,
+      maxRuntimeMs: options.config.config.background.max_runtime_ms,
+      runner: (context) => this.runBackgroundJob(context),
+      onEvent: (type, job, data) => {
+        if (job) this.broadcastJob(type, job, data);
+      }
+    });
+    this.scheduler = new SchedulerEngine({
+      db: this.db,
+      pollMs: options.config.config.scheduler.poll_ms,
+      onError: (error, row) => {
+        appendJobEvent(this.db, row?.id ?? "scheduler", "scheduler_error", {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    });
     this.server = createServer((socket) => this.attach(socket));
   }
 
@@ -135,6 +187,8 @@ export class RpcServer {
     }
     this.watchdog = setInterval(() => this.sweepStalledTurns(), 15_000);
     this.watchdog.unref();
+    this.background.start();
+    this.scheduler.start();
   }
 
   private sweepStalledTurns(): void {
@@ -340,6 +394,149 @@ export class RpcServer {
         });
         return goal;
       }
+      case "background.enqueue": {
+        const kind = input.kind as "prompt" | "shell";
+        let sessionId = input.sessionId as string | undefined;
+        if (kind === "prompt") {
+          if (sessionId) {
+            const session = getSession(this.db, sessionId);
+            if (!session) throw new RannError("E_SESSION_NOT_FOUND", `Sesi tidak ditemukan: ${sessionId}`);
+          } else {
+            const created = createSession(this.db, {
+              projectPath: this.options.config.projectPath,
+              title: `Background: ${(input.text as string).slice(0, 60)}`,
+              model: this.options.config.config.model.default,
+              permissionMode: this.options.config.config.permissions.mode
+            });
+            sessionId = created.id;
+          }
+        }
+        const job = enqueueJob(this.db, {
+          kind,
+          queue: input.queue as string,
+          priority: input.priority as number,
+          maxAttempts: input.maxAttempts as number,
+          ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey as string } : {}),
+          ...(input.nextRunAt !== undefined ? { nextRunAt: input.nextRunAt as number } : {}),
+          payload: { text: input.text as string, ...(sessionId ? { sessionId } : {}) }
+        });
+        appendAudit(this.db, {
+          actor: "user",
+          action: "background.enqueue",
+          resource: job.id,
+          decision: "ok",
+          metadata: { kind, queue: job.queue, priority: job.priority, session_id: sessionId ?? null }
+        });
+        this.broadcastJob("queued", job);
+        return job;
+      }
+      case "background.list":
+        return listJobs(this.db, {
+          ...(input.status ? { status: input.status as never } : {}),
+          ...(input.queue ? { queue: input.queue as string } : {}),
+          limit: input.limit as number
+        });
+      case "background.get": {
+        const job = getJob(this.db, input.id as string);
+        if (!job) throw new RannError("E_NOT_FOUND", `Job tidak ditemukan: ${input.id}`);
+        return job;
+      }
+      case "background.cancel": {
+        const cancelled = cancelJob(this.db, input.id as string);
+        if (!cancelled) throw new RannError("E_CONFLICT", `Job ${input.id} tidak bisa dibatalkan pada status ini`);
+        appendAudit(this.db, { actor: "user", action: "background.cancel", resource: input.id as string, decision: "ok", metadata: {} });
+        const job = getJob(this.db, input.id as string);
+        if (job) this.broadcastJob("cancelled", job);
+        return { cancelled };
+      }
+      case "background.retry": {
+        const retried = retryJob(this.db, input.id as string);
+        if (!retried) throw new RannError("E_CONFLICT", `Job ${input.id} tidak bisa diulang pada status ini`);
+        appendAudit(this.db, { actor: "user", action: "background.retry", resource: input.id as string, decision: "ok", metadata: {} });
+        const job = getJob(this.db, input.id as string);
+        if (job) this.broadcastJob("queued", job);
+        return { retried };
+      }
+      case "background.logs":
+        return listJobEvents(this.db, input.id as string, input.limit as number);
+      case "scheduler.add": {
+        const schedule = input.schedule as string;
+        const timezone = (input.timezone as string | undefined) ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC";
+        const nextRunAt = nextRunFor(schedule, timezone);
+        const row = createScheduler(this.db, {
+          name: input.name as string,
+          schedule,
+          command: input.command as string,
+          timezone,
+          ...(input.payload ? { payload: input.payload as Record<string, unknown> } : {}),
+          overlapPolicy: input.overlapPolicy as "skip" | "queue" | "replace",
+          catchUp: input.catchUp as boolean,
+          maxAttempts: input.maxAttempts as number,
+          nextRunAt
+        });
+        appendAudit(this.db, {
+          actor: "user",
+          action: "scheduler.add",
+          resource: row.id,
+          decision: "ok",
+          metadata: { name: row.name, schedule, timezone, next_run_at: nextRunAt }
+        });
+        return row;
+      }
+      case "scheduler.list":
+        return listSchedulers(this.db).map((row) => ({ ...row, running: listSchedulerRuns(this.db, row.id, 1)[0] ?? null }));
+      case "scheduler.run": {
+        const row = getScheduler(this.db, input.id as string);
+        if (!row) throw new RannError("E_NOT_FOUND", `Jadwal tidak ditemukan: ${input.id}`);
+        const run = startSchedulerRun(this.db, row, Date.now());
+        const job = enqueueJob(this.db, {
+          kind: "scheduler.run",
+          queue: "scheduler",
+          priority: 120,
+          maxAttempts: row.max_attempts,
+          payload: {
+            schedulerId: row.id,
+            schedulerName: row.name,
+            runId: run.id,
+            command: row.command,
+            data: JSON.parse(row.payload_json) as unknown,
+            timezone: row.timezone
+          }
+        });
+        appendAudit(this.db, { actor: "user", action: "scheduler.run", resource: row.id, decision: "ok", metadata: { job_id: job.id, run_id: run.id } });
+        return { run, job };
+      }
+      case "scheduler.update": {
+        const row = getScheduler(this.db, input.id as string);
+        if (!row) throw new RannError("E_NOT_FOUND", `Jadwal tidak ditemukan: ${input.id}`);
+        const schedule = (input.schedule as string | undefined) ?? row.schedule;
+        const timezone = (input.timezone as string | undefined) ?? row.timezone;
+        const recompute = input.schedule !== undefined || input.timezone !== undefined || (input.enabled === true && row.next_run_at === null);
+        const nextRunAt = recompute ? nextRunFor(schedule, timezone) : row.next_run_at;
+        const updated = updateScheduler(this.db, row.id, {
+          ...(input.schedule !== undefined ? { schedule } : {}),
+          ...(input.command !== undefined ? { command: input.command as string } : {}),
+          ...(input.timezone !== undefined ? { timezone } : {}),
+          ...(input.enabled !== undefined ? { enabled: input.enabled ? 1 : 0 } : {}),
+          ...(input.overlapPolicy !== undefined ? { overlap_policy: input.overlapPolicy as "skip" | "queue" | "replace" } : {}),
+          ...(input.catchUp !== undefined ? { catch_up: input.catchUp ? 1 : 0 } : {}),
+          ...(input.maxAttempts !== undefined ? { max_attempts: input.maxAttempts as number } : {}),
+          next_run_at: nextRunAt
+        });
+        appendAudit(this.db, { actor: "user", action: "scheduler.update", resource: row.id, decision: "ok", metadata: { enabled: input.enabled ?? null } });
+        return updated;
+      }
+      case "scheduler.remove": {
+        const removed = removeScheduler(this.db, input.id as string);
+        if (!removed) throw new RannError("E_NOT_FOUND", `Jadwal tidak ditemukan: ${input.id}`);
+        appendAudit(this.db, { actor: "user", action: "scheduler.remove", resource: input.id as string, decision: "ok", metadata: {} });
+        return { removed };
+      }
+      case "scheduler.history": {
+        const row = getScheduler(this.db, input.id as string);
+        if (!row) throw new RannError("E_NOT_FOUND", `Jadwal tidak ditemukan: ${input.id}`);
+        return listSchedulerRuns(this.db, row.id, input.limit as number);
+      }
       case "checkpoint.list": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) return [];
@@ -483,6 +680,165 @@ export class RpcServer {
     }
   }
 
+  private async runBackgroundJob(context: JobContext): Promise<unknown> {
+    const payload = JSON.parse(context.job.payload_json) as Record<string, unknown>;
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (context.job.kind === "shell") {
+      return this.runShellCommand(text, this.options.config.projectPath, context.signal);
+    }
+    if (context.job.kind === "prompt") {
+      const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+      if (!sessionId) throw new RannError("E_INVALID_PARAMS", "Job prompt tanpa sessionId");
+      return this.runPromptToCompletion(sessionId, text, context.signal);
+    }
+    if (context.job.kind === "scheduler.run") {
+      const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+      const command = typeof payload.command === "string" ? payload.command : "";
+      try {
+        let result: unknown;
+        if (command.startsWith("prompt:")) {
+          const prompt = command.slice("prompt:".length).trim();
+          const sessionId = typeof payload.sessionId === "string" ? (payload.sessionId as string) : undefined;
+          result = await this.runScheduledPrompt(prompt, sessionId, context.signal);
+        } else {
+          const shell = command.startsWith("shell:") ? command.slice("shell:".length) : command;
+          result = await this.runShellCommand(shell, this.options.config.projectPath, context.signal);
+        }
+        if (runId) finishSchedulerRun(this.db, runId, "done", JSON.stringify(result ?? null));
+        return result;
+      } catch (error) {
+        if (runId) finishSchedulerRun(this.db, runId, context.signal.aborted ? "cancelled" : "failed", undefined, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    }
+    throw new RannError("E_UNSUPPORTED", `Jenis job background tidak dikenal: ${context.job.kind}`);
+  }
+
+  private async runScheduledPrompt(prompt: string, sessionId: string | undefined, signal: AbortSignal): Promise<unknown> {
+    let target = sessionId;
+    if (!target) {
+      const created = createSession(this.db, {
+        projectPath: this.options.config.projectPath,
+        title: `Jadwal: ${prompt.slice(0, 60)}`,
+        model: this.options.config.config.model.default,
+        permissionMode: this.options.config.config.permissions.mode
+      });
+      target = created.id;
+    }
+    return this.runPromptToCompletion(target, prompt, signal);
+  }
+
+  private async runPromptToCompletion(sessionId: string, text: string, signal: AbortSignal): Promise<unknown> {
+    if (signal.aborted) throw new RannError("E_CANCELLED", "Job dibatalkan sebelum turn dimulai");
+    const started = this.sessionSend({ sessionId, text }) as { turnId: string; sessionId: string };
+    const turnId = started.turnId;
+    while (true) {
+      if (signal.aborted) {
+        this.activeTurns.get(sessionId)?.abort();
+        throw new RannError("E_CANCELLED", "Job dibatalkan");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const turn = getTurn(this.db, turnId);
+      if (!turn) throw new RannError("E_TURN_NOT_FOUND", `Turn hilang: ${turnId}`);
+      if (turn.status === "running" || turn.status === "queued") continue;
+      const messages = listMessages(this.db, sessionId, 500).filter((message) => message.turn_id === turnId);
+      const last = [...messages].reverse().find((message) => message.role === "assistant");
+      if (turn.status === "failed") {
+        throw new RannError("E_JOB_FAILED", `Turn background gagal: ${turn.error_code ?? "unknown"}`, {
+          data: { code: turn.error_code ?? null, turnId }
+        });
+      }
+      if (turn.status === "cancelled") throw new RannError("E_CANCELLED", "Turn background dibatalkan");
+      return { turnId, sessionId, status: turn.status, text: last?.content ?? "" };
+    }
+  }
+
+  private runShellCommand(
+    command: string,
+    cwd: string,
+    signal: AbortSignal
+  ): Promise<{ stdout: string; stderr: string; code: number | null; truncated: boolean }> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new RannError("E_CANCELLED", "Perintah dibatalkan"));
+        return;
+      }
+      const child = spawn(command, {
+        cwd,
+        shell: true,
+        detached: process.platform !== "win32",
+        env: sanitizedEnv(),
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      let truncated = false;
+      const append = (current: string, chunk: string): string => {
+        if (current.length >= 20_000) return current;
+        const next = current + chunk;
+        if (next.length > 20_000) {
+          truncated = true;
+          return next.slice(0, 20_000);
+        }
+        return next;
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout = append(stdout, chunk.toString("utf8"));
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr = append(stderr, chunk.toString("utf8"));
+      });
+      const kill = (): void => {
+        if (!child.pid) return;
+        try {
+          if (process.platform === "win32") child.kill("SIGTERM");
+          else process.kill(-child.pid, "SIGTERM");
+        } catch {
+          // proses mungkin sudah selesai
+        }
+        const timer = setTimeout(() => {
+          try {
+            if (process.platform === "win32") child.kill("SIGKILL");
+            else if (child.pid) process.kill(-child.pid, "SIGKILL");
+          } catch {
+            // abaikan
+          }
+        }, 2_000);
+        timer.unref?.();
+      };
+      const onAbort = (): void => kill();
+      signal.addEventListener("abort", onAbort, { once: true });
+      child.once("error", (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      });
+      child.once("close", (code) => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          reject(new RannError("E_CANCELLED", "Perintah dibatalkan"));
+          return;
+        }
+        resolve({ stdout, stderr, code, truncated });
+      });
+    });
+  }
+
+  private broadcastJob(type: string, job: JobRow, data?: Record<string, unknown>): void {
+    let sessionId = "system";
+    try {
+      const payload = JSON.parse(job.payload_json) as Record<string, unknown>;
+      if (typeof payload.sessionId === "string") sessionId = payload.sessionId;
+    } catch {
+      // payload rusak tetap dilaporkan tanpa sesi
+    }
+    const event = appendEvent(this.db, {
+      type: "job.update",
+      sessionId,
+      data: { id: job.id, kind: job.kind, status: job.status, event: type, ...data }
+    });
+    this.broadcast(event);
+  }
+
   private requestApproval(
     sessionId: string,
     turnId: string,
@@ -559,7 +915,12 @@ export class RpcServer {
       providers: providerHealth.snapshot(),
       recovered_turns: this.recoveredTurns.splice(0),
       stalled_turns: this.db.prepare("SELECT turn_id, stall_reason, stalled_at FROM turn_runtime WHERE status = 'stalled'").all(),
-      active_turns: [...this.activeTurns.keys()]
+      active_turns: [...this.activeTurns.keys()],
+      background: this.background.snapshot(),
+      scheduler: {
+        total: listSchedulers(this.db).length,
+        due: dueSchedulers(this.db).length
+      }
     };
   }
 
@@ -1034,6 +1395,8 @@ export class RpcServer {
     if (this.closing) return;
     this.closing = true;
     if (this.watchdog) clearInterval(this.watchdog);
+    this.scheduler.stop();
+    await this.background.stop();
     for (const controller of this.activeTurns.values()) controller.abort();
     this.activeTurns.clear();
     for (const entry of this.pendingApprovals.values()) entry.settle(false);

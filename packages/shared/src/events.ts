@@ -13,6 +13,7 @@ export type EventType =
   | "approval.request"
   | "approval.resolved"
   | "usage.update"
+  | "job.update"
   | "error"
   | "turn.end"
   | "heartbeat"

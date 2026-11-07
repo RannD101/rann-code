@@ -213,6 +213,54 @@ export const goalFinishParams = z.object({
   note: z.string().max(4_000).optional()
 });
 
+export const backgroundEnqueueParams = z.object({
+  kind: z.enum(["prompt", "shell"]).default("prompt"),
+  text: z.string().min(1).max(200_000),
+  sessionId: z.string().min(1).optional(),
+  queue: z.string().min(1).max(64).default("default"),
+  priority: z.number().int().min(0).max(1_000).default(100),
+  maxAttempts: z.number().int().min(1).max(10).default(3),
+  idempotencyKey: z.string().min(8).max(200).optional(),
+  nextRunAt: z.number().int().nonnegative().optional()
+});
+export const backgroundListParams = z.object({
+  status: z.enum(["queued", "running", "done", "failed", "cancelled", "dead"]).optional(),
+  queue: z.string().min(1).max(64).optional(),
+  limit: z.number().int().positive().max(200).default(50)
+});
+export const backgroundIdParams = z.object({ id: z.string().min(1) });
+export const backgroundLogsParams = z.object({
+  id: z.string().min(1),
+  limit: z.number().int().positive().max(500).default(100)
+});
+
+export const schedulerAddParams = z.object({
+  name: z.string().min(1).max(120),
+  schedule: z.string().min(1).max(200),
+  command: z.string().min(1).max(8_000),
+  timezone: z.string().min(1).max(80).optional(),
+  payload: z.record(z.unknown()).optional(),
+  overlapPolicy: z.enum(["skip", "queue", "replace"]).default("skip"),
+  catchUp: z.boolean().default(true),
+  maxAttempts: z.number().int().min(1).max(10).default(3)
+});
+export const schedulerListParams = empty;
+export const schedulerIdParams = z.object({ id: z.string().min(1) });
+export const schedulerUpdateParams = z.object({
+  id: z.string().min(1),
+  enabled: z.boolean().optional(),
+  schedule: z.string().min(1).max(200).optional(),
+  command: z.string().min(1).max(8_000).optional(),
+  timezone: z.string().min(1).max(80).optional(),
+  overlapPolicy: z.enum(["skip", "queue", "replace"]).optional(),
+  catchUp: z.boolean().optional(),
+  maxAttempts: z.number().int().min(1).max(10).optional()
+});
+export const schedulerHistoryParams = z.object({
+  id: z.string().min(1),
+  limit: z.number().int().positive().max(200).default(30)
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -254,7 +302,19 @@ export const methodParams = {
   "goal.list": goalListParams,
   "goal.set": goalSetParams,
   "goal.update": goalUpdateParams,
-  "goal.finish": goalFinishParams
+  "goal.finish": goalFinishParams,
+  "background.enqueue": backgroundEnqueueParams,
+  "background.list": backgroundListParams,
+  "background.get": backgroundIdParams,
+  "background.cancel": backgroundIdParams,
+  "background.retry": backgroundIdParams,
+  "background.logs": backgroundLogsParams,
+  "scheduler.add": schedulerAddParams,
+  "scheduler.list": schedulerListParams,
+  "scheduler.run": schedulerIdParams,
+  "scheduler.update": schedulerUpdateParams,
+  "scheduler.remove": schedulerIdParams,
+  "scheduler.history": schedulerHistoryParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;

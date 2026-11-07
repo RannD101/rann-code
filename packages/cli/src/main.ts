@@ -1053,6 +1053,189 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(renderGoal(goal));
           continue;
         }
+        if (line === "/background" || line === "/bg" || line.startsWith("/background ") || line.startsWith("/bg ")) {
+          const argument = line.replace(/^\/(?:background|bg)\s*/, "");
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "list").toLowerCase();
+          const options = parseInlineOptions(tokens.slice(1), new Set(["status", "queue", "limit", "priority", "max-attempts", "after", "idempotency-key", "session"]));
+          const asJson = options.flags.json === true;
+          if (sub === "list" || sub === "ls") {
+            const rows = await client.request<JobView[]>("background.list", {
+              ...(inlineFlag(options.flags, "status") ? { status: inlineFlag(options.flags, "status") } : {}),
+              ...(inlineFlag(options.flags, "queue") ? { queue: inlineFlag(options.flags, "queue") } : {}),
+              limit: inlineNumber(options.flags, "limit") ?? 20
+            });
+            if (asJson) print(JSON.stringify(rows, null, 2));
+            else if (rows.length === 0) print(ui.dim("belum ada job"));
+            else for (const job of rows) print(renderJobRow(job));
+            continue;
+          }
+          if (sub === "add") {
+            const kind = (options.positionals[0] ?? "").toLowerCase();
+            const text = options.positionals.slice(1).join(" ").trim();
+            if (kind !== "prompt" && kind !== "shell") {
+              print("Pakai: /background add <prompt|shell> \"<teks>\" [--queue q] [--priority n] [--max-attempts n] [--after 5m]");
+              continue;
+            }
+            if (text.length === 0) {
+              print("teks job kosong");
+              continue;
+            }
+            const after = inlineFlag(options.flags, "after");
+            let nextRunAt: number | undefined;
+            if (after !== undefined) {
+              const parsed = parseLooseDuration(after) ?? (Number.isFinite(Date.parse(after)) ? Date.parse(after) - Date.now() : undefined);
+              if (parsed === undefined) {
+                print(ui.red("--after tidak valid, contoh 30s, 5m, 2h, atau tanggal ISO"));
+                continue;
+              }
+              nextRunAt = Date.now() + Math.max(0, parsed);
+            }
+            const explicitSession = inlineFlag(options.flags, "session");
+            const job = await client.request<JobView>("background.enqueue", {
+              kind,
+              text,
+              queue: inlineFlag(options.flags, "queue") ?? "default",
+              priority: inlineNumber(options.flags, "priority") ?? 100,
+              maxAttempts: inlineNumber(options.flags, "max-attempts") ?? 3,
+              ...(kind === "prompt" ? { sessionId: explicitSession ?? sessionId } : {}),
+              ...(inlineFlag(options.flags, "idempotency-key") ? { idempotencyKey: inlineFlag(options.flags, "idempotency-key") } : {}),
+              ...(nextRunAt !== undefined ? { nextRunAt } : {})
+            });
+            print(asJson ? JSON.stringify(job, null, 2) : `job ${job.id} masuk antrean ${job.queue} (${job.status})`);
+            continue;
+          }
+          const id = options.positionals[0];
+          if (!id) {
+            print("Pakai: /background <list|add|get|logs|cancel|retry> [id]");
+            continue;
+          }
+          if (sub === "get" || sub === "show") {
+            const job = await client.request<JobView>("background.get", { id });
+            if (asJson) print(JSON.stringify(job, null, 2));
+            else {
+              print(`id       ${job.id}`);
+              print(`jenis    ${job.kind}`);
+              print(`status   ${job.status}`);
+              print(`antrean  ${job.queue}`);
+              print(`prioritas ${job.priority}`);
+              print(`percobaan ${job.attempts}/${job.max_attempts}`);
+              print(`jadwal   ${formatWhen(job.next_run_at)}`);
+              print(`dibuat   ${formatWhen(job.created_at)}`);
+              if (job.last_error) print(`error    ${job.last_error}`);
+            }
+            continue;
+          }
+          if (sub === "logs" || sub === "log") {
+            const events = await client.request<Array<Record<string, unknown>>>("background.logs", {
+              id,
+              limit: inlineNumber(options.flags, "limit") ?? 50
+            });
+            if (asJson) print(JSON.stringify(events, null, 2));
+            else if (events.length === 0) print(ui.dim("belum ada event"));
+            else {
+              for (const event of events) {
+                const when = formatWhen(Number(event.created_at ?? 0));
+                print(`${when}  ${String(event.type)}  ${String(event.data_json ?? "{}").slice(0, 240)}`);
+              }
+            }
+            continue;
+          }
+          if (sub === "cancel") {
+            await client.request("background.cancel", { id });
+            print(ui.green(`job ${id} dibatalkan`));
+            continue;
+          }
+          if (sub === "retry") {
+            await client.request("background.retry", { id });
+            print(ui.green(`job ${id} diantrekan ulang`));
+            continue;
+          }
+          print(`subcommand background tidak dikenal: ${sub}`);
+          continue;
+        }
+        if (line === "/scheduler" || line === "/cron" || line.startsWith("/scheduler ") || line.startsWith("/cron ")) {
+          const argument = line.replace(/^\/(?:scheduler|cron)\s*/, "");
+          const tokens = tokenizeInline(argument);
+          const sub = (tokens[0] ?? "list").toLowerCase();
+          const options = parseInlineOptions(tokens.slice(1), new Set(["timezone", "overlap", "max-attempts", "limit"]));
+          const asJson = options.flags.json === true;
+          if (sub === "list" || sub === "ls") {
+            const rows = await client.request<SchedulerView[]>("scheduler.list", {});
+            if (asJson) print(JSON.stringify(rows, null, 2));
+            else if (rows.length === 0) print(ui.dim("belum ada jadwal"));
+            else for (const row of rows) print(renderSchedulerRow(row));
+            continue;
+          }
+          if (sub === "add") {
+            const name = options.positionals[0];
+            const schedule = options.positionals[1];
+            const command = options.positionals.slice(2).join(" ").trim();
+            if (!name || !schedule || command.length === 0) {
+              print('Pakai: /scheduler add <nama> "<jadwal>" "<shell:perintah|prompt:teks>" [--timezone Asia/Jakarta] [--overlap skip|queue|replace] [--no-catch-up]');
+              print("Contoh: /scheduler add backup \"cron:0 2 * * *\" \"shell:tar -czf backup.tgz src\"");
+              continue;
+            }
+            const overlap = inlineFlag(options.flags, "overlap") ?? "skip";
+            if (!["skip", "queue", "replace"].includes(overlap)) {
+              print(ui.red("--overlap harus skip, queue, atau replace"));
+              continue;
+            }
+            try {
+              const row = await client.request<SchedulerView>("scheduler.add", {
+                name,
+                schedule,
+                command,
+                ...(inlineFlag(options.flags, "timezone") ? { timezone: inlineFlag(options.flags, "timezone") } : {}),
+                overlapPolicy: overlap,
+                catchUp: options.flags["no-catch-up"] !== true,
+                maxAttempts: inlineNumber(options.flags, "max-attempts") ?? 3
+              });
+              print(asJson ? JSON.stringify(row, null, 2) : `jadwal ${row.name} dibuat, next ${formatWhen(row.next_run_at)}`);
+            } catch (error) {
+              print(ui.red(error instanceof Error ? error.message : String(error)));
+            }
+            continue;
+          }
+          const id = options.positionals[0];
+          if (!id) {
+            print("Pakai: /scheduler <list|add|run|enable|disable|remove|history> [id|nama]");
+            continue;
+          }
+          if (sub === "run") {
+            const result = await client.request<{ job: JobView }>("scheduler.run", { id });
+            print(ui.green(`jadwal ${id} dijalankan, job ${result.job.id}`));
+            continue;
+          }
+          if (sub === "enable" || sub === "disable") {
+            const row = await client.request<SchedulerView>("scheduler.update", { id, enabled: sub === "enable" });
+            print(`jadwal ${row.name} ${row.enabled === 1 ? "aktif" : "nonaktif"}, next ${formatWhen(row.next_run_at)}`);
+            continue;
+          }
+          if (sub === "remove" || sub === "rm") {
+            await client.request("scheduler.remove", { id });
+            print(ui.green(`jadwal ${id} dihapus`));
+            continue;
+          }
+          if (sub === "history" || sub === "runs") {
+            const runs = await client.request<Array<Record<string, unknown>>>("scheduler.history", {
+              id,
+              limit: inlineNumber(options.flags, "limit") ?? 20
+            });
+            if (asJson) print(JSON.stringify(runs, null, 2));
+            else if (runs.length === 0) print(ui.dim("belum ada riwayat"));
+            else {
+              for (const run of runs) {
+                const when = formatWhen(Number(run.started_at ?? run.created_at ?? 0));
+                const duration = run.duration_ms === null || run.duration_ms === undefined ? "-" : `${String(run.duration_ms)}ms`;
+                print(`${when}  ${String(run.status).padEnd(9)} ${duration}  ${String(run.output ?? run.error_message ?? "").slice(0, 160)}`);
+              }
+            }
+            continue;
+          }
+          print(`subcommand scheduler tidak dikenal: ${sub}`);
+          continue;
+        }
         if (line === "/status" || line === "/status --json" || line === "/st --json") {
           const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
           if (line.includes("--json")) {
@@ -1704,6 +1887,108 @@ async function turnCommand(args: ParsedArgs): Promise<number> {
   } finally {
     client.close();
   }
+}
+
+interface JobView {
+  id: string;
+  queue: string;
+  kind: string;
+  status: string;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
+  next_run_at: number;
+  last_error: string | null;
+  created_at: number;
+}
+
+interface SchedulerView {
+  id: string;
+  name: string;
+  schedule: string;
+  command: string;
+  enabled: number;
+  next_run_at: number | null;
+  last_run_at: number | null;
+  timezone: string;
+  overlap_policy: string;
+  catch_up: number;
+  max_attempts: number;
+}
+
+function tokenizeInline(input: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  for (const match of input.matchAll(pattern)) {
+    const value = match[1] ?? match[2] ?? match[3] ?? "";
+    if (value.length > 0) tokens.push(value);
+  }
+  return tokens;
+}
+
+function parseInlineOptions(
+  tokens: string[],
+  valueFlags: Set<string>
+): { positionals: string[]; flags: Record<string, string | boolean> } {
+  const positionals: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] as string;
+    if (!token.startsWith("--")) {
+      positionals.push(token);
+      continue;
+    }
+    const body = token.slice(2);
+    const eq = body.indexOf("=");
+    if (eq >= 0) {
+      flags[body.slice(0, eq)] = body.slice(eq + 1);
+      continue;
+    }
+    const next = tokens[index + 1];
+    if (valueFlags.has(body) && next !== undefined && !next.startsWith("--")) {
+      flags[body] = next;
+      index += 1;
+      continue;
+    }
+    flags[body] = true;
+  }
+  return { positionals, flags };
+}
+
+function inlineFlag(flags: Record<string, string | boolean>, name: string): string | undefined {
+  const value = flags[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function inlineNumber(flags: Record<string, string | boolean>, name: string): number | undefined {
+  const raw = inlineFlag(flags, name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseLooseDuration(value: string): number | undefined {
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(value.trim());
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  const unit = match[2] as "ms" | "s" | "m" | "h" | "d";
+  return amount * { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[unit];
+}
+
+function formatWhen(at: number | null): string {
+  if (at === null) return "-";
+  return new Date(at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" });
+}
+
+function renderJobRow(job: JobView): string {
+  const error = job.last_error ? `  error: ${job.last_error.slice(0, 120)}` : "";
+  return `${job.id}  ${job.status.padEnd(9)} ${job.kind.padEnd(12)} ${job.queue}  ${job.attempts}/${job.max_attempts}  next ${formatWhen(job.next_run_at)}${error}`;
+}
+
+function renderSchedulerRow(row: SchedulerView): string {
+  const state = row.enabled === 1 ? "aktif" : "nonaktif";
+  const running = row.last_run_at === null ? "" : `  terakhir ${formatWhen(row.last_run_at)}`;
+  return `${row.id}  ${row.name}  ${state}  ${row.schedule}  next ${formatWhen(row.next_run_at)}  ${row.command.slice(0, 80)}${running}`;
 }
 
 function formatUsageRow(row: Record<string, unknown>): string {

@@ -4,4 +4,5 @@ export * from "./work-repos.js";
 export * from "./model-repos.js";
 export * from "./goal-repos.js";
 export * from "./turn-runtime-repos.js";
+export * from "./job-repos.js";
 export * from "./secrets.js";

@@ -79,6 +79,19 @@ export const configSchema = z.object({
       model: z.string().min(1).optional()
     })
     .default({}),
+  background: z
+    .object({
+      concurrency: z.number().int().min(1).max(8).default(2),
+      poll_ms: z.number().int().min(100).max(60_000).default(1_000),
+      lease_ms: z.number().int().min(10_000).max(600_000).default(60_000),
+      max_runtime_ms: z.number().int().min(60_000).max(86_400_000).default(3_600_000)
+    })
+    .default({}),
+  scheduler: z
+    .object({
+      poll_ms: z.number().int().min(100).max(60_000).default(1_000)
+    })
+    .default({}),
   context: z
     .object({
       max_tokens: z.number().int().positive().max(1_000_000).default(24_000),

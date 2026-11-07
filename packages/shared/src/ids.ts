@@ -47,6 +47,8 @@ export type IdPrefix =
   | "mdl"
   | "route"
   | "jbr"
+  | "bg"
+  | "sch"
   | "goal";
 
 /**

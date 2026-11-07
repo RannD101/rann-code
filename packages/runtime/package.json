@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -19,6 +21,7 @@
   "dependencies": {
     "@rann/shared": "workspace:*",
     "@rann/storage": "workspace:*",
+    "croner": "^11.0.0",
     "zod": "^3.24.1"
   }
 }
