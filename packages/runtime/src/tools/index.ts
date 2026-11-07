@@ -26,6 +26,9 @@ import { applyFileTransaction, searchCode, type TransactionFile } from "../code-
 import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
+import type { BrowserActionInput } from "../browser.js";
+import { httpFetch, webSearch } from "../web.js";
+import { detectPackageManager, documentExtract, imageInfo, imageTransform, packageCommand, sqliteQuery, systemInfo } from "../system-tools.js";
 import type { SkillStore } from "../skills.js";
 
 export interface ToolContext {
@@ -65,6 +68,11 @@ export interface ToolContext {
     list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
     invoke(name: string, method: string, params: unknown, timeoutMs?: number): Promise<{ ok: boolean; output?: unknown; error?: string }>;
   };
+  browser?: {
+    perform(taskKey: string, input: BrowserActionInput, options?: { mutating?: boolean; persistent?: boolean }): Promise<Record<string, unknown>>;
+  };
+  scheduleTask?: (input: { text: string; priority?: number; delaySeconds?: number; idempotencyKey?: string }) => Promise<unknown>;
+  sendMessage?: (chatId: number, text: string, threadId?: number) => Promise<unknown>;
 }
 
 export interface ToolResult {
@@ -336,6 +344,70 @@ const skillSchema = z.object({
   dependencies: z.array(z.string().min(1).max(64)).max(20).optional(),
   version: z.string().min(1).max(40).optional(),
   reason: z.string().min(1).max(500).optional()
+});
+
+const browserSchema = z.object({
+  action: z.enum(["navigate", "click", "type", "scroll", "select", "screenshot", "extract", "download", "upload", "evaluate", "wait", "close"]),
+  url: z.string().url().optional(),
+  selector: z.string().max(2_000).optional(),
+  text: z.string().max(20_000).optional(),
+  value: z.string().max(20_000).optional(),
+  path: z.string().max(4_000).optional(),
+  script: z.string().max(8_000).optional(),
+  delta_y: z.number().int().min(-20_000).max(20_000).optional(),
+  timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
+  full_page: z.boolean().optional()
+});
+
+const webSearchSchema = z.object({
+  query: z.string().min(2).max(500),
+  limit: z.number().int().min(1).max(20).optional()
+});
+
+const httpRequestSchema = z.object({
+  url: z.string().url(),
+  method: z.enum(["GET", "HEAD", "POST"]).optional(),
+  headers: z.record(z.string()).optional(),
+  body: z.string().max(500_000).optional(),
+  max_chars: z.number().int().min(100).max(200_000).optional(),
+  ignore_robots: z.boolean().optional()
+});
+
+const databaseQuerySchema = z.object({
+  path: z.string().min(1),
+  sql: z.string().min(1).max(50_000),
+  params: z.array(z.union([z.string(), z.number(), z.null()])).max(100).optional()
+});
+
+const documentSchema = z.object({ path: z.string().min(1) });
+
+const imageInfoSchema = z.object({ path: z.string().min(1), ocr: z.boolean().optional() });
+
+const imageTransformSchema = z.object({
+  path: z.string().min(1),
+  output: z.string().min(1),
+  width: z.number().int().min(1).max(20_000).optional(),
+  height: z.number().int().min(1).max(20_000).optional(),
+  crop: z.string().regex(/^\d{1,5}x\d{1,5}[+-]\d{1,5}[+-]\d{1,5}$/).optional()
+});
+
+const packageSchema = z.object({
+  manager: z.enum(["npm", "pnpm", "yarn"]).optional(),
+  args: z.array(z.string().max(500)).min(1).max(30),
+  cwd: z.string().optional()
+});
+
+const scheduleTaskSchema = z.object({
+  text: z.string().min(1).max(100_000),
+  priority: z.number().int().min(0).max(1_000).optional(),
+  delay_seconds: z.number().int().min(0).max(2_592_000).optional(),
+  idempotency_key: z.string().min(8).max(200).optional()
+});
+
+const messagingSendSchema = z.object({
+  chat_id: z.number().int().positive(),
+  text: z.string().min(1).max(12_000),
+  thread_id: z.number().int().positive().optional()
 });
 
 const taskSchema = z.object({
@@ -1376,6 +1448,241 @@ export const tools: ToolDefinition[] = [
       const result = await ctx.plugins.invoke(record.name, record.method, record.params ?? {}, typeof record.timeout_ms === "number" ? record.timeout_ms : undefined);
       if (!result.ok) throw new RannError("E_TOOL_FAILED", result.error ?? `Plugin ${record.name} gagal`);
       return textResult(result.output);
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "browser",
+      description:
+        "Kendalikan browser Chromium untuk situs yang butuh JavaScript, login, atau interaksi. Aksi: navigate, click, type, scroll, select, screenshot, extract, download, upload, evaluate, wait, close. Context terpisah per sesi. Aksi yang mengubah data butuh izin.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["navigate", "click", "type", "scroll", "select", "screenshot", "extract", "download", "upload", "evaluate", "wait", "close"] },
+          url: { type: "string", description: "URL http atau https untuk navigate" },
+          selector: { type: "string", description: "Selector CSS untuk click, type, select, wait, download, upload" },
+          text: { type: "string", description: "Teks untuk type" },
+          value: { type: "string", description: "Nilai untuk select atau type" },
+          path: { type: "string", description: "Path berkas untuk download atau upload" },
+          script: { type: "string", description: "JavaScript sinkron untuk evaluate, tanpa jaringan dan tanpa import" },
+          delta_y: { type: "number", description: "Piksel scroll vertikal, negatif berarti naik" },
+          timeout_ms: { type: "number", description: "Batas waktu aksi, 1000 sampai 120000 ms" },
+          full_page: { type: "boolean", description: "Ambil screenshot seluruh halaman" }
+        },
+        required: ["action"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(browserSchema, args, "browser");
+      if (!ctx.browser) throw new RannError("E_TOOL_FAILED", "Browser tidak aktif di sesi ini");
+      const mutating = ["click", "type", "select", "upload", "evaluate"].includes(input.action);
+      if (mutating && !ctx.approved) {
+        throw new RannError("E_APPROVAL_REQUIRED", `Aksi browser ${input.action} mengubah halaman atau data dan butuh izin`, {
+          data: { action: input.action, selector: input.selector, url: input.url }
+        });
+      }
+      const taskKey = ctx.sessionId ?? "default";
+      const output = await ctx.browser.perform(taskKey, input, { mutating });
+      return textResult(output);
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "web_search",
+      description: "Cari di web dan kembalikan judul, URL, dan cuplikan terstruktur. Memakai Tavily atau Brave bila API key tersedia, jika tidak DuckDuckGo HTML.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Kata kunci pencarian" },
+          limit: { type: "integer", minimum: 1, maximum: 20, description: "Jumlah hasil, default 5" }
+        },
+        required: ["query"]
+      }
+    },
+    async run(args) {
+      const input = parse(webSearchSchema, args, "web_search");
+      return textResult(await webSearch(input.query, input.limit ?? 5));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "http_request",
+      description: "Ambil URL http atau https dan kembalikan teks, status, dan tipe konten. Menghormati robots.txt, memblokir alamat privat, dan membatasi ukuran 5 MB. POST butuh izin.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          method: { type: "string", enum: ["GET", "HEAD", "POST"] },
+          headers: { type: "object", additionalProperties: { type: "string" } },
+          body: { type: "string", description: "Body untuk POST, maksimal 500.000 karakter" },
+          max_chars: { type: "integer", minimum: 100, maximum: 200000 },
+          ignore_robots: { type: "boolean", description: "Lewati pemeriksaan robots hanya untuk sumber yang kamu miliki" }
+        },
+        required: ["url"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(httpRequestSchema, args, "http_request");
+      if (input.method === "POST" && !ctx.approved) throw new RannError("E_APPROVAL_REQUIRED", "HTTP POST butuh izin");
+      return textResult(await httpFetch(input));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "database_query",
+      description: "Query read-only ke database SQLite. Hanya SELECT, WITH, EXPLAIN, dan PRAGMA baca. Maksimal 500 baris.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path berkas SQLite" },
+          sql: { type: "string", description: "Query read-only" },
+          params: { type: "array", items: { type: ["string", "number", "null"] }, description: "Parameter posisional" }
+        },
+        required: ["path", "sql"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(databaseQuerySchema, args, "database_query");
+      return textResult(sqliteQuery(resolveInsideWorkspace(input.path, ctx), input.sql, input.params ?? []));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "document_extract",
+      description: "Ekstrak teks dari PDF, DOCX, XLSX, TXT, MD, CSV, atau JSON. PDF butuh pdftotext, DOCX dan XLSX butuh unzip.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string", description: "Path dokumen" } },
+        required: ["path"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(documentSchema, args, "document_extract");
+      return textResult(documentExtract(resolveInsideWorkspace(input.path, ctx)));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "image_info",
+      description: "Baca metadata gambar dan OCR bila RANN_OCR=1 serta tesseract tersedia.",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" }, ocr: { type: "boolean" } },
+        required: ["path"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(imageInfoSchema, args, "image_info");
+      return textResult(imageInfo(resolveInsideWorkspace(input.path, ctx), input.ocr === true));
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "image_transform",
+      description: "Ubah ukuran atau crop gambar dengan ImageMagick. Butuh izin karena menulis berkas baru.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          output: { type: "string" },
+          width: { type: "integer" },
+          height: { type: "integer" },
+          crop: { type: "string", description: "Format WxH+X+Y" }
+        },
+        required: ["path", "output"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(imageTransformSchema, args, "image_transform");
+      assertAllowed({ mode: ctx.permissionMode, tool: "image_transform", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const output = resolveInsideWorkspace(input.output, ctx);
+      return textResult(imageTransform(resolveInsideWorkspace(input.path, ctx), output, input));
+    }
+  },
+  {
+    risk: "exec",
+    spec: {
+      name: "package_run",
+      description: "Jalankan npm, pnpm, atau yarn dengan subperintah yang diizinkan: install, add, remove, test, run, ci, update, list, why, outdated, audit. Flag global dan registry ditolak.",
+      parameters: {
+        type: "object",
+        properties: {
+          manager: { type: "string", enum: ["npm", "pnpm", "yarn"] },
+          args: { type: "array", items: { type: "string" }, description: "Argumen setelah nama package manager" },
+          cwd: { type: "string" }
+        },
+        required: ["args"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(packageSchema, args, "package_run");
+      const cwd = resolveInsideWorkspace(input.cwd ?? ".", ctx);
+      const manager = input.manager ?? detectPackageManager(cwd);
+      assertAllowed({ mode: ctx.permissionMode, tool: "package_run", risk: "exec", command: `${manager} ${input.args.join(" ")}`, approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      return textResult(packageCommand(manager, input.args, cwd));
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "system_info",
+      description: "Baca informasi platform, CPU, memori, uptime, dan disk.",
+      parameters: { type: "object", properties: {} }
+    },
+    async run() {
+      return textResult(systemInfo());
+    }
+  },
+  {
+    risk: "exec",
+    spec: {
+      name: "schedule_task",
+      description: "Masukkan prompt ke antrean background dengan prioritas dan jeda opsional. Job bertahan setelah restart dan dijalankan worker.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "Prompt yang akan dijalankan" },
+          priority: { type: "integer", minimum: 0, maximum: 1000, description: "Prioritas, makin kecil makin cepat" },
+          delay_seconds: { type: "integer", minimum: 0, maximum: 2592000, description: "Jeda sebelum dijalankan" },
+          idempotency_key: { type: "string", description: "Kunci idempotensi minimal 8 karakter" }
+        },
+        required: ["text"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(scheduleTaskSchema, args, "schedule_task");
+      if (!ctx.scheduleTask) throw new RannError("E_TOOL_FAILED", "Penjadwalan tidak aktif di sesi ini");
+      assertAllowed({ mode: ctx.permissionMode, tool: "schedule_task", risk: "exec", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      return textResult(await ctx.scheduleTask(input));
+    }
+  },
+  {
+    risk: "exec",
+    spec: {
+      name: "messaging_send",
+      description: "Kirim pesan lewat adapter messaging yang sama dengan gateway, misalnya Telegram. Butuh izin.",
+      parameters: {
+        type: "object",
+        properties: {
+          chat_id: { type: "integer", description: "ID chat tujuan" },
+          text: { type: "string", description: "Isi pesan, maksimal 12.000 karakter" },
+          thread_id: { type: "integer", description: "ID topik opsional" }
+        },
+        required: ["chat_id", "text"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(messagingSendSchema, args, "messaging_send");
+      if (!ctx.sendMessage) throw new RannError("E_TOOL_FAILED", "Messaging tidak aktif di sesi ini");
+      assertAllowed({ mode: ctx.permissionMode, tool: "messaging_send", risk: "exec", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      return textResult(await ctx.sendMessage(input.chat_id, input.text, input.thread_id));
     }
   },
   {

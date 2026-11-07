@@ -16,7 +16,8 @@ export type RpcRequest = z.infer<typeof rpcRequestSchema>;
 export const rpcErrorSchema = z.object({
   code: z.string().min(1),
   message: z.string(),
-  data: z.record(z.unknown()).optional()
+  data: z.record(z.unknown()).optional(),
+  hint: z.string().optional()
 });
 
 export const rpcResponseSchema = z.union([

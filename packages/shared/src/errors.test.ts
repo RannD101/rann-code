@@ -21,7 +21,8 @@ describe("errors", () => {
     expect(toRpcError(error)).toEqual({
       code: "E_PROVIDER_RATE_LIMIT",
       message: "terlalu banyak",
-      data: { retry_after_ms: 1_000 }
+      data: { retry_after_ms: 1_000 },
+      hint: "Tunggu atau ganti provider lewat rann provider use."
     });
   });
 

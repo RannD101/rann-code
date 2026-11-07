@@ -16,6 +16,7 @@ export const ERROR_CODES = [
   "E_CONTEXT_OVERFLOW",
   "E_STREAM_TRUNCATED",
   "E_PLAN_INVALID",
+  "E_PLAN_BLOCKED",
   "E_PLAN_REQUIRED_APPROVAL",
   "E_VERIFICATION_FAILED",
   "E_TOOL_TIMEOUT",
@@ -23,6 +24,7 @@ export const ERROR_CODES = [
   "E_FILE_CHANGED",
   "E_LEASE_CONFLICT",
   "E_GOAL_INCOMPLETE",
+  "E_NO_PROGRESS",
   "E_TOOL_NOT_FOUND",
   "E_TOOL_INVALID_ARGS",
   "E_BUDGET_EXHAUSTED",
@@ -61,6 +63,7 @@ const EXIT_CODES: Record<ErrorCode, number> = {
   E_CONTEXT_OVERFLOW: 4,
   E_STREAM_TRUNCATED: 7,
   E_PLAN_INVALID: 4,
+  E_PLAN_BLOCKED: 9,
   E_PLAN_REQUIRED_APPROVAL: 5,
   E_VERIFICATION_FAILED: 1,
   E_TOOL_TIMEOUT: 7,
@@ -68,6 +71,7 @@ const EXIT_CODES: Record<ErrorCode, number> = {
   E_FILE_CHANGED: 1,
   E_LEASE_CONFLICT: 9,
   E_GOAL_INCOMPLETE: 9,
+  E_NO_PROGRESS: 7,
   E_TOOL_NOT_FOUND: 2,
   E_TOOL_INVALID_ARGS: 2,
   E_BUDGET_EXHAUSTED: 4,
@@ -141,12 +145,36 @@ export interface RpcErrorShape {
   code: ErrorCode;
   message: string;
   data?: Record<string, unknown>;
+  hint?: string;
 }
 
-export function toRpcError(value: unknown): RpcErrorShape {
+const HINTS: Partial<Record<ErrorCode, string>> = {
+  E_PROVIDER_AUTH: "Periksa API key provider dengan rann provider test, lalu login ulang bila perlu.",
+  E_PROVIDER_RATE_LIMIT: "Tunggu atau ganti provider lewat rann provider use.",
+  E_PROVIDER_UNAVAILABLE: "Cek koneksi dan endpoint provider; circuit breaker terbuka sementara.",
+  E_CONTEXT_OVERFLOW: "Kurangi lampiran atau jalankan /compact, lalu ulangi.",
+  E_TOOL_TIMEOUT: "Naikkan timeout tool atau pecah pekerjaan menjadi langkah lebih kecil.",
+  E_FILE_CHANGED: "Baca ulang berkas sebelum menulis karena isinya berubah sejak dibaca.",
+  E_LEASE_CONFLICT: "Sesi lain sedang memegang path ini; tunggu atau batalkan sesi tersebut.",
+  E_PLAN_REQUIRED_APPROVAL: "Setujui rencana lewat dialog izin atau jalankan dengan mode yang sesuai.",
+  E_BUDGET_EXHAUSTED: "Naikkan budget atau ganti model yang lebih murah.",
+  E_APPROVAL_REQUIRED: "Setujui aksi di terminal, atau jalankan ulang dengan izin yang sesuai.",
+  E_DAEMON_DOWN: "Jalankan rann doctor lalu coba lagi.",
+  E_NO_PROGRESS: "Ubah strategi atau parameter, jangan ulangi perintah yang sama.",
+  E_CONFIG_INVALID: "Periksa rann config list dan betulkan kunci yang dilaporkan."
+};
+
+export function hintFor(code: ErrorCode): string | undefined {
+  return HINTS[code];
+}
+
+export function toRpcError(value: unknown, traceId?: string): RpcErrorShape {
   const err = toRannError(value);
+  const data = { ...(err.data ?? {}), ...(traceId ? { trace_id: traceId } : {}) };
   const shape: RpcErrorShape = { code: err.code, message: err.message };
-  if (err.data) shape.data = err.data;
+  if (Object.keys(data).length > 0) shape.data = data;
+  const hint = hintFor(err.code);
+  if (hint) shape.hint = hint;
   return shape;
 }
 

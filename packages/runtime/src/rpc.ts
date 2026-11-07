@@ -84,6 +84,7 @@ import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./mo
 import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
 import { HookRunner, type HookEvent } from "./hooks.js";
+import { BrowserManager } from "./browser.js";
 import { PluginManager } from "./plugins.js";
 import { SkillStore } from "./skills.js";
 import { McpManager } from "./mcp.js";
@@ -139,6 +140,8 @@ export class RpcServer {
   private readonly activeTurns = new Map<string, AbortController>();
   private readonly agentControllers = new Map<string, AbortController>();
   private readonly backgroundAgents = new Set<Promise<unknown>>();
+  private readonly subagentSlots = new Map<string, { running: number; waiters: Array<() => void> }>();
+  private readonly browser: BrowserManager;
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly sessionApprovals = new Map<string, Set<string>>();
   private readonly sessionApprovalPatterns = new Map<string, Set<string>>();
@@ -168,6 +171,10 @@ export class RpcServer {
       ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
     });
     this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
+    this.browser = new BrowserManager(process.cwd(), {
+      ...options.config.config.browser,
+      artifacts_dir: join(options.layout.artifactsDir, "browser")
+    }, options.layout.profileDir);
     this.background = new BackgroundQueue({
       db: this.db,
       concurrency: options.config.config.background.concurrency,
@@ -326,7 +333,7 @@ export class RpcServer {
       const response = JSON.stringify({ jsonrpc: "2.0", id, result });
       if (!socket.destroyed) socket.write(response + "\n");
     } catch (error) {
-      const rpcError = toRpcError(error);
+      const rpcError = toRpcError(error, newId("req"));
       if (!socket.destroyed) socket.write(JSON.stringify({ jsonrpc: "2.0", id, error: rpcError }) + "\n");
     }
   }
@@ -1348,7 +1355,26 @@ export class RpcServer {
             })
           }
         : {}),
-      ...(config.plugins.enabled ? { plugins: this.pluginManager(workspaceRoot) } : {})
+      ...(config.plugins.enabled ? { plugins: this.pluginManager(workspaceRoot) } : {}),
+      scheduleTask: async (input) => {
+        const job = enqueueJob(this.db, {
+          kind: "prompt",
+          priority: input.priority ?? 100,
+          ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+          ...(input.delaySeconds ? { nextRunAt: Date.now() + input.delaySeconds * 1_000 } : {}),
+          payload: { text: input.text, sessionId }
+        });
+        appendAudit(this.db, {
+          actor: "agent",
+          action: "background.enqueue",
+          resource: job.id,
+          decision: "ok",
+          metadata: { kind: "prompt", source: "tool", session_id: sessionId }
+        });
+        this.broadcastJob("queued", job);
+        return { job_id: job.id, status: job.status, run_at: job.next_run_at };
+      },
+      sendMessage: async (chatId, text, threadId) => this.messaging.send(chatId, text, threadId)
     };
 
     const memory = config.memory.enabled
@@ -1431,6 +1457,7 @@ export class RpcServer {
       workspaceRoot,
       ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
       config: { ...agentConfig, instructionsHome: this.options.layout.profileDir },
+      browser: this.browser,
       context: {
         maxTokens: config.context.max_tokens,
         keepRecent: config.context.keep_recent,
@@ -1517,6 +1544,49 @@ export class RpcServer {
     const entry = providerFor(config, providerName);
     const model = requested && requested !== "auto" ? requested : resolveModel(entry, undefined);
     return { providerName, model };
+  }
+
+  private async acquireSubagentSlot(key: string, limit: number, signal?: AbortSignal): Promise<() => void> {
+    const slot = this.subagentSlots.get(key) ?? { running: 0, waiters: [] };
+    this.subagentSlots.set(key, slot);
+    if (slot.running < limit) {
+      slot.running += 1;
+      return this.releaseSubagentSlot(key);
+    }
+    await new Promise<void>((resolveSlot, rejectSlot) => {
+      const waiter = (): void => {
+        cleanup();
+        slot.running += 1;
+        resolveSlot();
+      };
+      const onAbort = (): void => {
+        cleanup();
+        slot.waiters = slot.waiters.filter((item) => item !== waiter);
+        rejectSlot(new RannError("E_CANCELLED", "Menunggu slot subagent dibatalkan"));
+      };
+      const cleanup = (): void => signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      slot.waiters.push(waiter);
+    });
+    return this.releaseSubagentSlot(key);
+  }
+
+  private releaseSubagentSlot(key: string): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const slot = this.subagentSlots.get(key);
+      if (!slot) return;
+      slot.running = Math.max(0, slot.running - 1);
+      const next = slot.waiters.shift();
+      if (next) next();
+      else if (slot.running === 0) this.subagentSlots.delete(key);
+    };
   }
 
   private async runSubagent(options: {
@@ -1670,6 +1740,7 @@ export class RpcServer {
       ...(config.plugins.enabled ? { plugins: this.pluginManager(options.projectPath) } : {})
     };
 
+    const releaseSlot = await this.acquireSubagentSlot(`${target.providerName}/${target.model}`, config.subagents.max_concurrent, controller.signal);
     try {
       const result = await runTurn({
         db: this.db,
@@ -1681,6 +1752,7 @@ export class RpcServer {
         workspaceRoot: options.projectPath,
         ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
         config: childConfig,
+        browser: this.browser,
         context: {
           maxTokens: config.context.max_tokens,
           keepRecent: config.context.keep_recent,
@@ -1737,6 +1809,7 @@ export class RpcServer {
       options.signal.removeEventListener("abort", relayAbort);
       this.agentControllers.delete(agent.id);
       releaseAgentLeases(this.db, agent.id);
+      releaseSlot();
     }
   }
 
@@ -1890,6 +1963,7 @@ export class RpcServer {
     this.sessionApprovals.clear();
     this.sessionApprovalPatterns.clear();
     await this.mcp.close();
+    await this.browser.closeAll();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     for (const socket of this.sockets) socket.destroy();
     this.db.close();

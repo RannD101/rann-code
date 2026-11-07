@@ -69,7 +69,9 @@ export class RpcClient {
     this.pending.delete(response.id);
     clearTimeout(pending.timer);
     if ("error" in response) {
-      pending.reject(new RannError(response.error.code as never, response.error.message, { data: response.error.data }));
+      pending.reject(new RannError(response.error.code as never, response.error.message, {
+        data: { ...(response.error.data ?? {}), ...(response.error.hint ? { hint: response.error.hint } : {}) }
+      }));
     } else {
       pending.resolve(response.result);
     }

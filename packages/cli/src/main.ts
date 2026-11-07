@@ -3323,5 +3323,10 @@ main(process.argv.slice(2))
   .catch((error: unknown) => {
     const err = toRannError(error);
     printErr(`${ui.red("rann")}: ${err.code}: ${err.message}`);
+    const hint = typeof err.data?.hint === "string" ? err.data.hint : undefined;
+    if (hint) printErr(ui.dim(`saran: ${hint}`));
+    const trace = typeof err.data?.trace_id === "string" ? err.data.trace_id : undefined;
+    if (trace) printErr(ui.dim(`trace: ${trace}`));
+    if (process.argv.includes("--debug") && error instanceof Error && error.stack) printErr(ui.dim(error.stack));
     process.exitCode = err.exitCode;
   });

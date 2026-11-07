@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 import type { Db } from "@rann/storage";
 import {
@@ -59,6 +60,8 @@ export function persistPlan(
       priority: planTask.risk === "high" ? 3 : planTask.risk === "medium" ? 2 : 1,
       metadata: {
         planTaskId: planTask.id,
+        title: planTask.title,
+        description: planTask.description ?? "",
         agent: planTask.agent,
         files: planTask.files,
         risk: planTask.risk,
@@ -95,6 +98,118 @@ export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.u
   if (!id) return;
   updateTaskStatus(db, id, "running");
   publish("task.update", { task_id: id, plan_task_id: first.id, status: "running", title: first.title });
+}
+
+
+export interface PlanTaskView {
+  plan_task_id: string;
+  task_id: string;
+  title: string;
+  description: string;
+  acceptance: string;
+  agent: string;
+  risk: string;
+  index: number;
+  total: number;
+}
+
+export function currentPlanTask(db: Db, plan: ActivePlan): PlanTaskView | undefined {
+  const rows = db
+    .prepare("SELECT id, status, metadata_json FROM tasks WHERE plan_id = ? ORDER BY created_at")
+    .all(plan.id) as { id: string; status: string; metadata_json: string }[];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (row.status !== "running") continue;
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    } catch {
+      meta = {};
+    }
+    return {
+      plan_task_id: String(meta.planTaskId ?? ""),
+      task_id: row.id,
+      title: String(meta.title ?? plan.draft.tasks[index]?.title ?? "task"),
+      description: String(meta.description ?? plan.draft.tasks[index]?.description ?? ""),
+      acceptance: String(meta.acceptance ?? plan.draft.tasks[index]?.acceptance ?? ""),
+      agent: String(meta.agent ?? plan.draft.tasks[index]?.agent ?? "coder"),
+      risk: String(meta.risk ?? plan.draft.tasks[index]?.risk ?? "low"),
+      index: index + 1,
+      total: rows.length
+    };
+  }
+  return undefined;
+}
+
+export function advancePlanTask(
+  db: Db,
+  plan: ActivePlan,
+  publish: (type: "task.update", data: Record<string, unknown>) => void
+): { next?: PlanTaskView; remaining: number; allDone: boolean } {
+  const rows = db
+    .prepare("SELECT id, status, metadata_json FROM tasks WHERE plan_id = ? ORDER BY created_at")
+    .all(plan.id) as { id: string; status: string; metadata_json: string }[];
+  const done = new Set<string>();
+  for (const row of rows) {
+    if (row.status === "done") {
+      try {
+        done.add(String((JSON.parse(row.metadata_json) as { planTaskId?: unknown }).planTaskId ?? ""));
+      } catch {
+        // metadata rusak tidak menghalangi task lain
+      }
+    }
+  }
+  const running = rows.find((row) => row.status === "running");
+  if (running) {
+    updateTaskStatus(db, running.id, "done");
+    running.status = "done";
+    publish("task.update", { task_id: running.id, status: "done" });
+    try {
+      done.add(String((JSON.parse(running.metadata_json) as { planTaskId?: unknown }).planTaskId ?? ""));
+    } catch {
+      // abaikan
+    }
+  }
+  for (const row of rows) {
+    if (row.status !== "queued") continue;
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    } catch {
+      meta = {};
+    }
+    const deps = Array.isArray(meta.dependsOn) ? (meta.dependsOn as string[]) : [];
+    if (!deps.every((dep) => done.has(dep))) continue;
+    updateTaskStatus(db, row.id, "running");
+    publish("task.update", { task_id: row.id, status: "running", title: String(meta.title ?? "") });
+    const total = rows.length;
+    const index = rows.findIndex((item) => item.id === row.id) + 1;
+    return {
+      next: {
+        plan_task_id: String(meta.planTaskId ?? ""),
+        task_id: row.id,
+        title: String(meta.title ?? ""),
+        description: String(meta.description ?? ""),
+        acceptance: String(meta.acceptance ?? ""),
+        agent: String(meta.agent ?? "coder"),
+        risk: String(meta.risk ?? "low"),
+        index,
+        total
+      },
+      remaining: rows.filter((item) => item.status !== "done").length,
+      allDone: false
+    };
+  }
+  const remaining = rows.filter((item) => item.status !== "done").length;
+  if (remaining > 0) {
+    for (const row of rows) {
+      if (row.status === "queued") {
+        updateTaskStatus(db, row.id, "blocked");
+        publish("task.update", { task_id: row.id, status: "blocked" });
+      }
+    }
+  }
+  return { remaining, allDone: remaining === 0 };
 }
 
 export function revisePlan(
@@ -172,6 +287,8 @@ export function revisePlan(
       priority: planTask.risk === "high" ? 3 : planTask.risk === "medium" ? 2 : 1,
       metadata: {
         planTaskId: planTask.id,
+        title: planTask.title,
+        description: planTask.description ?? "",
         agent: planTask.agent,
         files: planTask.files,
         risk: planTask.risk,
@@ -278,6 +395,105 @@ export function verifyPlan(
         (tool.exit_code ?? 0) === 0
     );
     if (!match) gaps.push(`${criterion.id}: perintah verifikasi belum berhasil: ${command}`);
+  }
+  return { passed: gaps.length === 0, gaps, checked };
+}
+
+
+interface LiveVerifyOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
+}
+
+function runVerificationCommand(command: string, cwd: string, options: LiveVerifyOptions): Promise<{ ok: boolean; code: number | null; output: string; timedOut: boolean }> {
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  return new Promise((resolvePromise) => {
+    const shell = process.platform === "win32" ? "cmd" : "sh";
+    const args = process.platform === "win32" ? ["/c", command] : ["-c", command];
+    const child = spawn(shell, args, {
+      cwd,
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...options.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+    let output = "";
+    let settled = false;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    const abort = (): void => {
+      child.kill("SIGKILL");
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    const collect = (chunk: Buffer): void => {
+      if (output.length < 200_000) output += chunk.toString("utf8");
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ ok: false, code: null, output: error.message, timedOut: false });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+      resolvePromise({ ok: code === 0 && !timedOut, code, output: output.slice(0, 20_000), timedOut });
+    });
+  });
+}
+
+export async function verifyPlanLive(
+  db: Db,
+  turnId: string,
+  plan: PlanDraft,
+  workspaceRoot: string,
+  options: LiveVerifyOptions = {}
+): Promise<VerificationResult> {
+  const gaps: string[] = [];
+  let checked = 0;
+  const changes = db
+    .prepare("SELECT path, diff_text FROM file_changes WHERE turn_id = ?")
+    .all(turnId) as { path: string; diff_text: string | null }[];
+  for (const criterion of plan.criteria) {
+    if (criterion.type === "manual") continue;
+    if (criterion.type === "file") {
+      if (!criterion.path) {
+        gaps.push(`${criterion.id}: kriteria file tanpa path`);
+        continue;
+      }
+      const target = isAbsolute(criterion.path) ? criterion.path : join(workspaceRoot, criterion.path);
+      checked += 1;
+      if (!existsSync(target)) gaps.push(`${criterion.id}: file tidak ada: ${criterion.path}`);
+      continue;
+    }
+    if (criterion.type === "diff") {
+      checked += 1;
+      if (!criterion.path) {
+        gaps.push(`${criterion.id}: kriteria diff tanpa path`);
+        continue;
+      }
+      const match = changes.find((change) => change.path === criterion.path || change.path.endsWith(`/${criterion.path}`));
+      if (!match || !match.diff_text) gaps.push(`${criterion.id}: belum ada diff untuk ${criterion.path}`);
+      continue;
+    }
+    const command = criterion.command;
+    if (!command) {
+      gaps.push(`${criterion.id}: kriteria ${criterion.type} tanpa command`);
+      continue;
+    }
+    checked += 1;
+    const result = await runVerificationCommand(command, workspaceRoot, options);
+    if (!result.ok) {
+      const reason = result.timedOut ? `timeout ${options.timeoutMs ?? 120_000} ms` : `exit ${result.code}`;
+      gaps.push(`${criterion.id}: ${command} gagal (${reason}): ${result.output.replace(/\s+/g, " ").slice(0, 300)}`);
+    }
   }
   return { passed: gaps.length === 0, gaps, checked };
 }

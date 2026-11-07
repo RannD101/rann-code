@@ -25,6 +25,7 @@ import { createFileCheckpoint } from "./checkpoint-files.js";
 import { estimateTokens } from "./providers/types.js";
 import { executeTool, toolSpecs } from "./tools/index.js";
 import type { HookEvent, HookRunner } from "./hooks.js";
+import type { BrowserManager } from "./browser.js";
 import { loadInstructions } from "./instructions.js";
 import { attachmentText, type AttachmentRef } from "./attachments.js";
 import type { MemoryService } from "./memory.js";
@@ -32,11 +33,13 @@ import type { SkillStore } from "./skills.js";
 import { classifyTask, generatePlan, needsPlan, planToMarkdown, workspaceBrief, type TaskClass } from "./planner.js";
 import {
   finishPlan,
+  advancePlanTask,
+  currentPlanTask,
   persistPlan,
   planVerificationGapPrompt,
   revisePlan,
   startFirstTask,
-  verifyPlan,
+  verifyPlanLive,
   type ActivePlan
 } from "./plan-runtime.js";
 
@@ -94,6 +97,8 @@ export interface AgentConfig {
   preApprovedPatterns?: Set<string>;
   requestApproval?: (request: { tool: string; args: unknown }) => Promise<ApprovalDecision>;
   hooks?: HookRunner;
+  scheduleTask?: (input: { text: string; priority?: number; delaySeconds?: number; idempotencyKey?: string }) => Promise<unknown>;
+  sendMessage?: (chatId: number, text: string, threadId?: number) => Promise<unknown>;
   plugins?: {
     list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
     invoke(name: string, method: string, params: unknown, timeoutMs?: number): Promise<{ ok: boolean; output?: unknown; error?: string }>;
@@ -115,6 +120,7 @@ export interface RunTurnOptions {
   budget?: BudgetOptions;
   memory?: MemoryService;
   skills?: SkillStore;
+  browser?: BrowserManager;
   mcp?: McpToolset;
   delegate?: (input: DelegateInput) => Promise<unknown>;
   signal?: AbortSignal;
@@ -337,6 +343,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let summaryPersisted = false;
   let lastCompactionKey = "";
   let prematureCount = 0;
+  let lastToolSignature = "";
+  let repeatedToolCalls = 0;
   let fileCheckpointId: string | undefined;
   let usedProviderName = provider.name;
   let usedModel = model;
@@ -711,8 +719,43 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       }
 
       if (calls.length === 0) {
+        if (activePlan && !options.planOnly) {
+          const current = currentPlanTask(db, activePlan);
+          if (current) {
+            const advanced = advancePlanTask(db, activePlan, (type, data) => publish(type, data));
+            if (advanced.next) {
+              publish("plan.update", {
+                plan_id: activePlan.id,
+                status: "active",
+                task_id: advanced.next.task_id,
+                task_index: advanced.next.index,
+                tasks: advanced.next.total
+              });
+              addMessage(db, {
+                sessionId: session.id,
+                turnId,
+                role: "system",
+                content: [
+                  `Lanjut ke task ${advanced.next.index}/${advanced.next.total}: ${advanced.next.title}`,
+                  advanced.next.description ? `Detail: ${advanced.next.description}` : "",
+                  advanced.next.acceptance ? `Kriteria diterima: ${advanced.next.acceptance}` : "",
+                  "Kerjakan task ini sekarang. Jangan mengulang pekerjaan task sebelumnya."
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+              });
+              continue;
+            }
+            if (!advanced.allDone) {
+              publish("plan.update", { plan_id: activePlan.id, status: "blocked", remaining: advanced.remaining });
+              finalText = `${text}\n\nRencana terhenti: ${advanced.remaining} task tidak bisa dijalankan karena dependensi tidak terpenuhi.`;
+              finalize("failed", { code: "E_PLAN_BLOCKED", message: "Dependensi task tidak terpenuhi" });
+              throw new RannError("E_PLAN_BLOCKED", "Dependensi task tidak terpenuhi");
+            }
+          }
+        }
         const verification = activePlan
-          ? verifyPlan(db, turnId, activePlan.draft, workspaceRoot)
+          ? await verifyPlanLive(db, turnId, activePlan.draft, workspaceRoot, { signal, env: { RANN_VERIFY: "1" } })
           : undefined;
         if (verification && !verification.passed && prematureCount < 2) {
           prematureCount += 1;
@@ -904,6 +947,22 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         if (preHook.modified !== undefined) {
           Object.assign(call, { args: preHook.modified });
         }
+        const signature = `${call.name}:${JSON.stringify(redactSecrets(call.args))}`;
+        if (signature === lastToolSignature) repeatedToolCalls += 1;
+        else {
+          lastToolSignature = signature;
+          repeatedToolCalls = 1;
+        }
+        const seen = repeatedToolCalls;
+        if (seen > 3) {
+          publish("error", {
+            error_code: "E_NO_PROGRESS",
+            message: `Tool ${call.name} dipanggil dengan argumen sama ${seen} kali tanpa hasil baru`,
+            analysis: analyzeFailure(new RannError("E_NO_PROGRESS", "Tidak ada kemajuan"), { provider: provider.name, model, step: steps, lastTool: call.name })
+          });
+          finishError("E_NO_PROGRESS", `Tidak ada kemajuan: ${call.name} diulang dengan argumen yang sama`);
+          continue;
+        }
         try {
           let result: Awaited<ReturnType<typeof executeTool>>;
           const pattern = approvalPattern(call.name, call.args);
@@ -921,6 +980,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             shellTimeoutMs: config.shellTimeoutMs,
             memory: options.memory,
             skills: options.skills,
+            ...(options.browser ? { browser: options.browser } : {}),
+            ...(config.scheduleTask ? { scheduleTask: config.scheduleTask } : {}),
+            ...(config.sendMessage ? { sendMessage: config.sendMessage } : {}),
             delegate,
             planRevise: async (input: {
               reason: string;
@@ -997,8 +1059,24 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             db: options.db,
             ...(options.checkpointsDir ? { checkpointsDir: options.checkpointsDir } : {})
           });
+          const retryable = ["fs_read", "fs_list", "fs_stat", "fs_glob", "git_read", "repo_map", "search_code", "project_check"].includes(call.name);
+          const runTool = async (approved: boolean): Promise<Awaited<ReturnType<typeof executeTool>>> => {
+            const attempts = retryable ? 3 : 1;
+            let lastError: unknown;
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+              try {
+                return await executeTool(call.name, call.args, toolContext(approved));
+              } catch (error) {
+                lastError = error;
+                const code = toRannError(error).code;
+                if (!retryable || (code !== "E_TOOL_TIMEOUT" && code !== "E_CONFLICT" && code !== "E_DB") || attempt === attempts) throw error;
+                await new Promise((resolveDelay) => setTimeout(resolveDelay, 250 * attempt));
+              }
+            }
+            throw lastError;
+          };
           try {
-            result = await executeTool(call.name, call.args, toolContext(preApproved));
+            result = await runTool(preApproved);
           } catch (error) {
             const err = toRannError(error);
             if (err.code !== "E_APPROVAL_REQUIRED" || !config.requestApproval) throw err;
@@ -1011,7 +1089,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               if (pattern !== null && config.preApprovedPatterns) config.preApprovedPatterns.add(pattern);
               else config.preApprovedTools?.add(call.name);
             }
-            result = await executeTool(call.name, call.args, toolContext(true));
+            result = await runTool(true);
           }
           await runHook("PostToolUse", { tool: call.name, args: redactSecrets(call.args), result: redactSecrets(result.output) });
           finishOk(result);

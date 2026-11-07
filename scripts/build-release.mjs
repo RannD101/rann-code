@@ -36,6 +36,7 @@ const common = [
   "--external:smol-toml",
   "--external:@noble/ciphers/chacha.js",
   "--external:yaml",
+  "--external:playwright",
   "--legal-comments=none"
 ];
 

@@ -77,6 +77,7 @@ export const configSchema = z.object({
       max_per_turn: z.number().int().positive().max(10).default(3),
       max_depth: z.number().int().min(1).max(3).default(2),
       max_children: z.number().int().min(1).max(16).default(8),
+      max_concurrent: z.number().int().min(1).max(16).default(4),
       heartbeat_ms: z.number().int().min(1_000).max(60_000).default(5_000),
       permission_mode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).default("read-only"),
       model: z.string().min(1).optional()
@@ -151,6 +152,16 @@ export const configSchema = z.object({
     })
     .default({}),
   logging: z.object({ level: z.enum(["debug", "info", "warn", "error", "silent"]).default("info") }).default({}),
+  browser: z
+    .object({
+      enabled: z.boolean().default(true),
+      headless: z.boolean().default(true),
+      timeout_ms: z.number().int().min(1_000).max(120_000).default(30_000),
+      blocked_domains: z.array(z.string()).default([]),
+      max_text: z.number().int().min(1_000).max(1_000_000).default(100_000),
+      user_agent: z.string().optional()
+    })
+    .default({}),
   gateway: z
     .object({
       enabled: z.boolean().default(false),
