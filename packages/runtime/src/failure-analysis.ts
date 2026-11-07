@@ -14,12 +14,40 @@ export type FailureCategory =
   | "cancelled"
   | "unknown";
 
+export type FailureClass = "transient" | "permanent" | "conflict" | "budget" | "policy";
+
 export interface FailureAnalysis {
   category: FailureCategory;
+  class: FailureClass;
   retryable: boolean;
   cause: string;
   action: string;
+  recovery: Array<"retry" | "skip" | "replan" | "abort">;
 }
+
+const RECOVERY: Record<FailureClass, Array<"retry" | "skip" | "replan" | "abort">> = {
+  transient: ["retry", "skip", "abort"],
+  permanent: ["abort"],
+  conflict: ["replan", "skip", "abort"],
+  budget: ["abort"],
+  policy: ["abort"]
+};
+
+const CLASS_BY_CODE: Record<string, FailureClass> = {
+  E_PROVIDER_UNAVAILABLE: "transient",
+  E_PROVIDER_RATE_LIMIT: "transient",
+  E_TIMEOUT: "transient",
+  E_STREAM_TRUNCATED: "transient",
+  E_CONFLICT: "conflict",
+  E_PLAN_BLOCKED: "conflict",
+  E_LEASE_CONFLICT: "conflict",
+  E_BUDGET_EXHAUSTED: "budget",
+  E_PERMISSION: "policy",
+  E_APPROVAL_REQUIRED: "policy",
+  E_SANDBOX: "policy",
+  E_PLAN_REQUIRED_APPROVAL: "policy",
+  E_CANCELLED: "policy"
+};
 
 export interface FailureContext {
   provider?: string;
@@ -28,7 +56,7 @@ export interface FailureContext {
   lastTool?: string;
 }
 
-const TABLE: Record<string, Omit<FailureAnalysis, "cause">> = {
+const TABLE: Record<string, Omit<FailureAnalysis, "cause" | "class" | "recovery">> = {
   E_PROVIDER_AUTH: {
     category: "auth",
     retryable: false,
@@ -110,5 +138,6 @@ export function analyzeFailure(error: unknown, context: FailureContext = {}): Fa
     context.lastTool ? `tool terakhir ${context.lastTool}` : undefined
   ].filter((item): item is string => item !== undefined);
   const cause = where.length > 0 ? `${err.message} (${where.join(", ")})` : err.message;
-  return { ...base, cause };
+  const failureClass = CLASS_BY_CODE[err.code] ?? (base.retryable ? "transient" : "permanent");
+  return { ...base, class: failureClass, cause, recovery: RECOVERY[failureClass] };
 }

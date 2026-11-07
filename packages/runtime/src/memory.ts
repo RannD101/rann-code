@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { newId } from "@rann/shared";
 import { join, relative } from "node:path";
 import type { Db, MemoryEntry, MemoryScope } from "@rann/storage";
 import { addMemory, countMemories, listMemories, removeMemory, searchMemories, updateMemory } from "@rann/storage";
@@ -71,6 +72,10 @@ function belongsToAgent(entry: MemoryEntry, profile: string | undefined): boolea
   return scoped.length === 0 || scoped.includes(agentTag(profile));
 }
 
+function agentOf(entry: MemoryEntry): string | undefined {
+  return entry.tags.find((tag) => tag.startsWith("agent:"))?.slice(6);
+}
+
 export class MemoryService {
   constructor(
     private readonly db: Db,
@@ -117,8 +122,36 @@ export class MemoryService {
 
   private visible(): MemoryEntry[] {
     return this.list("all", 500).filter(
-      (entry) => !isExpired(entry) && entry.status === "active" && belongsToAgent(entry, this.options.agentProfile)
+      (entry) => !isExpired(entry) && entry.status === "active" && this.canRead(entry)
     );
+  }
+
+  private canRead(entry: MemoryEntry): boolean {
+    if (belongsToAgent(entry, this.options.agentProfile)) return true;
+    if (!this.options.agentProfile) return true;
+    const owner = agentOf(entry);
+    if (!owner) return true;
+    const grant = this.db.prepare(
+      "SELECT allowed FROM agent_memory_access WHERE agent = ? AND memory_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).get(this.options.agentProfile, entry.id) as { allowed: number } | undefined;
+    return grant?.allowed === 1;
+  }
+
+  /** Izinkan agen lain membaca memori milik agen tertentu. */
+  allowAgent(memoryId: string, agent: string, allowed = true): void {
+    this.db.prepare("INSERT INTO agent_memory_access (id, profile_id, agent, memory_id, allowed, created_at) VALUES (?, (SELECT profile_id FROM memory_entries WHERE id = ?), ?, ?, ?, ?)").run(
+      newId("pacc"), memoryId, agent, memoryId, allowed ? 1 : 0, Date.now()
+    );
+  }
+
+  /** Hapus memori agen yang tidak pernah terpakai setelah jangka waktu tertentu. */
+  pruneAgentMemory(days = 30): number {
+    const cutoff = Date.now() - days * 86_400_000;
+    const rows = this.db.prepare(
+      `SELECT id FROM memory_entries WHERE created_at < ? AND tags LIKE '%agent:%' AND id NOT IN (SELECT memory_id FROM memory_events WHERE action = 'retrieved')`
+    ).all(cutoff) as Array<{ id: string }>;
+    for (const row of rows) this.db.prepare("UPDATE memory_entries SET status = 'deleted', updated_at = ? WHERE id = ?").run(Date.now(), row.id);
+    return rows.length;
   }
 
   list(scope: MemoryScope | "all" = "all", limit = 50): MemoryEntry[] {
@@ -142,11 +175,18 @@ export class MemoryService {
     fuse(lexical, 1);
     fuse(tagged, 0.8);
     fuse(recent, 0.3);
-    return [...scores.entries()]
+    const result = [...scores.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, limit)
       .map(([id]) => byId.get(id))
       .filter((entry): entry is MemoryEntry => entry !== undefined);
+    for (const entry of result) {
+      this.db.prepare("UPDATE memory_entries SET last_used_at = ?, updated_at = updated_at WHERE id = ?").run(Date.now(), entry.id);
+      this.db.prepare("INSERT INTO memory_events (id, memory_id, action, actor, created_at) VALUES (?, ?, 'retrieved', ?, ?)").run(
+        newId("mev"), entry.id, this.options.agentProfile ?? "user", Date.now()
+      );
+    }
+    return result;
   }
 
   /** Ambil kandidat memori eksplisit dari ucapan user. Deterministik, tanpa model. */
@@ -278,6 +318,41 @@ export class MemoryService {
         importance: entry.importance
       }))
     };
+  }
+
+  exportJsonl(): string {
+    return this.visible()
+      .map((entry) => JSON.stringify({
+        scope: entry.scope,
+        kind: entry.kind,
+        title: entry.title,
+        text: entry.text,
+        tags: entry.tags.filter((tag) => !tag.startsWith("agent:")),
+        source: entry.source,
+        confidence: entry.confidence,
+        importance: entry.importance
+      }))
+      .join("\n") + "\n";
+  }
+
+  importJsonl(text: string, options: { replace?: boolean; strategy?: "skip" | "overwrite" | "merge" } = {}): { imported: number; skipped: number; merged: number } {
+    const entries: MemoryExport["entries"] = [];
+    let skipped = 0;
+    for (const line of text.split(/\r?\n/)) {
+      if (line.trim().length === 0) continue;
+      try {
+        const parsed = JSON.parse(line) as MemoryExport["entries"][number];
+        if (typeof parsed.text !== "string" || parsed.text.trim().length < 3) {
+          skipped += 1;
+          continue;
+        }
+        entries.push(parsed);
+      } catch {
+        skipped += 1;
+      }
+    }
+    const result = this.importAll({ version: 1, exported_at: Date.now(), entries }, { ...(options.replace ? { replace: true } : {}) });
+    return { imported: result.imported, skipped: result.skipped + skipped, merged: 0 };
   }
 
   importAll(payload: MemoryExport, options: { replace?: boolean } = {}): { imported: number; skipped: number } {

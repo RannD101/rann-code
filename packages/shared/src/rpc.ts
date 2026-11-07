@@ -144,6 +144,11 @@ export const memoryReviewParams = z.object({
   kind: z.string().max(40).optional()
 });
 
+export const memoryPruneParams = z.object({
+  projectPath: z.string().max(4_096).optional(),
+  days: z.number().int().min(1).max(3_650).optional()
+});
+
 export const memoryRejectParams = z.object({
   projectPath: z.string().max(4_096).optional(),
   id: z.string().min(1)
@@ -412,6 +417,7 @@ export const methodParams = {
   "memory.pending": memoryPendingParams,
   "memory.approve": memoryReviewParams,
   "memory.reject": memoryRejectParams,
+  "memory.prune": memoryPruneParams,
   "skill.list": skillListParams,
   "skill.conflicts": z.object({ projectPath: z.string().min(1).optional() }).default({}),
   "skill.view": skillViewParams,

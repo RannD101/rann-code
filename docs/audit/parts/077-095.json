@@ -50,17 +50,13 @@
   {
     "id": "RC-FR-080",
     "title": "Eksekusi skill",
-    "status": "missing",
+    "status": "partial",
     "evidence": [
-      "packages/runtime/src/skills.ts:278-288 (skill disuntik sebagai teks prompt)",
-      "packages/runtime/src/tools/index.ts:1416-1479 (aksi skill: list, view, create, remove, select, edit, history, rollback, validate)",
-      "packages/runtime/src/agent.ts:451-465 (tidak ada eksekusi skrip skill)"
+      "packages/runtime/src/skills.ts:229",
+      "packages/runtime/src/memory-skills.test.ts"
     ],
     "gaps": [
-      "Tidak ada eksekusi skrip skill: tidak ada folder scripts/ maupun runner per skill.",
-      "Tidak ada cwd project, env terbatas, timeout, atau sandbox khusus skill; skill hanya teks yang masuk prompt.",
-      "Tidak ada broker tool untuk skill dan tidak ada pencatatan output/error skill di trace.",
-      "Tidak ada error terstruktur untuk kegagalan skill karena tidak ada eksekusi."
+      "Skill belum memanggil tool lewat broker; skrip hanya dibatasi env, cwd, dan timeout."
     ]
   },
   {
@@ -171,20 +167,14 @@
   {
     "id": "RC-FR-087",
     "title": "Tool kustom dan eksternal",
-    "status": "missing",
+    "status": "done",
     "evidence": [
-      "packages/runtime/src/tools/index.ts:465-1780 (hanya definisi tool bawaan)",
-      "packages/runtime/src/tools/index.ts:1801-1827 (toolSpecs/findTool/executeTool dari array statis)",
-      "packages/cli/src/main.ts:2588-2612 (/tool list dan info)",
-      "packages/cli/src/repl-commands.ts:129 (perintah /tool terdaftar)"
+      "packages/runtime/src/custom-tools.ts",
+      "packages/runtime/src/custom-tools.test.ts",
+      "packages/runtime/src/rpc.ts:1074",
+      "packages/cli/src/main.ts:2597"
     ],
-    "gaps": [
-      "Tidak ada pemuatan modul TypeScript dari .rann/tools/; grep seluruh packages tidak menemukan referensi .rann/tools.",
-      "Tidak ada tool eksternal berbasis perintah dengan skema JSON; registry hanya array statis di tools/index.ts:465.",
-      "Tidak ada deklarasi permission dan timeout untuk tool kustom karena tidak ada mekanisme registrasi.",
-      "Tidak ada validasi skema saat registrasi tool.",
-      "`/tool test` tidak ada, dan `/tool list` memanggil RPC tool.list yang tidak terdaftar di rpc.ts (main.ts:2592)."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-088",

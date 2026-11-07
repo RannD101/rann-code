@@ -460,6 +460,12 @@ export function acquirePathLease(
   return { ok: true, lease: db.prepare("SELECT * FROM path_leases WHERE id = ?").get(id) as PathLeaseRow };
 }
 
+export function heartbeatPathLease(db: Db, path: string, sessionId: string, ttlMs = 60_000): boolean {
+  const at = now();
+  const result = db.prepare("UPDATE path_leases SET heartbeat_at = ?, expires_at = ? WHERE path = ? AND session_id = ?").run(at, at + ttlMs, path, sessionId);
+  return result.changes > 0;
+}
+
 export function releasePathLease(db: Db, path: string, sessionId?: string, ownerAgentId?: string): boolean {
   const result = sessionId
     ? ownerAgentId

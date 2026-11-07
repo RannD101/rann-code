@@ -155,21 +155,16 @@
   {
     "id": "RC-FR-066",
     "title": "Agent memory",
-    "status": "missing",
+    "status": "done",
     "evidence": [
-      "packages/runtime/src/memory.ts:10 opsi agentProfile ada",
-      "packages/runtime/src/memory.ts:64-72 belongsToAgent memfilter tag agent bila profil diisi",
-      "packages/runtime/src/rpc.ts:1811-1817 MemoryService untuk subagent dibuat tanpa agentProfile",
-      "packages/shared/src/config.ts:60-66 config memory hanya enabled, prompt_chars, retrieve",
-      "tidak ada tes isolasi memory antar agen"
+      "packages/runtime/src/subagent-profiles.ts:4",
+      "packages/runtime/src/rpc.ts:1934",
+      "packages/runtime/src/memory.ts:68",
+      "packages/runtime/src/memory.ts:118",
+      "packages/runtime/src/memory.ts:184",
+      "packages/runtime/src/memory-skills.test.ts"
     ],
-    "gaps": [
-      "Butir 1: memory agen tidak terikat profil; agentProfile tidak pernah diisi sehingga semua memory project/global terbaca agen lain (rpc.ts:1811-1817)",
-      "Butir 2: tidak ada penyaringan pengalaman berdasarkan peran agen saat menyimpan (memory.ts:151-172 hanya regex teks user)",
-      "Butir 3: tidak ada izin baca antar agen; batas hanya tag agent yang tidak dipakai (memory.ts:68-72)",
-      "Butir 4: tidak ada pelacakan efektivitas memory untuk menghapus yang tidak berguna",
-      "Butir 5: tidak ada saklar memory per profil agen; hanya config.memory.enabled global (config.ts:60-66)"
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-067",
@@ -194,41 +189,26 @@
   {
     "id": "RC-FR-068",
     "title": "Procedural memory",
-    "status": "missing",
+    "status": "done",
     "evidence": [
-      "packages/runtime/src/memory.ts:151-172 ekstraktor hanya menghasilkan preference/rule/project/decision",
-      "packages/storage/src/schema-v3.ts:16-38 tabel memory tidak punya kolom trigger, prasyarat, langkah, verifikasi",
-      "packages/runtime/src/skills.ts:290-298 recordUse hanya mencatat uses/successes/failures skill",
-      "tidak ada tes procedural memory"
+      "packages/storage/src/schema-v12.ts:5",
+      "packages/storage/src/procedure-repos.ts:30",
+      "packages/runtime/src/tools/index.ts",
+      "packages/storage/src/work-repos.test.ts"
     ],
-    "gaps": [
-      "Butir 1: tidak ada penyimpanan prosedur dengan nama, trigger, prasyarat, langkah, dan verifikasi",
-      "Butir 2: tidak ada aturan promosi setelah berhasil >= 3 kali atau persetujuan pengguna",
-      "Butir 3: tidak ada jalur mengubah prosedur menjadi skill; skill hanya dibuat manual lewat tool skill (tools/index.ts:1438-1462)",
-      "Butir 4: tidak ada penandaan stale untuk prosedur yang gagal berulang",
-      "Butir 5: tidak ada mekanisme prosedur sehingga prioritas terhadap instruksi eksplisit tidak diuji"
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-069",
     "title": "Ekstraksi otomatis dan review kandidat",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "packages/runtime/src/agent.ts:435-450 rememberFromTurn dipanggil sebelum panggilan model",
-      "packages/runtime/src/memory.ts:151-172 kandidat berisi text, kind, scope, tags, confidence",
-      "packages/runtime/src/memory.ts:175-206 semua kandidat disimpan tanpa ambang keyakinan",
-      "packages/storage/src/schema-v3.ts:31 status pending ada tetapi tidak pernah dipakai",
-      "packages/runtime/src/rpc.ts:970-982 hanya ada update/remove entri final",
-      "packages/shared/src/config.ts:60-66 hanya ada saklar memory global",
-      "packages/runtime/src/memory-skills.test.ts mengekstrak preferensi eksplisit, melewati duplikat, dan menandai konflik"
+      "packages/runtime/src/memory.ts:151",
+      "packages/runtime/src/memory.ts:174",
+      "packages/runtime/src/memory.ts:215",
+      "packages/runtime/src/memory-skills.test.ts"
     ],
-    "gaps": [
-      "Butir 1: ekstraksi berjalan sebelum panggilan model, bukan setelah turn selesai (agent.ts:435-450)",
-      "Butir 2: semua kandidat langsung disimpan; tidak ada ambang keyakinan atau antrean review (memory.ts:180-204)",
-      "Butir 3: tidak ada penyaringan secret, data pribadi sensitif, atau instruksi sementara di ekstraktor (memory.ts:151-172)",
-      "Butir 4: tidak ada aksi menyetujui/menolak/mengedit kandidat; yang ada hanya update/remove entri final (rpc.ts:970-982)",
-      "Butir 5: ekstraksi tidak bisa dimatikan per profil atau per project; hanya config.memory.enabled global (config.ts:60-66)"
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-070",

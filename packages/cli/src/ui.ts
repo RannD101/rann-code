@@ -36,7 +36,7 @@ const THEMES: Record<"dark" | "light", ThemeTokens> = {
 let themeName: ThemeName = (process.env.RANN_THEME as ThemeName | undefined) ?? "auto";
 let customTokens: Partial<ThemeTokens> = {};
 
-function colorEnabled(): boolean {
+export function colorEnabled(): boolean {
   if (process.env.NO_COLOR !== undefined || process.env.RANN_NO_COLOR === "1") return false;
   if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "0") return true;
   return process.stdout.isTTY === true && process.env.TERM !== "dumb";

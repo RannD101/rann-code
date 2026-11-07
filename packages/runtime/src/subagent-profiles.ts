@@ -11,6 +11,7 @@ export interface SubagentProfile {
   maxSteps: number;
   model?: string;
   triggers: string[];
+  memory: boolean;
   source: "builtin" | "user" | "project";
 }
 
@@ -22,8 +23,8 @@ const BASE_RULES = [
   "Jangan mengubah berkas di luar tujuan."
 ].join(" ");
 
-function profile(input: Omit<SubagentProfile, "source">): SubagentProfile {
-  return { ...input, source: "builtin" };
+function profile(input: Omit<SubagentProfile, "source" | "memory"> & { memory?: boolean }): SubagentProfile {
+  return { ...input, memory: input.memory ?? true, source: "builtin" };
 }
 
 export const BUILTIN_PROFILES: SubagentProfile[] = [
@@ -153,6 +154,7 @@ function fromFile(path: string, source: "user" | "project"): SubagentProfile | u
     maxSteps: Number.isFinite(Number(meta.max_steps)) ? Math.max(1, Math.min(Number(meta.max_steps), 30)) : 10,
     ...(meta.model ? { model: meta.model } : {}),
     triggers: (meta.triggers ?? "").split(",").map((item) => item.trim()).filter(Boolean),
+    memory: meta.memory !== "false" && meta.memory !== "0",
     source
   };
 }

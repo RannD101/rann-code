@@ -18,7 +18,7 @@ interface OpenAiToolCallDelta {
 
 interface OpenAiStreamChunk {
   choices?: Array<{
-    delta?: { content?: string | null; tool_calls?: OpenAiToolCallDelta[] };
+    delta?: { content?: string | null; reasoning?: string | null; reasoning_content?: string | null; tool_calls?: OpenAiToolCallDelta[] };
     finish_reason?: string | null;
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
@@ -140,11 +140,13 @@ export class OpenAiCompatibleProvider implements Provider {
 
       if (!this.useStream) {
         const json = (await response.json()) as {
-          choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string }>;
+          choices?: Array<{ message?: { content?: string; reasoning?: string; reasoning_content?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string }>;
           usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
         };
         const choice = json.choices?.[0];
         if (choice?.message?.content) yield { type: "text", text: choice.message.content };
+        const nonStreamReasoning = choice?.message?.reasoning_content ?? choice?.message?.reasoning;
+        if (nonStreamReasoning) yield { type: "reasoning", text: nonStreamReasoning };
         for (const [index, call] of (choice?.message?.tool_calls ?? []).entries()) {
           yield {
             type: "tool_call",
@@ -203,6 +205,8 @@ export class OpenAiCompatibleProvider implements Provider {
           const choice = chunk.choices?.[0];
           const content = choice?.delta?.content;
           if (content) yield { type: "text", text: content };
+          const reasoning = choice?.delta?.reasoning_content ?? choice?.delta?.reasoning;
+          if (reasoning) yield { type: "reasoning", text: reasoning };
           for (const delta of choice?.delta?.tool_calls ?? []) {
             const index = delta.index ?? 0;
             const current = pending.get(index) ?? { id: delta.id ?? `call_${index}`, name: "", args: "" };

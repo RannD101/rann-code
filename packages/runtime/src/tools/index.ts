@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, relative } from "node:path";
 import { z } from "zod";
 import { RannError } from "@rann/shared";
@@ -9,6 +9,7 @@ import type { Db } from "@rann/storage";
 import { getActiveGoal, renderGoal, updateGoalProgress, listProcedures, recordProcedureResult, upsertProcedure } from "@rann/storage";
 import {
   acquirePathLease,
+  heartbeatPathLease,
   createTransaction,
   finishTransaction,
   recordFileChange,
@@ -38,6 +39,7 @@ export interface ToolContext {
   permissionMode: PermissionMode;
   approved: boolean;
   sessionId?: string;
+  agentId?: string;
   turnId?: string;
   db?: Db;
   checkpointsDir?: string;
@@ -46,6 +48,7 @@ export interface ToolContext {
   signal?: AbortSignal;
   shellTimeoutMs?: number;
   memory?: MemoryService;
+  hooks?: { run(event: "MemoryWrite", payload: Record<string, unknown>, options?: { cwd?: string }): Promise<unknown> };
   skills?: SkillStore;
   delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number }) => Promise<unknown>;
   planRevise?: (input: {
@@ -132,6 +135,7 @@ function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
   for (const path of [...new Set(paths)]) {
     const lease = acquirePathLease(ctx.db, {
       path,
+      ...(ctx.agentId ? { ownerAgentId: ctx.agentId } : {}),
       sessionId: ctx.sessionId,
       ttlMs: LEASE_TTL_MS
     });
@@ -153,7 +157,12 @@ function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
 
 function releaseLeases(ctx: ToolContext, paths: string[]): void {
   if (!ctx.db || !ctx.sessionId) return;
-  for (const path of paths) releasePathLease(ctx.db, path, ctx.sessionId);
+  for (const path of paths) releasePathLease(ctx.db, path, ctx.sessionId, ctx.agentId);
+}
+
+function heartbeatLeases(ctx: ToolContext, paths: string[]): void {
+  if (!ctx.db || !ctx.sessionId) return;
+  for (const path of paths) heartbeatPathLease(ctx.db, path, ctx.sessionId, LEASE_TTL_MS);
 }
 
 function beginTransaction(ctx: ToolContext, summary: unknown): TransactionRow | null {
@@ -218,9 +227,11 @@ const fsListSchema = z.object({
   limit: z.number().int().min(1).max(2_000).optional()
 });
 
+const MAX_WRITE_BYTES = 5 * 1024 * 1024;
+
 const fsWriteSchema = z.object({
   path: z.string().min(1),
-  content: z.string(),
+  content: z.string().max(MAX_WRITE_BYTES),
   create_dirs: z.boolean().optional(),
   expected_sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional()
 });
@@ -244,7 +255,8 @@ const fsGlobSchema = z.object({
 
 const fsDeleteSchema = z.object({
   path: z.string().min(1),
-  recursive: z.boolean().optional()
+  recursive: z.boolean().optional(),
+  hard: z.boolean().optional()
 });
 
 const shellSchema = z.object({
@@ -575,7 +587,8 @@ export const tools: ToolDefinition[] = [
         properties: {
           path: { type: "string" },
           content: { type: "string" },
-          create_dirs: { type: "boolean" }
+          create_dirs: { type: "boolean" },
+          expected_sha256: { type: "string", description: "Hash isi lama; wajib jika menimpa berkas yang sudah ada" }
         },
         required: ["path", "content"]
       }
@@ -589,8 +602,14 @@ export const tools: ToolDefinition[] = [
       }
       const leases = acquireLeases(ctx, [target]);
       const transaction = beginTransaction(ctx, { tool: "fs_write", path: input.path });
+      heartbeatLeases(ctx, leases);
       try {
-        if (existsSync(target)) assertTextFile(target, input.path);
+        if (existsSync(target)) {
+          assertTextFile(target, input.path);
+          if (!input.expected_sha256 && statSync(target).size > 1024 * 1024) {
+            throw new RannError("E_FILE_CHANGED", `Berkas ${input.path} lebih dari 1 MB. Sertakan expected_sha256 dari fs_read sebelum menimpa.`);
+          }
+        }
         const applied = applyFileTransaction(
           ctx.workspaceRoot,
           [{
@@ -639,7 +658,7 @@ export const tools: ToolDefinition[] = [
           path: { type: "string" },
           old: { type: "string" },
           new: { type: "string" },
-          all: { type: "boolean" }
+          all: { type: "boolean", description: "Diabaikan; edit selalu menolak kemunculan ganda." }
         },
         required: ["path", "old", "new"]
       }
@@ -661,10 +680,10 @@ export const tools: ToolDefinition[] = [
         }
         const occurrences = before.split(input.old).length - 1;
         if (occurrences === 0) throw new RannError("E_TOOL_FAILED", "Teks lama tidak ditemukan");
-        if (occurrences > 1 && input.all !== true) {
-          throw new RannError("E_TOOL_FAILED", `Teks lama muncul ${occurrences} kali. Set all=true atau perjelas konteks.`);
+        if (occurrences > 1) {
+          throw new RannError("E_TOOL_FAILED", `Teks lama muncul ${occurrences} kali. Perjelas konteks agar hanya satu kemunculan.`);
         }
-        const after = input.all === true ? before.split(input.old).join(input.new) : before.replace(input.old, input.new);
+        const after = before.replace(input.old, input.new);
         const applied = applyFileTransaction(
           ctx.workspaceRoot,
           [{ path: input.path, content: after, expected_sha256: sha256(before) }],
@@ -774,7 +793,8 @@ export const tools: ToolDefinition[] = [
         type: "object",
         properties: {
           path: { type: "string" },
-          recursive: { type: "boolean" }
+          recursive: { type: "boolean" },
+          hard: { type: "boolean", description: "Hapus permanen tanpa trash; hanya dengan izin eksplisit" }
         },
         required: ["path"]
       }
@@ -788,6 +808,10 @@ export const tools: ToolDefinition[] = [
       const stat = statSync(target);
       if (stat.isDirectory() && readdirSync(target).length > 0 && input.recursive !== true) {
         throw new RannError("E_TOOL_FAILED", "Direktori tidak kosong. Set recursive=true untuk memindahkan seluruh isinya ke trash.");
+      }
+      if (input.hard === true) {
+        rmSync(target, { recursive: true, force: false });
+        return textResult({ path: input.path, type: stat.isDirectory() ? "dir" : "file", hard: true });
       }
       const trashDir = resolveInsideWorkspace(".rann/trash", { ...ctx, workspaceOnly: true });
       mkdirSync(trashDir, { recursive: true });
@@ -810,6 +834,7 @@ export const tools: ToolDefinition[] = [
           path: { type: "string" },
           staged: { type: "boolean" },
           limit: { type: "integer", minimum: 1, maximum: 100 },
+          days: { type: "integer", minimum: 1, maximum: 3_650 },
           ref: { type: "string" },
           line_start: { type: "integer", minimum: 1 },
           line_end: { type: "integer", minimum: 1 }
@@ -1315,6 +1340,9 @@ export const tools: ToolDefinition[] = [
         allow: ctx.allow,
         deny: ctx.deny
       });
+      if (/\bsudo\b|~\/\.ssh|\.ssh\//i.test(input.command)) {
+        throw new RannError("E_PERMISSION", "Perintah sudo atau akses direktori kredensial ditolak");
+      }
       const cwd = resolveInsideWorkspace(input.cwd ?? ".", ctx);
       const timeoutMs = input.timeout_ms ?? ctx.shellTimeoutMs ?? 120_000;
       const started = Date.now();
@@ -1386,7 +1414,7 @@ export const tools: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["add", "list", "search", "update", "remove", "pending", "approve", "reject"] },
+          action: { type: "string", enum: ["add", "list", "search", "update", "remove", "pending", "approve", "reject", "prune"] },
           text: { type: "string", description: "Isi memori, maksimal 4.000 karakter, untuk update atau kandidat yang diedit" },
           id: { type: "string", description: "ID memori untuk update atau remove" },
           query: { type: "string", description: "Kata kunci pencarian" },
@@ -1406,6 +1434,7 @@ export const tools: ToolDefinition[] = [
         if (!input.text) throw new RannError("E_TOOL_INVALID_ARGS", "memory add butuh text");
         if (input.scope === "all") throw new RannError("E_TOOL_INVALID_ARGS", "scope add hanya global atau project");
         const entry = ctx.memory.add({ text: input.text, scope: input.scope, kind: input.kind, tags: input.tags });
+        await ctx.hooks?.run("MemoryWrite", { memory_id: entry.id, scope: entry.scope, kind: entry.kind }, { cwd: ctx.workspaceRoot });
         return textResult({ saved: entry });
       }
       if (input.action === "search") {

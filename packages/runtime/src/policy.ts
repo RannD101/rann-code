@@ -19,6 +19,20 @@ const DANGEROUS_SHELL = [
   /\bgit\s+clean\s+-[a-z]*[fdx]/i
 ];
 
+const SENSITIVE_PATHS = [
+  /(^|[/\\])\.ssh([/\\]|$)/i,
+  /(^|[/\\])\.aws([/\\]|$)/i,
+  /(^|[/\\])\.gnupg([/\\]|$)/i,
+  /(^|[/\\])\.env(\.|$)/i,
+  /(^|[/\\])id_(rsa|ed25519|ecdsa)(\.pub)?$/i,
+  /(^|[/\\])\.kube[/\\]config$/i,
+  /(^|[/\\])credentials(\.json)?$/i
+];
+
+export function isSensitivePath(path: string): boolean {
+  return SENSITIVE_PATHS.some((pattern) => pattern.test(path));
+}
+
 export function isDangerousShell(command: string): boolean {
   return DANGEROUS_SHELL.some((pattern) => pattern.test(command));
 }
@@ -35,7 +49,8 @@ const DESTRUCTIVE_REASONS: Array<[RegExp, string]> = [
   [/\bdd\b[^\n]*\bof=\/dev\//i, "menulis mentah ke perangkat"],
   [/\b(shutdown|reboot|halt|poweroff)\b/i, "mematikan mesin"],
   [/\bchmod\s+(-R\s+)?777\s+\//i, "membuka izin seluruh filesystem"],
-  [/\bwipefs\b/i, "menghapus signature filesystem"]
+  [/\bwipefs\b/i, "menghapus signature filesystem"],
+  [/\bsudo\b/i, "menjalankan perintah dengan hak akses root"]
 ];
 
 export function destructiveReason(command: string): string | undefined {
@@ -127,6 +142,9 @@ function realish(path: string): string {
 export function resolveInsideWorkspace(path: string, options: PathGuardOptions): string {
   const root = realish(options.workspaceRoot);
   const target = realish(resolve(options.workspaceRoot, path));
+  if (isSensitivePath(target)) {
+    throw new RannError("E_PERMISSION", `Path sensitif ditolak: ${path}`, { data: { path } });
+  }
   if (options.workspaceOnly && target !== root && !target.startsWith(root + sep)) {
     throw new RannError("E_PERMISSION", `Path keluar workspace ditolak: ${path}`, { data: { path } });
   }

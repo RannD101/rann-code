@@ -155,15 +155,18 @@ export class GeminiProvider implements Provider {
         }
         const candidates = payload.candidates as
           | Array<{
-              content?: { parts?: Array<{ text?: string; functionCall?: { name?: string; args?: unknown } }> };
+              content?: { parts?: Array<{ text?: string; thought?: boolean; functionCall?: { name?: string; args?: unknown } }> };
               finishReason?: string;
             }>
           | undefined;
         for (const candidate of candidates ?? []) {
           for (const part of candidate.content?.parts ?? []) {
             if (part.text) {
-              textChars += part.text.length;
-              yield { type: "text", text: part.text };
+              if (part.thought === true) yield { type: "reasoning", text: part.text };
+              else {
+                textChars += part.text.length;
+                yield { type: "text", text: part.text };
+              }
             }
             if (part.functionCall) {
               yield {

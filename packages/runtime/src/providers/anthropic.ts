@@ -161,10 +161,12 @@ export class AnthropicProvider implements Provider {
           }
         } else if (type === "content_block_delta") {
           const index = Number(payload.index ?? 0);
-          const delta = payload.delta as { type?: string; text?: string; partial_json?: string } | undefined;
+          const delta = payload.delta as { type?: string; text?: string; thinking?: string; partial_json?: string } | undefined;
           if (delta?.type === "text_delta" && delta.text) {
             textChars += delta.text.length;
             yield { type: "text", text: delta.text };
+          } else if (delta?.type === "thinking_delta" && delta.thinking) {
+            yield { type: "reasoning", text: delta.thinking };
           } else if (delta?.type === "input_json_delta" && delta.partial_json !== undefined) {
             const current = toolBlocks.get(index);
             if (current) {

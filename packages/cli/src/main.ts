@@ -9,7 +9,7 @@ import { createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAu
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
-import { choose, chooseWith, clearScreen, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
+import { choose, chooseWith, clearScreen, colorEnabled, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
 import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, renderCommandCatalog, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
 import { HistoryStore } from "./history.js";
@@ -988,6 +988,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       // config lama atau daemon yang belum siap tidak boleh menghalangi sesi chat
     }
     const editor = new LineEditor({
+      plain: !colorEnabled(),
       disabledShortcuts,
       history,
       busy: () => busy,
@@ -3444,7 +3445,9 @@ async function memoryCommand(args: ParsedArgs): Promise<number> {
       client.request<unknown>("memory.export", { projectPath })
     );
     const target = flagString(args, "out");
-    const text = `${JSON.stringify(payload, null, 2)}\n`;
+    const text = flagBool(args, "jsonl")
+      ? `${((payload as { entries?: unknown[] }).entries ?? []).map((entry) => JSON.stringify(entry)).join("\n")}\n`
+      : `${JSON.stringify(payload, null, 2)}\n`;
     if (target) writeFileSync(target, text, { mode: 0o600 });
     else process.stdout.write(text);
     return 0;
@@ -3453,7 +3456,10 @@ async function memoryCommand(args: ParsedArgs): Promise<number> {
   if (sub === "import") {
     const source = flagString(args, "from") ?? args.positionals[0];
     if (!source) throw new RannError("E_INVALID_PARAMS", "memory import butuh --from <berkas.json>");
-    const payload = JSON.parse(readFileSync(source, "utf8")) as unknown;
+    const raw = readFileSync(source, "utf8");
+    const payload = source.endsWith(".jsonl")
+      ? { version: 1, exported_at: Date.now(), entries: raw.split(/\r?\n/).filter((line) => line.trim().length > 0).map((line) => JSON.parse(line)) }
+      : JSON.parse(raw) as unknown;
     const result = await withClient((client) =>
       client.request<{ imported: number; skipped: number }>("memory.import", {
         projectPath,

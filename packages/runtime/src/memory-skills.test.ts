@@ -182,3 +182,22 @@ describe("review kandidat memori", () => {
     }
   });
 });
+
+describe("memory per agen", () => {
+  it("menyembunyikan memori agen lain, mengizinkan lewat grant, dan mencatat pemakaian", () => {
+    const { db, close } = database();
+    try {
+      const reviewer = new MemoryService(db, "/proyek", { enabled: true, promptChars: 2_000, retrieve: 10, agentProfile: "reviewer" });
+      const coder = new MemoryService(db, "/proyek", { enabled: true, promptChars: 2_000, retrieve: 10, agentProfile: "coder" });
+      const entry = reviewer.add({ text: "pola bug null check di handler", kind: "insight", scope: "project" });
+      expect(reviewer.search("pola bug")).toHaveLength(1);
+      expect(coder.search("pola bug")).toHaveLength(0);
+      reviewer.allowAgent(entry.id, "coder");
+      expect(coder.search("pola bug")).toHaveLength(1);
+      const events = db.prepare("SELECT COUNT(*) AS n FROM memory_events WHERE memory_id = ? AND action = 'retrieved'").get(entry.id) as { n: number };
+      expect(events.n).toBe(2);
+    } finally {
+      close();
+    }
+  });
+});

@@ -608,8 +608,9 @@ export class RpcServer {
         return job;
       }
       case "background.cancel": {
+        const aborted = this.background.cancel(input.id as string);
         const cancelled = cancelJob(this.db, input.id as string);
-        if (!cancelled) throw new RannError("E_CONFLICT", `Job ${input.id} tidak bisa dibatalkan pada status ini`);
+        if (!cancelled && !aborted) throw new RannError("E_CONFLICT", `Job ${input.id} tidak bisa dibatalkan pada status ini`);
         appendAudit(this.db, { actor: "user", action: "background.cancel", resource: input.id as string, decision: "ok", metadata: {} });
         const job = getJob(this.db, input.id as string);
         if (job) this.broadcastJob("cancelled", job);
@@ -1096,6 +1097,8 @@ export class RpcServer {
         if (!entry) throw new RannError("E_NOT_FOUND", "Kandidat memori tidak ditemukan");
         return { approved: entry };
       }
+      case "memory.prune":
+        return { pruned: this.memoryService(input.projectPath as string | undefined).pruneAgentMemory((input.days as number | undefined) ?? 30) };
       case "memory.reject":
         return { rejected: this.memoryService(input.projectPath as string | undefined).reject(input.id as string) };
       case "memory.remove":
@@ -1886,6 +1889,8 @@ export class RpcServer {
       ...(parentAgent ? { parentId: parentAgent.id } : {})
     });
     options.onStarted?.(agent.id);
+    const agentHooks = config.hooks ? new HookRunner(config.hooks, { projectRoot: options.projectPath }) : undefined;
+    await agentHooks?.run("AgentSpawn", { agent_id: agent.id, profile: selected.name, goal: options.input.goal, depth }, { cwd: options.projectPath });
 
     const controller = new AbortController();
     const relayAbort = (): void => controller.abort();
@@ -1930,12 +1935,13 @@ export class RpcServer {
     if (tools && depth + 1 < config.subagents.max_depth && !tools.includes("task")) tools.push("task");
 
     const before = this.gitChangedFiles(options.projectPath);
-    const memory = config.memory.enabled
+    const memory = config.memory.enabled && selected.memory
       ? new MemoryService(this.db, options.projectPath, {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
           retrieve: config.memory.retrieve,
-          sessionId: child.id
+          sessionId: child.id,
+          agentProfile: selected.name
         })
       : undefined;
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, options.projectPath) : undefined;
@@ -1975,6 +1981,7 @@ export class RpcServer {
         db: this.db,
         session: child,
         turnId: turn.id,
+        agentId: agent.id,
         userText: options.input.goal,
         provider,
         model: target.model,
@@ -2022,6 +2029,7 @@ export class RpcServer {
         files_changed: filesChanged
       };
       finishSubagent(this.db, agent.id, "done", summary);
+      await agentHooks?.run("AgentComplete", { agent_id: agent.id, profile: selected.name, status: "done", steps: result.steps }, { cwd: options.projectPath });
       emitAgent();
       return summary;
     } catch (error) {
@@ -2031,6 +2039,7 @@ export class RpcServer {
       finishSubagent(this.db, agent.id, cancelled ? "cancelled" : "failed", {
         error: error instanceof Error ? error.message : String(error)
       });
+      await agentHooks?.run("AgentComplete", { agent_id: agent.id, profile: selected.name, status: cancelled ? "cancelled" : "failed" }, { cwd: options.projectPath }).catch(() => undefined);
       emitAgent();
       throw error;
     } finally {

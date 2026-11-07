@@ -132,6 +132,7 @@ export interface RunTurnOptions {
   forcePlan?: boolean;
   approvePlan?: (plan: { goal: string; highRisk: boolean; text: string }) => Promise<boolean>;
   modelCapabilities?: ModelCapabilities;
+  agentId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
   fallbacks?: Array<{ provider: Provider; model: string; contextWindow: number; maxOutputTokens: number }>;
@@ -453,6 +454,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
   };
 
+  await runHook("SessionStart", { project_path: workspaceRoot });
   await runHook("UserPromptSubmit", { prompt: options.userText });
   markTurnRunning(db, turnId);
   publish("turn.start", { model, provider: provider.name, prompt_chars: options.userText.length });
@@ -513,6 +515,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       if (loaded) {
         skillCatalog = `${loaded}\n\n${skillCatalog}`;
         selectedSkills = options.skills.select(options.userText).skills.map((skill) => skill.name);
+        for (const skillName of selectedSkills) await runHook("SkillLoad", { skill: skillName });
       }
     } catch {
       // Dependensi skill rusak tidak boleh menggagalkan turn; katalog tetap dipakai.
@@ -587,11 +590,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         };
       }
       startFirstTask(db, activePlan, (type, data) => publish(type, data));
+      const firstTask = currentPlanTask(db, activePlan);
+      if (firstTask) await runHook("PreTask", { plan_id: activePlan.id, task_id: firstTask.task_id, title: firstTask.title });
     } catch (error) {
       const err = toRannError(error);
       if (err.code === "E_PLAN_INVALID" || err.code === "E_PLAN_REQUIRED_APPROVAL") {
-        publish("error", { error_code: err.code, message: err.message });
-        finalize("failed", { code: err.code, message: err.message });
+        publish("error", { error_code: err.code, message: String(redactSecrets(err.message)) });
+        finalize("failed", { code: err.code, message: String(redactSecrets(err.message)) });
         throw err;
       }
       publish("log", { level: "warn", message: `Planner dilewati: ${err.message}` });
@@ -673,10 +678,16 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       const built = buildChatContext(history, baseSystem, contextOptions);
       if (built.compacted) {
         compactedAny = true;
+        await runHook("PreCompact", { dropped_messages: built.dropped, kept_messages: history.length - built.dropped });
         const key = `${built.dropped}:${history.length}`;
         if (key !== lastCompactionKey) {
           lastCompactionKey = key;
           publish("context.compacted", {
+            dropped_messages: built.dropped,
+            kept_messages: history.length - built.dropped,
+            estimated_tokens: built.estimated_tokens
+          });
+          await runHook("ContextCompact", {
             dropped_messages: built.dropped,
             kept_messages: history.length - built.dropped,
             estimated_tokens: built.estimated_tokens
@@ -756,6 +767,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             if (chunk.type === "text") {
               text += chunk.text;
               publish("message.delta", { text: chunk.text });
+            } else if (chunk.type === "reasoning") {
+              publish("reasoning.delta", { text: chunk.text });
             } else if (chunk.type === "tool_call") {
               calls.push({ id: chunk.id, name: chunk.name, args: chunk.args });
             } else if (chunk.type === "usage") {
@@ -800,7 +813,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               content: text
             });
             publish("message.end", { chars: text.length, finish_reason: finishReason, partial: true });
-            publish("error", { code: err.code, message: err.message, partial: true });
+            publish("error", { code: err.code, message: String(redactSecrets(err.message)), partial: true });
           }
           if (text.length > 0 || err.code === "E_CANCELLED" || err.code === "E_BUDGET_EXHAUSTED") throw err;
         }
@@ -830,8 +843,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         if (activePlan && !options.planOnly) {
           const current = currentPlanTask(db, activePlan);
           if (current) {
+            const doneTask = currentPlanTask(db, activePlan);
+            if (doneTask) await runHook("PostTask", { plan_id: activePlan.id, task_id: doneTask.task_id, title: doneTask.title });
             const advanced = advancePlanTask(db, activePlan, (type, data) => publish(type, data));
             if (advanced.next) {
+              await runHook("PreTask", { plan_id: activePlan.id, task_id: advanced.next.task_id, index: advanced.next.index });
               publish("plan.update", {
                 plan_id: activePlan.id,
                 status: "active",
@@ -905,6 +921,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         });
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));
         publish("phase", { phase: "report", status: "done" });
+        await runHook("Stop", { status: "done", steps });
         publish("turn.end", { status: "done", steps, usage, text: finalText });
         finalize("done");
         for (const skillName of selectedSkills) {
@@ -969,7 +986,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
           const observation = normalizeObservation(call.name, result);
           const evaluation = evaluateObservation(call.name, observation);
+          publish("phase", { phase: "observe", tool: call.name, status: observation.status });
           publish("observation", { tool: call.name, call_id: call.id, ...observation });
+          publish("phase", { phase: "evaluate", tool: call.name, ok: evaluation.ok });
           publish("evaluation", { tool: call.name, call_id: call.id, ...evaluation });
           completeToolCall(db, toolRow.id, {
             status: result.ok ? "ok" : "error",
@@ -1115,6 +1134,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             signal,
             shellTimeoutMs: config.shellTimeoutMs,
             memory: options.memory,
+            hooks: config.hooks ?? undefined,
             skills: options.skills,
             customTools,
             ...(options.browser ? { browser: options.browser } : {}),
@@ -1194,6 +1214,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             sessionId: session.id,
             turnId,
             db: options.db,
+            ...(options.agentId ? { agentId: options.agentId } : {}),
             ...(options.checkpointsDir ? { checkpointsDir: options.checkpointsDir } : {})
           });
           const retryable = ["fs_read", "fs_list", "fs_stat", "fs_glob", "git_read", "repo_map", "search_code", "project_check"].includes(call.name);
@@ -1245,7 +1266,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         } catch (error) {
           const err = toRannError(error);
           try {
-            await runHook("ToolError", { tool: call.name, args: redactSecrets(call.args), error: err.message, error_code: err.code });
+            await runHook("ToolError", { tool: call.name, args: redactSecrets(call.args), error: String(redactSecrets(err.message)), error_code: err.code });
           } catch {
             // Hook ToolError tidak boleh menutupi error asli.
           }
@@ -1253,12 +1274,12 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           if (err.code === "E_APPROVAL_REQUIRED" || err.code === "E_PERMISSION") {
             publish("error", {
               error_code: err.code,
-              message: err.message,
+              message: String(redactSecrets(err.message)),
               analysis: analyzeFailure(err, { provider: provider.name, model, step: steps, lastTool: call.name })
             });
             publish("turn.end", { status: "failed", error_code: err.code });
             if (activePlan) finishPlan(db, activePlan, "failed", (type, data) => publish(type, data));
-            finalize("failed", { code: err.code, message: err.message });
+            finalize("failed", { code: err.code, message: String(redactSecrets(err.message)) });
             throw err;
           }
         }
@@ -1278,7 +1299,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
     publish("error", {
       error_code: err.code,
-      message: err.message,
+      message: String(redactSecrets(err.message)),
       analysis: analyzeFailure(err, { provider: provider.name, model, step: steps })
     });
     publish("turn.end", { status: err.code === "E_CANCELLED" ? "cancelled" : "failed", error_code: err.code });
@@ -1291,9 +1312,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       );
     }
     if (err.code === "E_CANCELLED") {
-      finalize("cancelled", { code: err.code, message: err.message });
+      finalize("cancelled", { code: err.code, message: String(redactSecrets(err.message)) });
     } else {
-      finalize("failed", { code: err.code, message: err.message });
+      finalize("failed", { code: err.code, message: String(redactSecrets(err.message)) });
     }
     throw err;
   }

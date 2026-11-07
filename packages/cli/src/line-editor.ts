@@ -37,6 +37,7 @@ export interface LineEditorOptions {
   onExpand?: () => string | Promise<string | undefined>;
   prompt?: () => string;
   disabledShortcuts?: string[];
+  plain?: boolean;
 }
 
 export class ReplExit extends Error {
@@ -203,7 +204,7 @@ export class LineEditor {
 
   async readLine(prompt?: string, options: { escapeSubmits?: boolean } = {}): Promise<string> {
     if (this.closed) throw new Error("editor sudah ditutup");
-    if (!this.tty()) return this.fallbackReadLine(prompt);
+    if (this.options.plain === true || !this.tty()) return this.fallbackReadLine(prompt);
     this.escapeSubmits = options.escapeSubmits === true;
     this.promptText = prompt ?? this.promptValue();
     this.buffer = "";

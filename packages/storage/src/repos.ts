@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { newId, type ErrorCode, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import type { Db } from "./db.js";
+import { recordMemoryEvent } from "./procedure-repos.js";
 
 export interface SessionRow {
   id: string;
@@ -607,21 +608,24 @@ export function searchMemories(db: Db, query: string, options: ListMemoryOptions
   }
 }
 
-export function updateMemory(db: Db, id: string, patch: { text?: string; tags?: string[]; kind?: string }): MemoryEntry | undefined {
+export function updateMemory(db: Db, id: string, patch: { text?: string; tags?: string[]; kind?: string; reason?: string }): MemoryEntry | undefined {
   const existing = db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow | undefined;
   if (!existing) return undefined;
-  db.prepare("UPDATE memory_entries SET text = ?, tags = ?, kind = ?, updated_at = ? WHERE id = ?").run(
+  db.prepare("UPDATE memory_entries SET text = ?, tags = ?, kind = ?, version = version + 1, updated_at = ? WHERE id = ?").run(
     patch.text ?? existing.text,
     JSON.stringify(patch.tags ?? parseTags(existing.tags)),
     patch.kind ?? existing.kind,
     Date.now(),
     id
   );
+  recordMemoryEvent(db, id, "updated", JSON.stringify({ before: existing.text, after: patch.text ?? existing.text, reason: patch.reason ?? null }));
   return toMemoryEntry(db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(id) as MemoryDbRow);
 }
 
-export function removeMemory(db: Db, idOrText: string): number {
-  const result = db.prepare("DELETE FROM memory_entries WHERE id = ? OR text = ?").run(idOrText, idOrText);
+export function removeMemory(db: Db, idOrText: string, options: { soft?: boolean } = {}): number {
+  const result = options.soft
+    ? db.prepare("UPDATE memory_entries SET status = 'deleted', updated_at = ? WHERE id = ? OR text = ?").run(Date.now(), idOrText, idOrText)
+    : db.prepare("DELETE FROM memory_entries WHERE id = ? OR text = ?").run(idOrText, idOrText);
   return result.changes;
 }
 

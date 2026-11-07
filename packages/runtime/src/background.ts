@@ -94,6 +94,13 @@ export class BackgroundQueue {
     }
   }
 
+  cancel(jobId: string): boolean {
+    const controller = this.active.get(jobId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
   snapshot(): QueueSnapshot {
     return {
       running: this.active.size,
