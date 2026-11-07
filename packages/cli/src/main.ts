@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RannError, toRannError } from "@rann/shared";
 import { buildProjectMap, ensureLayout, projectMapSummary, resolveHome, resolveLayout, saveProjectMap, type RpcClient } from "@rann/runtime";
-import { inspectDatabase } from "@rann/storage";
+import { inspectDatabase, renderGoal, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
@@ -644,6 +644,60 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(String(skill.body ?? ""));
           continue;
         }
+        if (line === "/goal" || line.startsWith("/goal ")) {
+          const argument = line.slice(5).trim();
+          const sub = argument.toLowerCase();
+          if (argument.length === 0 || sub === "status") {
+            const goal = await client.request<GoalView | null>("goal.get", { sessionId });
+            print(goal ? renderGoal(goal) : "belum ada goal aktif");
+            continue;
+          }
+          if (sub.startsWith("check ")) {
+            const rest = argument.slice(6).trim();
+            const space = rest.indexOf(" ");
+            const id = space >= 0 ? rest.slice(0, space) : rest;
+            const evidence = space >= 0 ? rest.slice(space + 1).trim() : "";
+            if (id.length === 0 || evidence.length === 0) {
+              print("pakai: /goal check <id> <bukti>");
+              continue;
+            }
+            const goal = await client.request<GoalView>("goal.update", {
+              sessionId,
+              complete: [{ id, evidence }]
+            });
+            print(renderGoal(goal));
+            continue;
+          }
+          if (sub === "done" || sub === "cancel" || sub === "fail") {
+            const status = sub === "done" ? "done" : sub === "cancel" ? "cancelled" : "failed";
+            try {
+              const goal = await client.request<GoalView>("goal.finish", { sessionId, status });
+              print(renderGoal(goal));
+            } catch (error) {
+              const rannError = error instanceof RannError ? error : null;
+              print(rannError ? `${rannError.code}: ${rannError.message}` : String(error));
+            }
+            continue;
+          }
+          const separator = argument.indexOf("|");
+          const text = (separator >= 0 ? argument.slice(0, separator) : argument).trim();
+          const criteria =
+            separator >= 0
+              ? argument
+                  .slice(separator + 1)
+                  .split(";")
+                  .map((item) => item.trim())
+                  .filter((item) => item.length > 0)
+              : [];
+          const goal = await client.request<GoalView>("goal.set", {
+            sessionId,
+            goal: text,
+            ...(criteria.length > 0 ? { criteria } : {}),
+            createdBy: "user"
+          });
+          print(renderGoal(goal));
+          continue;
+        }
         if (line === "/status") {
           const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
           print(`sesi     ${sessionId}`);
@@ -651,10 +705,17 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           print(`izin     ${permissionMode ?? String(data.permission_mode ?? "default")}`);
           print(`folder   ${process.cwd()}`);
           print(`status   ${String(data.status ?? "active")}`);
+          const goal = await client.request<GoalView | null>("goal.get", { sessionId });
+          if (goal) {
+            print("");
+            print(renderGoal(goal));
+            const pending = goal.criteria.filter((criterion) => !criterion.done);
+            if (pending.length > 0) print(`kriteria belum terpenuhi: ${pending.map((criterion) => criterion.id).join(", ")}`);
+          }
           continue;
         }
         if (line === "/tools") {
-          print("tool: repo_map, search_code, read_file, write_file, edit_file, delete_file, list_dir, stat_file, apply_patch, project_check, shell_run, git_read, git_write, checkpoint_create, checkpoint_list, checkpoint_restore, memory, skill, task, mcp__<server>__<tool>");
+          print("tool: repo_map, search_code, read_file, write_file, edit_file, delete_file, list_dir, stat_file, apply_patch, project_check, goal_status, goal_update, shell_run, git_read, git_write, checkpoint_create, checkpoint_list, checkpoint_restore, memory, skill, task, mcp__<server>__<tool>");
           continue;
         }
         if (line === "/usage") {

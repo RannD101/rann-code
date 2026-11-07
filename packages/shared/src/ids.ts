@@ -46,7 +46,8 @@ export type IdPrefix =
   | "prov"
   | "mdl"
   | "route"
-  | "jbr";
+  | "jbr"
+  | "goal";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

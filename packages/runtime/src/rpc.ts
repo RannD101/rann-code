@@ -8,8 +8,11 @@ import {
   createTurn,
   eventsForTurn,
   finishTurn,
+  finishGoal,
+  getActiveGoal,
   getSession,
   getTurn,
+  listGoals,
   listMessages,
   listPlans,
   listSessions,
@@ -19,10 +22,12 @@ import {
   recoverInterruptedTurns,
   schemaVersion,
   setTurnModel,
+  setGoal,
   summarizeUsage,
   sumCostSince,
   sumTokensSince,
   touchSession,
+  updateGoalProgress,
   SecretStore,
   type Db,
   type SessionRow
@@ -238,6 +243,62 @@ export class RpcServer {
       }
       case "task.list":
         return listTasks(this.db, input.sessionId as string);
+      case "goal.get": {
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
+        return getActiveGoal(this.db, session.id) ?? null;
+      }
+      case "goal.list": {
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
+        return listGoals(this.db, session.id, (input.limit as number | undefined) ?? 20);
+      }
+      case "goal.set": {
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
+        const goal = setGoal(this.db, {
+          sessionId: session.id,
+          goal: input.goal as string,
+          criteria: input.criteria as Array<string | { id?: string; text: string }> | undefined,
+          assumptions: input.assumptions as string[] | undefined,
+          createdBy: input.createdBy as "user" | "replan"
+        });
+        appendAudit(this.db, {
+          action: "goal.set",
+          actor: input.createdBy as string,
+          decision: "ok",
+          resource: goal.id,
+          metadata: { session_id: session.id, version: goal.version, criteria: goal.criteria.length }
+        });
+        return goal;
+      }
+      case "goal.update": {
+        const goal = updateGoalProgress(this.db, input.sessionId as string, {
+          ...(input.action !== undefined ? { action: input.action as string } : {}),
+          ...(input.tool !== undefined ? { tool: input.tool as string } : {}),
+          ...(input.note !== undefined ? { note: input.note as string } : {}),
+          ...(input.complete !== undefined ? { complete: input.complete as Array<{ id: string; evidence: string }> } : {})
+        });
+        if (!goal) throw new RannError("E_NOT_FOUND", "Goal aktif tidak ditemukan");
+        return goal;
+      }
+      case "goal.finish": {
+        const goal = finishGoal(
+          this.db,
+          input.sessionId as string,
+          input.status as "done" | "failed" | "cancelled",
+          input.note as string | undefined
+        );
+        if (!goal) throw new RannError("E_NOT_FOUND", "Goal aktif tidak ditemukan");
+        appendAudit(this.db, {
+          action: "goal.finish",
+          actor: "user",
+          decision: "ok",
+          resource: goal.id,
+          metadata: { session_id: goal.session_id, status: goal.status }
+        });
+        return goal;
+      }
       case "checkpoint.list": {
         const dir = this.options.layout.checkpointsDir;
         if (!dir) return [];

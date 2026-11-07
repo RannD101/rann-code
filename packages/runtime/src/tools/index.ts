@@ -5,6 +5,8 @@ import { dirname, relative } from "node:path";
 import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
+import type { Db } from "@rann/storage";
+import { getActiveGoal, renderGoal, updateGoalProgress } from "@rann/storage";
 import { assertAllowed, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
 import { commitMessage, runGit, safeGitPath } from "../git.js";
 import {
@@ -25,6 +27,7 @@ export interface ToolContext {
   approved: boolean;
   sessionId?: string;
   turnId?: string;
+  db?: Db;
   checkpointsDir?: string;
   allow?: string[];
   deny?: string[];
@@ -178,6 +181,16 @@ const transactionSchema = z.object({
 const projectCheckSchema = z.object({
   action: z.enum(["test", "lint", "build", "typecheck"]),
   timeout_ms: z.number().int().min(1_000).max(600_000).optional()
+});
+
+const goalUpdateSchema = z.object({
+  action: z.string().max(2_000).optional(),
+  tool: z.string().max(200).optional(),
+  note: z.string().max(4_000).optional(),
+  complete: z
+    .array(z.object({ id: z.string().min(1).max(40), evidence: z.string().min(1).max(4_000) }))
+    .max(50)
+    .optional()
 });
 
 const memorySchema = z.object({
@@ -765,6 +778,56 @@ export const tools: ToolDefinition[] = [
         { ...ctx, approved: true }
       );
       return textResult({ action: input.action, command, ...result });
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "goal_status",
+      description: "Baca goal aktif, langkah, dan kriteria yang belum terpenuhi beserta buktinya.",
+      parameters: { type: "object", properties: {} }
+    },
+    async run(_args, ctx) {
+      if (!ctx.db || !ctx.sessionId) throw new RannError("E_TOOL_FAILED", "Goal butuh sesi aktif");
+      const goal = getActiveGoal(ctx.db, ctx.sessionId);
+      if (!goal) return textResult({ goal: null, note: "belum ada goal aktif" });
+      return textResult({ goal, summary: renderGoal(goal) });
+    }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "goal_update",
+      description: "Perbarui progres goal aktif. Goal sendiri tidak bisa diubah; hanya kriteria yang bisa ditandai selesai dengan bukti.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          tool: { type: "string" },
+          note: { type: "string" },
+          complete: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { id: { type: "string" }, evidence: { type: "string" } },
+              required: ["id", "evidence"]
+            }
+          }
+        }
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(goalUpdateSchema, args, "goal_update");
+      if (!ctx.db || !ctx.sessionId) throw new RannError("E_TOOL_FAILED", "Goal butuh sesi aktif");
+      assertAllowed({ mode: ctx.permissionMode, tool: "goal_update", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const goal = updateGoalProgress(ctx.db, ctx.sessionId, {
+        ...(input.action !== undefined ? { action: input.action } : {}),
+        ...(input.tool !== undefined ? { tool: input.tool } : {}),
+        ...(input.note !== undefined ? { note: input.note } : {}),
+        ...(input.complete !== undefined ? { complete: input.complete } : {})
+      });
+      if (!goal) throw new RannError("E_TOOL_FAILED", "Goal aktif tidak ditemukan");
+      return textResult({ goal, summary: renderGoal(goal) });
     }
   },
   {

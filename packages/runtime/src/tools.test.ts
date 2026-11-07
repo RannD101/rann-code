@@ -165,6 +165,8 @@ describe("tools", () => {
       "search_code",
       "apply_patch",
       "project_check",
+      "goal_status",
+      "goal_update",
       "shell_run",
       "memory",
       "skill",

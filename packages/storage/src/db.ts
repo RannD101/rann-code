@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { SCHEMA_V3 } from "./schema-v3.js";
 import { SCHEMA_V4 } from "./schema-v4.js";
 import { SCHEMA_V5 } from "./schema-v5.js";
+import { SCHEMA_V6 } from "./schema-v6.js";
 
 export type Db = Database.Database;
 
@@ -234,6 +235,11 @@ END;
     version: 5,
     name: "cache-pricing",
     sql: SCHEMA_V5
+  },
+  {
+    version: 6,
+    name: "goal-tracking",
+    sql: SCHEMA_V6
   }
 ];
 

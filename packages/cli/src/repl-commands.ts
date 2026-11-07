@@ -17,6 +17,7 @@ export const REPL_COMMANDS: ReplCommand[] = [
   { name: "provider", usage: "/provider [nama]", description: "Lihat atau ganti provider", category: "model" },
   { name: "permission", usage: "/permission [mode]", description: "Lihat atau ganti mode izin", category: "model" },
   { name: "plan", usage: "/plan <tugas>", description: "Susun rencana tanpa menjalankan tool", category: "rencana" },
+  { name: "goal", usage: "/goal <teks> [| kriteria; ...]", description: "Pasang, cek, atau tutup goal sesi (status, check, done, cancel)", category: "rencana" },
   { name: "execute", usage: "/execute <tugas>", description: "Susun rencana lalu jalankan", category: "rencana" },
   { name: "tasks", usage: "/tasks", description: "Daftar rencana dan tugas", category: "rencana" },
   { name: "cancel", usage: "/cancel", description: "Batalkan turn yang berjalan", category: "rencana" },

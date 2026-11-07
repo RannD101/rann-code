@@ -12,7 +12,8 @@ import {
   recordUsage,
   sumTokensSince,
   sumCostSince,
-  touchSession
+  touchSession,
+  updateGoalProgress
 } from "@rann/storage";
 import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import type { ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
@@ -671,6 +672,18 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         });
         publish("tool.start", { tool: call.name, args: redactSecrets(call.args), call_id: call.id, tool_call_id: toolRow.id });
 
+        const trackGoal = (status: "ok" | "error"): void => {
+          if (call.name === "goal_update") return;
+          try {
+            updateGoalProgress(options.db, session.id, {
+              tool: call.name,
+              action: status === "ok" ? "tool selesai" : "tool gagal"
+            });
+          } catch {
+            // goal tracking tidak boleh menggagalkan turn
+          }
+        };
+
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
           completeToolCall(db, toolRow.id, {
             status: result.ok ? "ok" : "error",
@@ -710,9 +723,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             exit_code: result.exitCode,
             duration_ms: result.durationMs
           });
+          trackGoal(result.ok ? "ok" : "error");
         };
 
         const finishError = (code: string, message: string): void => {
+          trackGoal("error");
           completeToolCall(db, toolRow.id, { status: "error", result: { code, message } });
           try {
             appendAudit(db, {
@@ -759,6 +774,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             mcp: options.mcp,
             sessionId: session.id,
             turnId,
+            db: options.db,
             ...(options.checkpointsDir ? { checkpointsDir: options.checkpointsDir } : {})
           });
           try {

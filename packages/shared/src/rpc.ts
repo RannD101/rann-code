@@ -172,6 +172,43 @@ export const planListParams = z.object({
 
 export const taskListParams = z.object({ sessionId: z.string().min(1) });
 
+const goalCriterion = z.union([
+  z.string().min(1).max(2_000),
+  z.object({ id: z.string().min(1).max(40).optional(), text: z.string().min(1).max(2_000) })
+]);
+
+export const goalGetParams = z.object({ sessionId: z.string().min(1) });
+
+export const goalListParams = z.object({
+  sessionId: z.string().min(1),
+  limit: z.number().int().min(1).max(100).default(20)
+});
+
+export const goalSetParams = z.object({
+  sessionId: z.string().min(1),
+  goal: z.string().min(1).max(20_000),
+  criteria: z.array(goalCriterion).max(50).optional(),
+  assumptions: z.array(z.string().min(1).max(2_000)).max(50).optional(),
+  createdBy: z.enum(["user", "replan"]).default("user")
+});
+
+export const goalUpdateParams = z.object({
+  sessionId: z.string().min(1),
+  action: z.string().max(2_000).optional(),
+  tool: z.string().max(200).optional(),
+  note: z.string().max(4_000).optional(),
+  complete: z
+    .array(z.object({ id: z.string().min(1).max(40), evidence: z.string().min(1).max(4_000) }))
+    .max(50)
+    .optional()
+});
+
+export const goalFinishParams = z.object({
+  sessionId: z.string().min(1),
+  status: z.enum(["done", "failed", "cancelled"]),
+  note: z.string().max(4_000).optional()
+});
+
 export const methodParams = {
   health: empty,
   shutdown: shutdownParams,
@@ -206,7 +243,12 @@ export const methodParams = {
   "plan.list": planListParams,
   "checkpoint.list": checkpointListParams,
   "checkpoint.restore": checkpointRestoreParams,
-  "task.list": taskListParams
+  "task.list": taskListParams,
+  "goal.get": goalGetParams,
+  "goal.list": goalListParams,
+  "goal.set": goalSetParams,
+  "goal.update": goalUpdateParams,
+  "goal.finish": goalFinishParams
 } as const;
 
 export type MethodName = keyof typeof methodParams;
