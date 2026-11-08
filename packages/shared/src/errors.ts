@@ -182,16 +182,48 @@ const HINTS: Partial<Record<ErrorCode, string>> = {
   E_INTERNAL: "Jalankan ulang dengan --debug, lalu laporkan trace id bila masalah berulang."
 };
 
-export function hintFor(code: ErrorCode): string {
+
+const HINTS_EN: Partial<Record<ErrorCode, string>> = {
+  E_SCOPE: "Request a token with the required gateway scope.",
+  E_PROVIDER_AUTH: "Check the provider API key with rann provider test, then log in again.",
+  E_PROVIDER_RATE_LIMIT: "Wait or switch provider with rann provider use.",
+  E_PROVIDER_UNAVAILABLE: "Check the provider connection and endpoint; the circuit breaker is open.",
+  E_CONTEXT_OVERFLOW: "Remove attachments or run /compact, then retry.",
+  E_TOOL_TIMEOUT: "Raise the tool timeout or split the work into smaller steps.",
+  E_FILE_CHANGED: "Re-read the file before writing because it changed.",
+  E_LEASE_CONFLICT: "Another session holds this path; wait or cancel that session.",
+  E_PLAN_REQUIRED_APPROVAL: "Approve the plan through the permission dialog.",
+  E_BUDGET_EXHAUSTED: "Raise the budget or choose a cheaper model.",
+  E_APPROVAL_REQUIRED: "Approve the action in the terminal or rerun with suitable permission.",
+  E_DAEMON_DOWN: "Run rann doctor and try again.",
+  E_NO_PROGRESS: "Change strategy or parameters; do not repeat the same command.",
+  E_CONFIG_INVALID: "Check rann config list and fix the reported key.",
+  E_PERMISSION: "Change permission with /permission or add the path/tool to the allow list.",
+  E_SANDBOX: "Check the sandbox and workspace_only limits.",
+  E_PLAN_BLOCKED: "Inspect failed task dependencies, then revise or unblock the plan.",
+  E_GOAL_INCOMPLETE: "Complete the goal criteria with evidence or change the goal explicitly.",
+  E_VERIFICATION_FAILED: "Read the verification output, fix the failure, and rerun.",
+  E_RUNTIME_EXCEEDED: "Split the task or raise maxRuntime in config.",
+  E_RECOVERY_FAILED: "Inspect the last backup and checkpoint before retrying recovery.",
+  E_INPUT_TOO_LARGE: "Reduce the attachment or prompt size.",
+  E_TOOL_INVALID_ARGS: "Check the tool argument schema and value types.",
+  E_TOOL_NOT_FOUND: "Run /tool list to see available tools.",
+  E_UNSUPPORTED: "Check model or platform capabilities.",
+  E_STORAGE: "Check disk space and database integrity with rann doctor.",
+  E_DB: "Run rann doctor and inspect database integrity."
+};
+
+export function hintFor(code: ErrorCode, locale: "id" | "en" = "id"): string {
+  if (locale === "en") return HINTS_EN[code] ?? "Run rann doctor or retry with --debug for technical detail.";
   return HINTS[code] ?? "Jalankan rann doctor atau ulangi dengan --debug untuk detail teknis.";
 }
 
-export function toRpcError(value: unknown, traceId?: string): RpcErrorShape {
+export function toRpcError(value: unknown, traceId?: string, locale: "id" | "en" = "id"): RpcErrorShape {
   const err = toRannError(value);
   const data = { ...(err.data ?? {}), trace_id: traceId ?? `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}` };
   const shape: RpcErrorShape = { code: err.code, message: err.message };
   if (Object.keys(data).length > 0) shape.data = data;
-  shape.hint = hintFor(err.code);
+  shape.hint = hintFor(err.code, locale);
   return shape;
 }
 

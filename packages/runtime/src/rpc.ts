@@ -408,7 +408,7 @@ export class RpcServer {
       const response = JSON.stringify({ jsonrpc: "2.0", id, result });
       if (!socket.destroyed) socket.write(response + "\n");
     } catch (error) {
-      const rpcError = toRpcError(error, newId("req"));
+      const rpcError = toRpcError(error, newId("req"), this.options.config.config.ui.language);
       if (!socket.destroyed) socket.write(JSON.stringify({ jsonrpc: "2.0", id, error: rpcError }) + "\n");
     }
   }
