@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { RannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
@@ -24,7 +24,7 @@ import {
   listFileCheckpoints,
   restoreFileCheckpoint
 } from "../checkpoint-files.js";
-import { applyFileTransaction, searchCode, type TransactionFile } from "../code-tools.js";
+import { applyFileTransaction, searchCode, type FileChange, type TransactionFile } from "../code-tools.js";
 import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
@@ -44,6 +44,7 @@ export interface ToolContext {
   turnId?: string;
   db?: Db;
   checkpointsDir?: string;
+  artifactsDir?: string;
   allow?: string[];
   deny?: string[];
   signal?: AbortSignal;
@@ -262,6 +263,46 @@ function isTestPath(path: string): boolean {
 function assertionCount(text: string): number {
   return (text.match(/\b(expect|assert|should)\s*\(/g) ?? []).length;
 }
+
+const CODE_RENAME_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs", ".java", ".kt", ".kts", ".cs", ".rb", ".php", ".c", ".h", ".cc", ".cpp", ".hpp", ".md", ".json", ".yaml", ".yml", ".toml"]);
+const CODE_RENAME_SKIP = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", ".rann", "vendor", "target"]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function walkRenameFiles(root: string, limit: number): string[] {
+  const out: string[] = [];
+  const visit = (dir: string): void => {
+    if (out.length >= limit) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (out.length >= limit) return;
+      if (entry.isSymbolicLink()) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!CODE_RENAME_SKIP.has(entry.name)) visit(path);
+      } else if (entry.isFile() && CODE_RENAME_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase())) {
+        out.push(path);
+      }
+    }
+  };
+  visit(root);
+  return out;
+}
+
+const codeRenameSchema = z.object({
+  old_name: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "old_name bukan identifier valid"),
+  new_name: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "new_name bukan identifier valid"),
+  path: z.string().min(1).optional(),
+  dry_run: z.boolean().optional(),
+  max_files: z.number().int().min(1).max(5_000).optional()
+});
 
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
 
@@ -1301,7 +1342,7 @@ export const tools: ToolDefinition[] = [
         });
       }
       assertAllowed({ mode: ctx.permissionMode, tool: "project_check", risk: "exec", command, approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
-      const result = await executeTool(
+      let result = await executeTool(
         "shell_run",
         {
           command,
@@ -1309,6 +1350,25 @@ export const tools: ToolDefinition[] = [
         },
         { ...ctx, approved: true }
       );
+      let flaky = false;
+      let attempts = 1;
+      if (input.action === "test" && !result.ok) {
+        for (let retry = 1; retry <= 2; retry += 1) {
+          attempts += 1;
+          result = await executeTool(
+            "shell_run",
+            {
+              command,
+              ...(input.timeout_ms !== undefined ? { timeout_ms: input.timeout_ms } : {})
+            },
+            { ...ctx, approved: true }
+          );
+          if (result.ok) {
+            flaky = true;
+            break;
+          }
+        }
+      }
       const output = result.output as Record<string, unknown> | null;
       const text = output && typeof output === "object"
         ? `${String(output.stdout ?? "")}\n${String(output.stderr ?? "")}`
@@ -1317,7 +1377,7 @@ export const tools: ToolDefinition[] = [
         action: input.action,
         command,
         ...result,
-        ...(input.action === "test" ? { summary: parseTestSummary(text) } : {})
+        ...(input.action === "test" ? { summary: { ...parseTestSummary(text), flaky, attempts } } : {})
       });
     }
   },
@@ -2026,7 +2086,74 @@ export const tools: ToolDefinition[] = [
       });
       return textResult(result);
     }
-  }
+  },
+  {
+    risk: "write",
+    spec: {
+      name: "code_rename",
+      description: "Ganti nama simbol di seluruh berkas kode dalam workspace dengan batas kata. Transaksional, mendukung dry_run, dan menghormati folder generated.",
+      parameters: {
+        type: "object",
+        properties: {
+          old_name: { type: "string", description: "Nama simbol lama, identifier valid" },
+          new_name: { type: "string", description: "Nama simbol baru, identifier valid" },
+          path: { type: "string", description: "Berkas atau folder awal; default seluruh workspace" },
+          dry_run: { type: "boolean", description: "Hanya tampilkan berkas yang akan berubah" },
+          max_files: { type: "integer", minimum: 1, maximum: 5000 }
+        },
+        required: ["old_name", "new_name"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(codeRenameSchema, args, "code_rename");
+      assertAllowed({ mode: ctx.permissionMode, tool: "code_rename", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      if (input.old_name === input.new_name) throw new RannError("E_TOOL_INVALID_ARGS", "Nama lama dan baru sama");
+      const root = input.path ? resolveInsideWorkspace(input.path, ctx) : ctx.workspaceRoot;
+      const files = existsSync(root) && statSync(root).isDirectory() ? walkRenameFiles(root, input.max_files ?? 2_000) : [root];
+      const pattern = new RegExp(`\\b${escapeRegExp(input.old_name)}\\b`, "g");
+      const changes: FileChange[] = [];
+      const summary: Array<{ path: string; replacements: number }> = [];
+      for (const file of files) {
+        if (!existsSync(file) || !statSync(file).isFile()) continue;
+        let text: string;
+        try {
+          text = readFileSync(file, "utf8");
+        } catch {
+          continue;
+        }
+        const matches = text.match(pattern);
+        if (!matches || matches.length === 0) continue;
+        const relPathChange = relative(ctx.workspaceRoot, file).replace(/\\/g, "/");
+        changes.push({ path: relPathChange, content: text.replace(pattern, input.new_name) });
+        summary.push({ path: relPathChange, replacements: matches.length });
+      }
+      if (changes.length === 0) return textResult({ changed: 0, files: [] });
+      if (input.dry_run === true) return textResult({ dry_run: true, changed: changes.length, files: summary });
+      const targets = changes.map((change) => resolve(ctx.workspaceRoot, change.path));
+      const leases = acquireLeases(ctx, targets);
+      const transaction = beginTransaction(ctx, { tool: "code_rename", old_name: input.old_name, new_name: input.new_name });
+      try {
+        const applied = applyFileTransaction(ctx.workspaceRoot, changes, { workspaceOnly: ctx.workspaceOnly, includeText: true });
+        recordChanges(ctx, transaction, applied.files, "applied");
+        finishTransactionSafe(ctx, transaction, "committed", {
+          tool: "code_rename",
+          old_name: input.old_name,
+          new_name: input.new_name,
+          files: applied.files.map((file) => ({ path: file.path, lines_added: file.lines_added, lines_removed: file.lines_removed }))
+        });
+        return textResult({
+          changed: applied.files.length,
+          replacements: summary.reduce((total, item) => total + item.replacements, 0),
+          files: summary
+        });
+      } catch (error) {
+        finishTransactionSafe(ctx, transaction, "failed", { tool: "code_rename", error: String(error) });
+        throw error;
+      } finally {
+        releaseLeases(ctx, leases);
+      }
+    }
+  },
 ];
 
 function aliasTool(name: string, target: string, description: string): ToolDefinition {

@@ -371,6 +371,33 @@ export function revisePlan(
   return { id: plan.id, version, draft, validation, taskIds, text: plan.text };
 }
 
+function evaluatePlan(db: Db, plan: ActivePlan): Record<string, unknown> {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed, MIN(created_at) AS started_at, MAX(ended_at) AS ended_at FROM tasks WHERE plan_id = ?"
+  ).get(plan.id) as { total?: number; done?: number; failed?: number; started_at?: number | null; ended_at?: number | null } | undefined;
+  const total = row?.total ?? 0;
+  const done = row?.done ?? 0;
+  const failed = row?.failed ?? 0;
+  const minutes = row?.started_at && row?.ended_at ? Math.max(0, Math.round((row.ended_at - row.started_at) / 60_000)) : null;
+  const planRow = getPlan(db, plan.id);
+  const interventions = planRow?.turn_id
+    ? (db.prepare("SELECT COUNT(*) AS n FROM approvals WHERE turn_id = ?").get(planRow.turn_id) as { n?: number } | undefined)?.n ?? 0
+    : 0;
+  return {
+    total,
+    done,
+    failed,
+    success_rate: total > 0 ? Number((done / total).toFixed(3)) : 0,
+    actual_minutes: minutes,
+    estimated_minutes: plan.draft.estimate.minutes,
+    estimate_source: plan.draft.estimate.source,
+    interventions,
+    cost_usd: null,
+    cost_known: false,
+    evaluated_at: Date.now()
+  };
+}
+
 export function finishPlan(
   db: Db,
   plan: ActivePlan,
@@ -384,8 +411,14 @@ export function finishPlan(
       publish("task.update", { task_id: task.id, status, title: task.title });
     }
   }
+  const evaluation = evaluatePlan(db, plan);
+  const row = getPlan(db, plan.id);
+  if (row) {
+    const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    updatePlan(db, plan.id, { metadata: { ...metadata, evaluation } });
+  }
   updatePlanStatus(db, plan.id, status);
-  publish("plan.update", { plan_id: plan.id, status });
+  publish("plan.update", { plan_id: plan.id, status, evaluation });
 }
 
 function commandMatches(argsJson: string, command: string): boolean {

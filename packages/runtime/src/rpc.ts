@@ -1692,6 +1692,7 @@ export class RpcServer {
       model,
       workspaceRoot,
       ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
+      artifactsDir: this.options.layout.artifactsDir,
       config: { ...agentConfig, instructionsHome: this.options.layout.profileDir },
       browser: this.browser,
       context: {
@@ -2094,6 +2095,7 @@ export class RpcServer {
         model: target.model,
         workspaceRoot: options.projectPath,
         ...(this.options.layout.checkpointsDir ? { checkpointsDir: this.options.layout.checkpointsDir } : {}),
+        artifactsDir: this.options.layout.artifactsDir,
         config: childConfig,
         browser: this.browser,
         context: {

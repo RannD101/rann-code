@@ -215,6 +215,7 @@ describe("tools", () => {
       "messaging_send",
       "agent_message",
       "task",
+      "code_rename",
       "read_file",
       "write_file",
       "edit_file",
@@ -222,6 +223,19 @@ describe("tools", () => {
       "list_dir",
       "stat_file"
     ]);
+  });
+
+  it("mengganti nama simbol lintas berkas secara transaksional", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "a.ts"), "export function hitungPajak(x: number) { return x; }\n", "utf8");
+    writeFileSync(join(root, "b.ts"), "import { hitungPajak } from \"./a.js\";\nconsole.log(hitungPajak(1));\n", "utf8");
+    const preview = await executeTool("code_rename", { old_name: "hitungPajak", new_name: "hitungTotal", dry_run: true }, context(root));
+    expect((preview.output as { changed: number }).changed).toBe(2);
+    const result = await executeTool("code_rename", { old_name: "hitungPajak", new_name: "hitungTotal" }, context(root));
+    expect((result.output as { changed: number }).changed).toBe(2);
+    expect(readFileSync(join(root, "a.ts"), "utf8")).toContain("hitungTotal");
+    expect(readFileSync(join(root, "b.ts"), "utf8")).toContain("hitungTotal");
+    expect(readFileSync(join(root, "b.ts"), "utf8")).not.toContain("hitungPajak");
   });
 
   it("menolak menulis bila hash berkas berubah", async () => {

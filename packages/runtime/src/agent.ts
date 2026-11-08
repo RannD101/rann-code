@@ -128,6 +128,7 @@ export interface RunTurnOptions {
   model: string;
   workspaceRoot: string;
   checkpointsDir?: string;
+  artifactsDir?: string;
   config: AgentConfig;
   context?: ContextOptions;
   budget?: BudgetOptions;
@@ -1212,7 +1213,25 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         };
 
         const finishError = (code: string, message: string): void => {
-          const observation: Observation = { status: "error", summary: message.slice(0, 300), data: { code, message }, artifacts: [] };
+          const artifacts: string[] = [];
+          if (options.artifactsDir) {
+            try {
+              mkdirSync(options.artifactsDir, { recursive: true });
+              const artifact = join(options.artifactsDir, `tool-error-${toolRow.id}.json`);
+              writeFileSync(artifact, JSON.stringify({
+                tool: call.name,
+                code,
+                message,
+                args: redactSecrets(call.args),
+                cwd: workspaceRoot,
+                at: new Date().toISOString()
+              }, null, 2), { mode: 0o600 });
+              artifacts.push(artifact);
+            } catch {
+              // artefak error bersifat best effort
+            }
+          }
+          const observation: Observation = { status: "error", summary: message.slice(0, 300), data: { code, message, ...(artifacts.length > 0 ? { artifacts } : {}) }, artifacts };
           publish("observation", { tool: call.name, call_id: call.id, ...observation });
           publish("evaluation", { tool: call.name, call_id: call.id, ok: false, reason: message, code });
           if (code !== "E_NO_PROGRESS") {
@@ -1245,7 +1264,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             content: JSON.stringify({ error: code, message }),
             contentJson: { toolCallId: call.id, toolName: call.name }
           });
-          publish("tool.end", { tool: call.name, status: "error", error_code: code, reason: message });
+          publish("tool.end", { tool: call.name, status: "error", error_code: code, reason: message, ...(artifacts.length > 0 ? { artifacts } : {}) });
         };
 
         const preHook = config.hooks
