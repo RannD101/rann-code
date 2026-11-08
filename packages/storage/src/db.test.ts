@@ -11,6 +11,7 @@ import {
   countMemories,
   createSession,
   createTurn,
+  ensureDefaultProfile,
   eventsForSession,
   finishTurn,
   getSession,
@@ -169,6 +170,17 @@ describe("database", () => {
       expect(names.has(table), `tabel ${table} tidak ada`).toBe(true);
     }
     expect(names.has("memories")).toBe(false);
+  });
+
+  it("mengisolasi memori per profil", () => {
+    const { db } = freshDb();
+    const defaultProfile = ensureDefaultProfile(db);
+    const at = Date.now();
+    db.prepare("INSERT INTO profiles (id, name, locale, settings_json, created_at, updated_at) VALUES ('profil-b', 'profil-b', 'id', '{}', ?, ?)").run(at, at);
+    addMemory(db, { text: "preferensi profil default", scope: "global" });
+    addMemory(db, { text: "preferensi profil b", scope: "global", profileId: "profil-b" });
+    expect(listMemories(db, { scope: "global", profileId: "profil-b" }).map((entry) => entry.text)).toEqual(["preferensi profil b"]);
+    expect(listMemories(db, { scope: "global", profileId: defaultProfile }).map((entry) => entry.text)).toEqual(["preferensi profil default"]);
   });
 
   it("menyimpan memori global dan proyek dengan pencarian FTS", () => {

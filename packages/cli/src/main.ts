@@ -3530,8 +3530,9 @@ async function memoryCommand(args: ParsedArgs): Promise<number> {
       client.request<unknown>("memory.export", { projectPath })
     );
     const target = flagString(args, "out");
+    const exportPayload = payload as { version?: number; exported_at?: number; entries?: unknown[] };
     const text = flagBool(args, "jsonl")
-      ? `${((payload as { entries?: unknown[] }).entries ?? []).map((entry) => JSON.stringify(entry)).join("\n")}\n`
+      ? `${JSON.stringify({ _meta: { version: exportPayload.version ?? 1, exported_at: exportPayload.exported_at ?? Date.now(), schema: "rann-memory" } })}\n${(exportPayload.entries ?? []).map((entry) => JSON.stringify(entry)).join("\n")}\n`
       : `${JSON.stringify(payload, null, 2)}\n`;
     if (target) writeFileSync(target, text, { mode: 0o600 });
     else process.stdout.write(text);
@@ -3542,14 +3543,23 @@ async function memoryCommand(args: ParsedArgs): Promise<number> {
     const source = flagString(args, "from") ?? args.positionals[0];
     if (!source) throw new RannError("E_INVALID_PARAMS", "memory import butuh --from <berkas.json>");
     const raw = readFileSync(source, "utf8");
+    const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const jsonlEntries = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((item) => item._meta === undefined);
     const payload = source.endsWith(".jsonl")
-      ? { version: 1, exported_at: Date.now(), entries: raw.split(/\r?\n/).filter((line) => line.trim().length > 0).map((line) => JSON.parse(line)) }
+      ? { version: 1, exported_at: Date.now(), entries: jsonlEntries }
       : JSON.parse(raw) as unknown;
+    const strategy = flagString(args, "strategy") ?? "merge";
+    if (!["skip", "overwrite", "merge"].includes(strategy)) {
+      throw new RannError("E_INVALID_PARAMS", "Strategi impor harus skip, overwrite, atau merge");
+    }
     const result = await withClient((client) =>
       client.request<{ imported: number; skipped: number }>("memory.import", {
         projectPath,
         payload,
-        replace: flagBool(args, "replace")
+        replace: flagBool(args, "replace"),
+        strategy
       })
     );
     print(`memori diimpor: ${result.imported}, dilewati: ${result.skipped}`);

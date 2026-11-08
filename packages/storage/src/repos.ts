@@ -488,17 +488,18 @@ function toMemoryEntry(row: MemoryDbRow): MemoryEntry {
   return { ...row, tags: parseTags(row.tags) };
 }
 
-function memoryFilter(scope: MemoryScope | "all", projectPath?: string, sessionId?: string): { where: string; values: unknown[] } {
-  if (scope === "global") return { where: "scope = 'global'", values: [] };
-  if (scope === "session") return { where: "scope = 'session' AND session_id = ?", values: [sessionId ?? ""] };
+function memoryFilter(scope: MemoryScope | "all", projectPath?: string, sessionId?: string, profileId?: string): { where: string; values: unknown[] } {
+  const profile = profileId ? "profile_id = ?" : "1 = 1";
+  if (scope === "global") return { where: `scope = 'global' AND ${profile}`, values: profileId ? [profileId] : [] };
+  if (scope === "session") return { where: `scope = 'session' AND session_id = ? AND ${profile}`, values: [sessionId ?? "", ...(profileId ? [profileId] : [])] };
   if (scope === "all") {
-    if (!projectPath) return { where: "1 = 1", values: [] };
+    if (!projectPath) return { where: profile, values: profileId ? [profileId] : [] };
     return {
-      where: "(scope = 'global' OR (scope = 'project' AND project_path = ?) OR (scope = 'session' AND session_id = ?))",
-      values: [projectPath, sessionId ?? ""]
+      where: `(scope = 'global' OR (scope = 'project' AND project_path = ?) OR (scope = 'session' AND session_id = ?)) AND ${profile}`,
+      values: [projectPath, sessionId ?? "", ...(profileId ? [profileId] : [])]
     };
   }
-  return { where: "scope = 'project' AND project_path = ?", values: [projectPath ?? ""] };
+  return { where: `scope = 'project' AND project_path = ? AND ${profile}`, values: [projectPath ?? "", ...(profileId ? [profileId] : [])] };
 }
 
 export interface AddMemoryInput {
@@ -564,11 +565,12 @@ export interface ListMemoryOptions {
   scope?: MemoryScope | "all";
   projectPath?: string;
   sessionId?: string;
+  profileId?: string;
   limit?: number;
 }
 
 export function listMemories(db: Db, options: ListMemoryOptions = {}): MemoryEntry[] {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId, options.profileId);
   return (
     db
       .prepare(`SELECT * FROM memory_entries WHERE ${filter.where} ORDER BY updated_at DESC LIMIT ?`)
@@ -587,7 +589,7 @@ function ftsQuery(query: string): string {
 }
 
 export function searchMemories(db: Db, query: string, options: ListMemoryOptions = {}): MemoryEntry[] {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId, options.profileId);
   const match = ftsQuery(query);
   if (match.length === 0) return listMemories(db, options);
   try {
@@ -634,7 +636,7 @@ export function removeMemory(db: Db, idOrText: string, options: { soft?: boolean
 }
 
 export function countMemories(db: Db, options: ListMemoryOptions = {}): number {
-  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId);
+  const filter = memoryFilter(options.scope ?? "all", options.projectPath, options.sessionId, options.profileId);
   return (db.prepare(`SELECT COUNT(*) AS c FROM memory_entries WHERE ${filter.where}`).get(...filter.values) as { c: number }).c;
 }
 

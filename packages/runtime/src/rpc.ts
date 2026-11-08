@@ -20,6 +20,7 @@ import {
   eventsForTurn,
   finishSchedulerRun,
   finishTurn,
+  ensureDefaultProfile,
   finishTurnRuntime,
   finishGoal,
   getJob,
@@ -1107,7 +1108,10 @@ export class RpcServer {
       case "memory.import":
         return this.memoryService(input.projectPath as string | undefined).importAll(
           input.payload as never,
-          { replace: input.replace === true }
+          {
+            replace: input.replace === true,
+            ...(input.strategy === "skip" || input.strategy === "overwrite" || input.strategy === "merge" ? { strategy: input.strategy } : {})
+          }
         );
       case "memory.index":
         return this.memoryService(input.projectPath as string | undefined).indexKnowledge(
@@ -1612,7 +1616,8 @@ export class RpcServer {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
           retrieve: config.memory.retrieve,
-          sessionId
+          sessionId,
+          profileId: this.profileId()
         })
       : undefined;
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, workspaceRoot) : undefined;
@@ -2016,6 +2021,7 @@ export class RpcServer {
           promptChars: config.memory.prompt_chars,
           retrieve: config.memory.retrieve,
           sessionId: child.id,
+          profileId: this.profileId(),
           agentProfile: selected.name
         })
       : undefined;
@@ -2165,6 +2171,7 @@ export class RpcServer {
       enabled: config.memory.enabled,
       promptChars: config.memory.prompt_chars,
       retrieve: config.memory.retrieve,
+      profileId: this.profileId(),
       ...(sessionId ? { sessionId } : {})
     });
   }
@@ -2173,6 +2180,11 @@ export class RpcServer {
     const config = this.options.config.config;
     if (!config.skills.enabled) throw new RannError("E_PERMISSION", "Skill lokal tidak aktif di config");
     return new SkillStore(this.options.layout.profileDir, projectPath ?? process.cwd());
+  }
+
+  private profileId(): string {
+    const row = this.db.prepare("SELECT id FROM profiles WHERE name = ?").get(this.options.layout.profile) as { id: string } | undefined;
+    return row?.id ?? ensureDefaultProfile(this.db);
   }
 
   private modelList(): unknown {

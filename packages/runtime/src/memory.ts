@@ -9,6 +9,7 @@ export interface MemoryServiceOptions {
   promptChars: number;
   retrieve: number;
   agentProfile?: string;
+  profileId?: string;
   sessionId?: string;
   ttlHours?: Record<string, number>;
   autoExtract?: boolean;
@@ -108,6 +109,7 @@ export class MemoryService {
     return addMemory(this.db, {
       text,
       scope: input.scope,
+      ...(this.options.profileId ? { profileId: this.options.profileId } : {}),
       projectPath: this.projectPath,
       kind,
       tags,
@@ -155,13 +157,13 @@ export class MemoryService {
   }
 
   list(scope: MemoryScope | "all" = "all", limit = 50): MemoryEntry[] {
-    return listMemories(this.db, { scope, projectPath: this.projectPath, ...(this.options.sessionId ? { sessionId: this.options.sessionId } : {}), limit });
+    return listMemories(this.db, { scope, projectPath: this.projectPath, ...(this.options.profileId ? { profileId: this.options.profileId } : {}), ...(this.options.sessionId ? { sessionId: this.options.sessionId } : {}), limit });
   }
 
   search(query: string, limit = 20): MemoryEntry[] {
     const visible = this.visible();
     const byId = new Map(visible.map((entry) => [entry.id, entry]));
-    const lexical = searchMemories(this.db, query, { scope: "all", projectPath: this.projectPath, limit: limit * 4 })
+    const lexical = searchMemories(this.db, query, { scope: "all", projectPath: this.projectPath, ...(this.options.profileId ? { profileId: this.options.profileId } : {}), limit: limit * 4 })
       .filter((entry) => byId.has(entry.id));
     const queryTags = new Set(query.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter((word) => word.length >= 3));
     const tagged = visible.filter((entry) => entry.tags.some((tag) => queryTags.has(tag.toLowerCase().replace(/^[^:]+:/, ""))));
@@ -281,7 +283,7 @@ export class MemoryService {
   }
 
   count(): number {
-    return countMemories(this.db, { scope: "all", projectPath: this.projectPath });
+    return countMemories(this.db, { scope: "all", projectPath: this.projectPath, ...(this.options.profileId ? { profileId: this.options.profileId } : {}) });
   }
 
   /** Tandai entri lama sebagai digantikan tanpa menghapus riwayat. */
@@ -355,7 +357,7 @@ export class MemoryService {
     return { imported: result.imported, skipped: result.skipped + skipped, merged: 0 };
   }
 
-  importAll(payload: MemoryExport, options: { replace?: boolean } = {}): { imported: number; skipped: number } {
+  importAll(payload: MemoryExport, options: { replace?: boolean; strategy?: "skip" | "overwrite" | "merge" } = {}): { imported: number; skipped: number } {
     if (payload.version !== 1 || !Array.isArray(payload.entries)) {
       throw new Error("Format ekspor memori tidak dikenal");
     }
@@ -368,6 +370,14 @@ export class MemoryService {
       if (typeof entry.text !== "string" || entry.text.trim().length < 3) {
         skipped += 1;
         continue;
+      }
+      const duplicate = this.list("all", 2_000).find((item) => item.text === entry.text.trim());
+      if (duplicate && (options.strategy ?? "merge") === "skip") {
+        skipped += 1;
+        continue;
+      }
+      if (duplicate && options.strategy === "overwrite") {
+        removeMemory(this.db, duplicate.id);
       }
       this.add({
         text: entry.text,
