@@ -1145,7 +1145,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           publish("tool.end", {
             tool: call.name,
             status: result.ok ? "ok" : "error",
-            cwd: workspaceRoot,
+            cwd: typeof (result.output as Record<string, unknown> | null)?.cwd === "string"
+              ? String((result.output as Record<string, unknown>).cwd)
+              : workspaceRoot,
             exit_code: result.exitCode,
             duration_ms: result.durationMs,
             summary: summary.replace(/\s+/g, " ").slice(0, 240)

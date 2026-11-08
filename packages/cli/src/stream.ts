@@ -355,6 +355,15 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         emit({ type: "task.update", turn_id: turnId, ...event.data });
         return;
       }
+      if (event.type === "job.update") {
+        const status = String(event.data.status ?? event.data.event ?? "");
+        if (status === "done" || status === "failed" || status === "dead" || status === "succeeded") {
+          const line = `[job ${String(event.data.id ?? "?")}] ${status}${event.data.message ? `: ${String(event.data.message)}` : ""}`;
+          if (format === "text") printErr(status === "failed" || status === "dead" ? ui.red(line) : ui.dim(line));
+          else emit({ type: "job.update", turn_id: turnId, ...event.data });
+        }
+        return;
+      }
       if (event.type === "approval.request" || event.type === "approval.requested") {
         void askApproval(event);
         return;
