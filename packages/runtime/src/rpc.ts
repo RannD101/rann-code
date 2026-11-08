@@ -124,7 +124,7 @@ export interface RpcServerOptions {
 }
 
 interface PendingApproval {
-  settle: (approved: boolean, remember?: boolean) => void;
+  settle: (approved: boolean, remember?: boolean, reason?: string, taskIds?: string[], note?: string) => void;
   timer: NodeJS.Timeout;
   onAbort: () => void;
   signal?: AbortSignal;
@@ -1053,7 +1053,13 @@ export class RpcServer {
         );
       }
       case "permission.respond":
-        return this.respondPermission(input.requestId as string, input.approved as boolean, input.remember as boolean);
+        return this.respondPermission(
+          input.requestId as string,
+          input.approved as boolean,
+          input.remember as boolean,
+          Array.isArray(input.taskIds) ? input.taskIds.map(String) : undefined,
+          typeof input.note === "string" ? input.note : undefined
+        );
       case "memory.list":
         return this.memoryService(input.projectPath as string | undefined).list(
           input.scope as "global" | "project" | "all",
@@ -1392,7 +1398,7 @@ export class RpcServer {
     this.broadcast(event);
 
     return new Promise<ApprovalDecision>((resolve) => {
-      const settle = (approved: boolean, remember = false, reason = "user"): void => {
+      const settle = (approved: boolean, remember = false, reason = "user", taskIds?: string[], note?: string): void => {
         const entry = this.pendingApprovals.get(requestId);
         if (!entry) return;
         clearTimeout(entry.timer);
@@ -1410,13 +1416,15 @@ export class RpcServer {
               turn_id: entry.turnId,
               remember,
               reason,
+              task_ids: taskIds ?? null,
+              note: note ?? null,
               args: JSON.stringify(redactSecrets(entry.args)).slice(0, 2_000)
             }
           });
         } catch {
           // Audit tidak boleh menahan keputusan izin yang sudah diambil user.
         }
-        resolve({ approved, remember });
+        resolve({ approved, remember, ...(taskIds ? { taskIds } : {}), ...(note ? { note } : {}) });
       };
       const onAbort = (): void => settle(false, false, "cancelled");
       const timer = setTimeout(() => settle(false, false, "timeout"), APPROVAL_TIMEOUT_MS);
@@ -1430,10 +1438,10 @@ export class RpcServer {
     });
   }
 
-  private respondPermission(requestId: string, approved: boolean, remember: boolean): { ok: true } {
+  private respondPermission(requestId: string, approved: boolean, remember: boolean, taskIds?: string[], note?: string): { ok: true } {
     const entry = this.pendingApprovals.get(requestId);
     if (!entry) throw new RannError("E_NOT_FOUND", `Permintaan izin tidak ditemukan atau sudah kedaluwarsa: ${requestId}`);
-    entry.settle(approved, remember);
+    entry.settle(approved, remember, approved ? "approved" : "denied", taskIds, note);
     return { ok: true };
   }
 
@@ -1733,12 +1741,12 @@ export class RpcServer {
           sessionId,
           turn.id,
           "plan",
-          { goal: plan.goal, high_risk: plan.highRisk, text: plan.text },
+          { goal: plan.goal, high_risk: plan.highRisk, text: plan.text, tasks: plan.tasks },
           controller.signal,
           plan.highRisk ? "rencana berisiko tinggi" : "persetujuan rencana",
           plan.highRisk ? "high" : undefined
         );
-        return decision.approved;
+        return decision;
       },
       signal: controller.signal,
       emit: (event) => this.broadcast(event)

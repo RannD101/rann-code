@@ -95,7 +95,9 @@ export const configExplainParams = z.object({ key: z.string().min(1) });
 export const permissionRespondParams = z.object({
   requestId: z.string().min(1),
   approved: z.boolean(),
-  remember: z.boolean().default(false)
+  remember: z.boolean().default(false),
+  taskIds: z.array(z.string().min(1)).max(200).optional(),
+  note: z.string().max(2_000).optional()
 });
 export const providerTestParams = z.object({
   name: z.string().min(1).optional(),

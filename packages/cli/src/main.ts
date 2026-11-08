@@ -870,6 +870,20 @@ function makeApprovalHandler(
       ? `\n  diff ${preview.path} (+${preview.added} -${preview.removed}):\n${preview.lines.map((line) => `    ${line}`).join("\n")}`
       : "";
     const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.length > 10_000 ? `${detail.slice(0, 10_000)}\n  ... (${detail.length - 10_000} karakter lagi, lihat log tool)` : detail}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
+    if (request.tool === "plan" && ask) {
+      const planText = typeof args.text === "string" ? args.text : detail;
+      print(planText);
+      const reply = (await ask("Setujui rencana? semua / sebagian / tolak [a/s/t]: ")).trim().toLowerCase();
+      if (reply === "s" || reply === "sebagian") {
+        const ids = (await ask("ID task yang disetujui, pisahkan dengan koma: ")).split(",").map((item) => item.trim()).filter(Boolean);
+        if (ids.length === 0) return { approved: false, reason: "tidak ada task dipilih" };
+        return { approved: true, taskIds: ids, note: "persetujuan sebagian" };
+      }
+      if (reply === "a" || reply === "semua" || reply === "y" || reply === "ya") {
+        return { approved: true, reason: "disetujui semua lewat dialog rencana" };
+      }
+      return { approved: false, reason: "rencana ditolak user" };
+    }
     const choices = [
       { key: "once", label: "Izinkan sekali" },
       { key: "always", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },

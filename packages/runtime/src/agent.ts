@@ -15,7 +15,8 @@ import {
   sumTokensSince,
   sumCostSince,
   touchSession,
-  updateGoalProgress
+  updateGoalProgress,
+  updateTaskStatus
 } from "@rann/storage";
 import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import { execFileSync } from "node:child_process";
@@ -54,6 +55,8 @@ export interface ApprovalDecision {
   approved: boolean;
   remember?: boolean;
   reason?: string;
+  taskIds?: string[];
+  note?: string;
 }
 
 export function approvalPattern(tool: string, args: unknown): string | null {
@@ -143,7 +146,7 @@ export interface RunTurnOptions {
   taskClass?: TaskClass;
   planOnly?: boolean;
   forcePlan?: boolean;
-  approvePlan?: (plan: { goal: string; highRisk: boolean; text: string }) => Promise<boolean>;
+  approvePlan?: (plan: { goal: string; highRisk: boolean; text: string; tasks: string[] }) => Promise<boolean | ApprovalDecision>;
   modelCapabilities?: ModelCapabilities;
   agentId?: string;
   contextWindow?: number;
@@ -620,19 +623,22 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       const historical = estimateFromHistory(db);
       if (historical) generated.plan.estimate = historical;
       const markdown = planToMarkdown(generated.plan, generated.validation);
-      if (generated.validation.highRisk) {
-        if (!options.approvePlan) {
-          throw new RannError(
-            "E_PLAN_REQUIRED_APPROVAL",
-            "Rencana berisiko tinggi memerlukan persetujuan eksplisit sebelum dijalankan"
-          );
-        }
-        const approved = await options.approvePlan({
+      let approvedTaskIds: string[] | undefined;
+      if (options.approvePlan) {
+        const decision = await options.approvePlan({
           goal: generated.plan.goal,
-          highRisk: true,
-          text: markdown
+          highRisk: generated.validation.highRisk,
+          text: markdown,
+          tasks: generated.plan.tasks.map((task) => task.id)
         });
+        const approved = typeof decision === "boolean" ? decision : decision.approved;
         if (!approved) throw new RannError("E_PLAN_REQUIRED_APPROVAL", "Rencana ditolak user");
+        if (typeof decision === "object" && decision.taskIds) approvedTaskIds = decision.taskIds;
+      } else if (generated.validation.highRisk) {
+        throw new RannError(
+          "E_PLAN_REQUIRED_APPROVAL",
+          "Rencana berisiko tinggi memerlukan persetujuan eksplisit sebelum dijalankan"
+        );
       }
       activePlan = persistPlan(
         db,
@@ -644,7 +650,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         (type, data) => publish(type, data)
       );
       planText = markdown;
-      publish("plan.update", { plan_id: activePlan.id, status: "draft", version: activePlan.version, draft: generated.plan, validation: generated.validation });
+      if (approvedTaskIds && approvedTaskIds.length > 0) {
+        for (const [planTaskId, taskId] of activePlan.taskIds) {
+          if (!approvedTaskIds.includes(planTaskId)) {
+            updateTaskStatus(db, taskId, "paused");
+            publish("task.update", { task_id: taskId, plan_task_id: planTaskId, status: "paused", title: generated.plan.tasks.find((task) => task.id === planTaskId)?.title ?? planTaskId });
+          }
+        }
+      }
+      publish("plan.update", { plan_id: activePlan.id, status: "draft", version: activePlan.version, draft: generated.plan, validation: generated.validation, approved_tasks: approvedTaskIds ?? null });
       publish("message.start", { kind: "plan", plan_id: activePlan.id });
       publish("message.delta", { text: `Rencana disusun:\n${markdown}\n\n` });
       if (options.planOnly) {
@@ -1386,9 +1400,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
                     "Revisi rencana mengubah goal atau menambah task berisiko tinggi; butuh persetujuan"
                   );
                 }
-                const approved = await options.approvePlan({
+                const decision = await options.approvePlan({
                   goal: input.goal ?? current.draft.goal,
                   highRisk: true,
+                  tasks: input.tasks.map((task) => task.id),
                   text: [
                     `Revisi rencana ke versi ${current.version + 1}`,
                     `Alasan: ${input.reason}`,
@@ -1400,6 +1415,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
                     .filter(Boolean)
                     .join("\n")
                 });
+                const approved = typeof decision === "boolean" ? decision : decision.approved;
                 if (!approved) throw new RannError("E_PLAN_REQUIRED_APPROVAL", "Revisi rencana ditolak user");
               }
               const next = revisePlan(

@@ -93,9 +93,12 @@ export function persistPlan(
 }
 
 export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.update", data: Record<string, unknown>) => void): void {
+  const queued = new Set(
+    (db.prepare("SELECT id FROM tasks WHERE plan_id = ? AND status = 'queued'").all(plan.id) as { id: string }[]).map((row) => row.id)
+  );
   const first = plan.draft.tasks
     .map((task, index) => ({ task, index }))
-    .filter((entry) => entry.task.dependsOn.length === 0)
+    .filter((entry) => entry.task.dependsOn.length === 0 && queued.has(plan.taskIds.get(entry.task.id) ?? ""))
     .sort((a, b) => {
       const rank = { high: 3, medium: 2, low: 1 } as const;
       return rank[b.task.risk] - rank[a.task.risk] || a.index - b.index;

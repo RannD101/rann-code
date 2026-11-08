@@ -42,6 +42,8 @@ export interface ApprovalRequest {
 export interface ApprovalDecision {
   approved: boolean;
   remember?: boolean;
+  taskIds?: string[];
+  note?: string;
 }
 
 export interface SendOptions {
@@ -212,7 +214,9 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         await client.request("permission.respond", {
           requestId,
           approved: decision.approved,
-          remember: decision.remember === true
+          remember: decision.remember === true,
+          ...(decision.taskIds ? { taskIds: decision.taskIds } : {}),
+          ...(decision.note ? { note: decision.note } : {})
         });
         if (!decision.approved) printErr(ui.dim("[izin] ditolak"));
       } catch (error) {
