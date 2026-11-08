@@ -60,6 +60,7 @@ export interface HookOutcome {
   duration_ms: number;
   error?: string;
   skipped?: boolean;
+  payload?: unknown;
 }
 
 export interface HookResult {
@@ -204,7 +205,7 @@ export class HookRunner {
       const started = Date.now();
       const label = hook.kind === "http" ? (hook.url ?? "http") : hook.kind === "plugin" ? (hook.plugin ?? "plugin") : (hook.command ?? hook.path ?? "hook");
       if (options.dryRun === true) {
-        outcomes.push({ event, hook: label, decision: "allow", duration_ms: 0, skipped: true });
+        outcomes.push({ event, hook: label, decision: "allow", duration_ms: 0, skipped: true, payload: { ...payload, event } });
         continue;
       }
       const body = JSON.stringify({ ...payload, event, ...(modified !== undefined ? { modified } : {}) });

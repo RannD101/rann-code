@@ -182,6 +182,19 @@ export class RpcServer {
     });
     this.db = opened.db;
     this.recoveredTurns = recoverInterruptedTurns(this.db);
+    for (const turn of this.recoveredTurns) {
+      try {
+        appendAudit(this.db, {
+          actor: "system",
+          action: "turn.recover",
+          resource: String((turn as unknown as Record<string, unknown>).id ?? "turn"),
+          decision: "ok",
+          metadata: turn as unknown as Record<string, unknown>
+        });
+      } catch {
+        // audit pemulihan bersifat best effort
+      }
+    }
     this.secrets = new SecretStore({
       dir: options.layout.secretsDir,
       ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
