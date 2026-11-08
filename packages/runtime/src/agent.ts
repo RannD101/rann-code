@@ -357,12 +357,31 @@ function digestRows(rows: MessageRow[], maxChars: number): string {
   let size = 0;
   let skipped = 0;
   for (const row of rows) {
-    const limit = row.role === "tool" ? 180 : 320;
     const compact = row.content.replace(/\s+/g, " ").trim();
     if (compact.length === 0) continue;
-    let text = compact.slice(0, limit);
-    if (compact.length > limit) text += "...";
-    const line = `[${row.role}${row.role === "tool" ? " hasil" : ""}] ${text}`;
+    let label: string = row.role;
+    let limit = row.role === "assistant" ? 320 : 220;
+    let text = compact;
+    if (row.role === "tool") {
+      try {
+        const parsed = JSON.parse(row.content) as Record<string, unknown>;
+        if (typeof parsed.error === "string") {
+          label = "tool error";
+          text = `${String(parsed.error)}: ${String(parsed.message ?? "")}`;
+          limit = 240;
+        } else {
+          text = compact;
+          limit = 120;
+        }
+      } catch {
+        limit = 120;
+      }
+    } else if (row.role === "assistant") {
+      const decisions = compact.split(/(?<=[.!?])\s+/).filter((part) => /rencana|keputusan|selesai|gagal|verifikasi|berikutnya/i.test(part));
+      text = decisions.length > 0 ? decisions.join(" ") : compact;
+    }
+    if (text.length > limit) text = `${text.slice(0, limit)}...`;
+    const line = `[${label}] ${text}`;
     if (size + line.length + 1 > maxChars) {
       skipped += 1;
       continue;

@@ -2269,14 +2269,21 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const command = line.split(/\s+/, 1)[0] ?? "/git";
           const rest = line.slice(command.length).trim();
           if (command === "/commit") {
-            if (!rest.startsWith("-m ")) {
-              print(ui.red('Pakai: /commit -m "pesan"'));
-              continue;
-            }
             try {
               execFileSync("git", ["add", "-A"], { cwd: process.cwd(), stdio: "ignore" });
-              const tokens = tokenizeInline(rest);
-              const message = tokens[1] ?? "";
+              let message = "";
+              if (rest.startsWith("-m ")) {
+                message = tokenizeInline(rest)[1] ?? "";
+              } else {
+                const files = execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n").filter(Boolean);
+                if (files.length === 0) {
+                  print(ui.dim("tidak ada perubahan untuk di-commit"));
+                  continue;
+                }
+                const stat = execFileSync("git", ["diff", "--cached", "--stat"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+                message = `chore: perbarui ${files.length} berkas\n\n${files.slice(0, 20).join("\n")}\n\n${stat}`;
+              }
+              if (message.trim().length === 0) throw new Error("pesan commit kosong");
               const output = execFileSync("git", ["commit", ...commitMessage(message, sessionId)], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
               print(output.trim().split("\n")[0] ?? "commit dibuat");
             } catch (error) {
