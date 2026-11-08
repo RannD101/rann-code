@@ -1943,6 +1943,7 @@ export class RpcServer {
     });
     this.broadcast(created);
 
+    const contextMode = options.input.contextMode ?? "shared";
     const turn = createTurn(this.db, { sessionId: child.id });
     const agent = createSubagent(this.db, {
       sessionId: child.id,
@@ -1959,6 +1960,7 @@ export class RpcServer {
         acceptance: options.input.acceptance ?? null,
         files: options.input.files ?? [],
         timeout_ms: options.input.timeoutMs ?? null,
+        context_mode: contextMode,
         max_steps: maxSteps,
         max_depth: config.subagents.max_depth,
         profile_source: selected.source,
@@ -2030,6 +2032,22 @@ export class RpcServer {
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, options.projectPath) : undefined;
     const mcp = config.mcp.enabled && Object.keys(config.mcp.servers).length > 0 ? this.mcp : undefined;
 
+    const sharedLines: string[] = [];
+    if (contextMode === "shared") {
+      const goal = getActiveGoal(this.db, options.parent.id);
+      if (goal) {
+        sharedLines.push(`Goal induk: ${goal.goal}`);
+        const done = goal.criteria.filter((criterion) => criterion.done).length;
+        sharedLines.push(`Kriteria induk: ${done}/${goal.criteria.length} selesai`);
+      }
+      const plan = listPlans(this.db, options.parent.id, 1)[0];
+      if (plan) sharedLines.push(`Plan induk: ${plan.goal} (versi ${plan.version}, status ${plan.status})`);
+      const summary = listMessages(this.db, options.parent.id, 200)
+        .filter((message) => message.role === "assistant")
+        .slice(-1)[0]?.content ?? "";
+      if (summary.trim().length > 0) sharedLines.push(`Ringkasan keputusan induk: ${summary.trim().slice(0, 3_000)}`);
+    }
+    const sharedContext = sharedLines.join("\n");
     const childConfig: AgentConfig = {
       permissionMode,
       workspaceOnly: config.permissions.workspace_only,
@@ -2042,6 +2060,7 @@ export class RpcServer {
         `Tujuan: ${options.input.goal}`,
         options.input.context ? `Konteks dari agent induk: ${options.input.context}` : "",
         options.input.acceptance ? `Kriteria selesai: ${options.input.acceptance}` : "",
+        sharedContext ? `Konteks bersama (bukan transkrip penuh):\n${sharedContext}` : "",
         options.input.files && options.input.files.length > 0 ? `Berkas relevan: ${options.input.files.join(", ")}` : "",
         "Kamu tidak bisa bertanya ke pengguna. Akhiri dengan ringkasan hasil yang bisa dipakai agent induk."
       ]

@@ -51,7 +51,7 @@ export interface ToolContext {
   memory?: MemoryService;
   hooks?: { run(event: "MemoryWrite", payload: Record<string, unknown>, options?: { cwd?: string }): Promise<unknown> };
   skills?: SkillStore;
-  delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number; acceptance?: string; files?: string[]; timeoutMs?: number }) => Promise<unknown>;
+  delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number; acceptance?: string; files?: string[]; timeoutMs?: number; contextMode?: "shared" | "isolated" }) => Promise<unknown>;
   agentMessage?: (input: { to: string; type: "note" | "question" | "answer" | "conflict"; subject: string; body: string; priority?: "low" | "normal" | "high"; refs?: string[] }) => Promise<unknown>;
   planRevise?: (input: {
     reason: string;
@@ -408,7 +408,8 @@ const browserSchema = z.object({
   script: z.string().max(8_000).optional(),
   delta_y: z.number().int().min(-20_000).max(20_000).optional(),
   timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
-  full_page: z.boolean().optional()
+  full_page: z.boolean().optional(),
+  persistent: z.boolean().optional()
 });
 
 const webSearchSchema = z.object({
@@ -479,6 +480,7 @@ const taskSchema = z.object({
   background: z.boolean().optional(),
   max_steps: z.number().int().min(1).max(30).optional(),
   acceptance: z.string().max(8_000).optional(),
+  context_mode: z.enum(["shared", "isolated"]).optional(),
   files: z.array(z.string().max(500)).max(100).optional(),
   timeout_ms: z.number().int().min(1_000).max(3_600_000).optional()
 });
@@ -1716,7 +1718,8 @@ export const tools: ToolDefinition[] = [
           script: { type: "string", description: "JavaScript sinkron untuk evaluate, tanpa jaringan dan tanpa import" },
           delta_y: { type: "number", description: "Piksel scroll vertikal, negatif berarti naik" },
           timeout_ms: { type: "number", description: "Batas waktu aksi, 1000 sampai 120000 ms" },
-          full_page: { type: "boolean", description: "Ambil screenshot seluruh halaman" }
+          full_page: { type: "boolean", description: "Ambil screenshot seluruh halaman" },
+          persistent: { type: "boolean", description: "Pakai profil persisten untuk sesi ini, berguna untuk login berulang" }
         },
         required: ["action"]
       }
@@ -1731,7 +1734,7 @@ export const tools: ToolDefinition[] = [
         });
       }
       const taskKey = ctx.sessionId ?? "default";
-      const output = await ctx.browser.perform(taskKey, input, { mutating });
+      const output = await ctx.browser.perform(taskKey, input, { mutating, persistent: input.persistent === true });
       return textResult(output);
     }
   },
@@ -1973,6 +1976,7 @@ export const tools: ToolDefinition[] = [
           background: { type: "boolean", description: "Jalankan di latar dan kembalikan agent_id" },
           max_steps: { type: "number", description: "Batas langkah subagent, 1 sampai 30" },
           acceptance: { type: "string", description: "Kriteria selesai yang bisa diperiksa" },
+          context_mode: { type: "string", enum: ["shared", "isolated"], description: "shared membagikan goal dan ringkasan keputusan; isolated hanya konteks eksplisit" },
           files: { type: "array", items: { type: "string" }, description: "Berkas yang relevan atau boleh disentuh" },
           timeout_ms: { type: "integer", minimum: 1000, maximum: 3600000, description: "Batas waktu subagent" }
         },
@@ -1991,7 +1995,8 @@ export const tools: ToolDefinition[] = [
         maxSteps: input.max_steps,
         acceptance: input.acceptance,
         files: input.files,
-        timeoutMs: input.timeout_ms
+        timeoutMs: input.timeout_ms,
+        contextMode: input.context_mode
       });
       return textResult(result);
     }

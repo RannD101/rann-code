@@ -92,6 +92,7 @@ export interface DelegateInput {
   acceptance?: string;
   files?: string[];
   timeoutMs?: number;
+  contextMode?: "shared" | "isolated";
 }
 
 export interface AgentConfig {
