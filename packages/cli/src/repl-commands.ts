@@ -145,7 +145,7 @@ export const BUILTIN_COMMANDS: ReplCommand[] = [
   cmd("checkpoint", ["cp"], "/checkpoint [list|create|restore]", "Buat atau lihat checkpoint", "proyek", "write"),
   cmd("checkpoints", [], "/checkpoints", "Daftar checkpoint berkas", "proyek"),
   cmd("undo", ["rewind-code"], "/undo [id]", "Kembali ke checkpoint", "proyek", "write"),
-  cmd("index", [], "/index [build|status]", "Bangun indeks kode", "proyek", "write", false, NOT_YET),
+  cmd("index", ["rebuild"], "/index rebuild", "Bangun ulang indeks knowledge", "proyek", "write"),
   cmd("search", ["grep"], "/search \"<query>\"", "Cari kode secara semantik", "proyek"),
   cmd("sessions", ["ss"], "/sessions", "Daftar sesi", "sesi"),
   cmd("resume", ["r"], "/resume <session-id>", "Lanjutkan sesi", "sesi", "write"),

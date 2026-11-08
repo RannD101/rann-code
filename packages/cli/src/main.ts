@@ -2382,6 +2382,15 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           else for (const entry of entries) print(`${entry.id}  [${entry.scope}] ${entry.text}`);
           continue;
         }
+        if (line === "/index rebuild" || line.startsWith("/index rebuild ")) {
+          const result = await client.request<{ files: number; chunks: number; skipped: number }>("memory.index", {
+            projectPath: process.cwd(),
+            root: process.cwd(),
+            maxFiles: 2_000
+          });
+          print(ui.green(`indeks dibangun ulang: ${result.files} berkas, ${result.chunks} chunk, ${result.skipped} dilewati`));
+          continue;
+        }
         if (line === "/resume" || line.startsWith("/resume ")) {
           const target = line.slice(7).trim();
           if (target.length === 0 && lastTurnId && lastCancelled) {

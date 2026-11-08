@@ -82,7 +82,7 @@ export function getActiveGoal(db: Db, sessionId: string): GoalView | undefined {
 
 export function listGoals(db: Db, sessionId: string, limit = 20): GoalView[] {
   const rows = db
-    .prepare("SELECT * FROM goals WHERE session_id = ? ORDER BY created_at DESC LIMIT ?")
+    .prepare("SELECT * FROM goals WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?")
     .all(sessionId, limit) as GoalRow[];
   return rows.map(parseRow);
 }
