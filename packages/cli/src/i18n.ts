@@ -154,12 +154,63 @@ const EN_PREFIXES: Array<[RegExp, string]> = [
   [/^Tidak ada turn aktif/, "No active turn"]
 ];
 
+
+const EN_PHRASES: Array<[RegExp, string]> = [
+  [/\btidak ditemukan\b/g, "not found"],
+  [/\btidak ada\b/g, "no"],
+  [/\bbelum ada\b/g, "no"],
+  [/\bgagal\b/g, "failed"],
+  [/\bberhasil\b/g, "succeeded"],
+  [/\bditolak\b/g, "denied"],
+  [/\bdisetujui\b/g, "approved"],
+  [/\bdibatalkan\b/g, "cancelled"],
+  [/\bdibuat\b/g, "created"],
+  [/\bdihapus\b/g, "deleted"],
+  [/\bdiperbarui\b/g, "updated"],
+  [/\bdisimpan\b/g, "saved"],
+  [/\bdijalankan\b/g, "started"],
+  [/\bdihentikan\b/g, "stopped"],
+  [/\bmenunggu\b/g, "waiting"],
+  [/\bberjalan\b/g, "running"],
+  [/\bselesai\b/g, "done"],
+  [/\bantrean\b/g, "queue"],
+  [/\bbiaya\b/g, "cost"],
+  [/\bhemat\b/g, "saving"],
+  [/\bhari ini\b/g, "today"],
+  [/\bkemarin\b/g, "yesterday"],
+  [/\bjam\b/g, "hours"],
+  [/\bmenit\b/g, "minutes"],
+  [/\bdetik\b/g, "seconds"],
+  [/\bkarakter\b/g, "characters"],
+  [/\bberkas\b/g, "files"],
+  [/\bfolder\b/g, "folder"],
+  [/\bperangkat\b/g, "devices"],
+  [/\bpengguna\b/g, "users"],
+  [/\bsesi\b/g, "session"],
+  [/\bperintah\b/g, "command"],
+  [/\bizin\b/g, "permission"],
+  [/\brencana\b/g, "plan"],
+  [/\btugas\b/g, "task"],
+  [/\bhasil\b/g, "result"],
+  [/\bkesalahan\b/g, "error"],
+  [/\bgalat\b/g, "error"],
+  [/\bcatatan\b/g, "note"],
+  [/\bringkasan\b/g, "summary"],
+  [/\bstatus\b/g, "status"],
+  [/\bmodel aktif\b/g, "active model"],
+  [/\bversi\b/g, "version"],
+  [/\bnama\b/g, "name"],
+  [/\bwaktu\b/g, "time"],
+  [/\btanggal\b/g, "date"]
+];
+
 export function translateUi(line: string): string {
   if (current !== "en" || line.length === 0) return line;
   const exact = EN_UI[line.trim()];
-  if (exact) return line.replace(line.trim(), exact);
+  let translated = exact ? line.replace(line.trim(), exact) : line;
   for (const [pattern, replacement] of EN_PREFIXES) {
-    if (pattern.test(line)) return line.replace(pattern, replacement);
+    if (pattern.test(translated)) translated = translated.replace(pattern, replacement);
   }
-  return line;
+  for (const [pattern, replacement] of EN_PHRASES) translated = translated.replace(pattern, replacement);
+  return translated;
 }

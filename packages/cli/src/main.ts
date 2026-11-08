@@ -16,7 +16,7 @@ import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
-import { setLocale } from "./i18n.js";
+import { setLocale, tr } from "./i18n.js";
 
 
 
@@ -1074,9 +1074,9 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       }
       const turnCost = lastTurnCost === undefined ? "?" : lastTurnCost === null ? "?" : lastTurnCost.toFixed(4);
       parts.push(`turn $${turnCost}`);
-      parts.push(totalCost > 0 ? `hari $${totalCost.toFixed(3)}` : "hari $?");
+      parts.push(totalCost > 0 ? `${tr("hari", "day")} $${totalCost.toFixed(3)}` : `${tr("hari", "day")} $?`);
       parts.push(permissionMode ?? "ask");
-      if (pendingAttachment) parts.push(`lampiran ${pendingAttachment.name}`);
+      if (pendingAttachment) parts.push(`${tr("lampiran", "attachment")} ${pendingAttachment.name}`);
       if (!showStatusBar) return ui.cyan("› ");
       const text = parts.join("  ");
       return ui.cyan("› ") + (width >= 64 ? ui.dim(`${truncateWidth(text, Math.max(10, width - 8))} `) : "");

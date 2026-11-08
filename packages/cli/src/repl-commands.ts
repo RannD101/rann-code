@@ -348,7 +348,7 @@ export function renderCommandCatalog(version: string, query?: string): string {
     ];
     return lines.filter((line) => line !== "").join("\n");
   }
-  const lines = [`rann-code ${version}`, "", tr("Pemakaian:", "Usage:"), `  rann "instruksi"              ${tr("kirim tugas ke sesi terbaru", "send a task to the latest session")}`, `  rann chat                     ${tr("sesi interaktif", "interactive session")}`, `  rann help <command>           ${tr("bantuan satu command", "help for one command")}`, "", tr("Command:", "Commands:")];
+  const lines = [`rann-code ${version}`, "", tr("Pemakaian:", "Usage:"), `  rann "instruction"            ${tr("kirim tugas ke sesi terbaru", "send a task to the latest session")}`, `  rann chat                     ${tr("sesi interaktif", "interactive session")}`, `  rann help <command>           ${tr("bantuan satu command", "help for one command")}`, "", tr("Command:", "Commands:")];
   for (const category of CATEGORY_ORDER) {
     const items = REPL_COMMANDS.filter((command) => command.category === category && !command.hidden);
     if (items.length === 0) continue;

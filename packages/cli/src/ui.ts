@@ -228,7 +228,7 @@ export async function chooseWith<T extends string>(
     if (Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length) return choices[numeric - 1]!.key;
     const direct = choices.find((choice) => choice.key === answer);
     if (direct) return direct.key;
-    process.stderr.write("Pilihan tidak dikenal, coba lagi.\n");
+    process.stderr.write(`${translateUi("Pilihan tidak dikenal, coba lagi.")}\n`);
   }
 }
 
@@ -257,12 +257,12 @@ export class Spinner {
     this.label = label;
     this.startedAt = Date.now();
     if (!colorEnabled() || screenReaderMode() || this.stream.isTTY !== true) {
-      this.stream.write(`${label}\n`);
+      this.stream.write(`${translateUi(label)}\n`);
       return;
     }
     const draw = (): void => {
       const elapsed = ((Date.now() - this.startedAt) / 1000).toFixed(1);
-      this.stream.write(`\r${this.frames[this.frame % this.frames.length]} ${this.label} ${elapsed}s`);
+      this.stream.write(`\r${this.frames[this.frame % this.frames.length]} ${translateUi(this.label)} ${elapsed}s`);
       this.frame += 1;
     };
     draw();

@@ -1,3 +1,4 @@
+import { translateUi } from "./i18n.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -206,7 +207,7 @@ export class LineEditor {
     if (this.closed) throw new Error("editor sudah ditutup");
     if (this.options.plain === true || !this.tty()) return this.fallbackReadLine(prompt);
     this.escapeSubmits = options.escapeSubmits === true;
-    this.promptText = prompt ?? this.promptValue();
+    this.promptText = translateUi(prompt ?? this.promptValue());
     this.buffer = "";
     this.cursor = 0;
     this.overlay = undefined;
@@ -295,7 +296,7 @@ export class LineEditor {
       const { createInterface } = await import("node:readline/promises");
       this.fallback = createInterface({ input: process.stdin, output: process.stdout, historySize: 200 });
     }
-    const text = await this.fallback.question(prompt ?? this.promptValue());
+    const text = await this.fallback.question(translateUi(prompt ?? this.promptValue()));
     this.options.history?.add(text);
     return text;
   }
