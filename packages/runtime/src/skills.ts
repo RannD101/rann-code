@@ -171,6 +171,29 @@ function readDirSkills(dir: string, scope: SkillScope): SkillContent[] {
   return skills;
 }
 
+function parseVersion(value: string): number[] {
+  return value.replace(/^v/, "").split(/[.+-]/).slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
+}
+
+function versionSatisfies(installed: string, constraint: string): boolean {
+  if (!constraint || constraint === "*" || constraint === "latest") return true;
+  const base = parseVersion(constraint.replace(/^[\^~]|>=|<=|>|</, ""));
+  const current = parseVersion(installed);
+  const compare = (a: number[], b: number[]): number => {
+    for (let index = 0; index < 3; index += 1) {
+      if ((a[index] ?? 0) !== (b[index] ?? 0)) return (a[index] ?? 0) - (b[index] ?? 0);
+    }
+    return 0;
+  };
+  if (constraint.startsWith("^")) return compare(current, base) >= 0 && current[0] === base[0];
+  if (constraint.startsWith("~")) return compare(current, base) >= 0 && current[0] === base[0] && current[1] === base[1];
+  if (constraint.startsWith(">=")) return compare(current, base) >= 0;
+  if (constraint.startsWith(">")) return compare(current, base) > 0;
+  if (constraint.startsWith("<=")) return compare(current, base) <= 0;
+  if (constraint.startsWith("<")) return compare(current, base) < 0;
+  return compare(current, base) === 0;
+}
+
 export class SkillStore {
   private readonly globalDir: string;
   private readonly projectDir: string;
@@ -372,9 +395,14 @@ export class SkillStore {
       if (visiting.has(skill.name)) throw new RannError("E_TOOL_FAILED", `Siklus dependensi: ${[...chain, skill.name].join(" -> ")}`);
       visiting.add(skill.name);
       for (const dependency of skill.dependencies) {
-        const base = dependency.replace(/[@^~].*$/, "").trim();
+        const at = dependency.lastIndexOf("@");
+        const base = (at > 0 ? dependency.slice(0, at) : dependency.replace(/[@^~].*$/, "")).trim();
+        const constraint = at > 0 ? dependency.slice(at + 1).trim() : "";
         const found = byName.get(slug(base));
         if (!found) throw new RannError("E_TOOL_FAILED", `Skill ${skill.name} butuh ${base} yang tidak terpasang`);
+        if (constraint && !versionSatisfies(found.version, constraint)) {
+          throw new RannError("E_TOOL_FAILED", `Skill ${skill.name} butuh ${base} versi ${constraint}, terpasang ${found.version}`);
+        }
         visit(found, [...chain, skill.name]);
       }
       visiting.delete(skill.name);
@@ -567,7 +595,20 @@ export class SkillStore {
       if (options.approve !== true) throw new RannError("E_APPROVAL_REQUIRED", "Instalasi dari Git butuh persetujuan eksplisit");
       execFileSync("git", ["clone", "--depth", "1", source, staging], { stdio: "pipe", timeout: 120_000 });
     } else if (/^https:\/\//.test(source)) {
-      throw new RannError("E_TOOL_INVALID_ARGS", "Tarball HTTPS belum didukung tanpa checksum; pakai Git atau folder lokal");
+      if (options.approve !== true) throw new RannError("E_APPROVAL_REQUIRED", "Instalasi tarball HTTPS butuh persetujuan eksplisit");
+      const [rawUrl, fragment] = source.split("#sha256=");
+      const url = rawUrl ?? source;
+      if (!/\.(tgz|tar\.gz)(\?|$)/i.test(url)) throw new RannError("E_TOOL_INVALID_ARGS", "URL HTTPS harus menunjuk tarball .tgz atau .tar.gz");
+      const archive = `${staging}.tgz`;
+      execFileSync("curl", ["-fsSL", "--max-time", "120", url, "-o", archive], { stdio: "pipe", timeout: 130_000 });
+      const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
+      if (fragment && fragment.toLowerCase() !== digest) {
+        rmSync(archive, { force: true });
+        throw new RannError("E_TOOL_FAILED", `Checksum tarball tidak cocok: ${digest}`);
+      }
+      mkdirSync(staging, { recursive: true, mode: 0o700 });
+      execFileSync("tar", ["-xzf", archive, "-C", staging, "--strip-components=1"], { stdio: "pipe", timeout: 60_000 });
+      rmSync(archive, { force: true });
     } else {
       const resolved = resolve(source);
       if (!existsSync(resolved)) throw new RannError("E_NOT_FOUND", `Sumber skill tidak ditemukan: ${source}`);

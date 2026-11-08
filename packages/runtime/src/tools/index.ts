@@ -1752,7 +1752,21 @@ export const tools: ToolDefinition[] = [
         return textResult({ restored: ctx.skills.rollback(input.name, input.version) });
       }
       if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill remove butuh name");
-      return textResult({ removed: ctx.skills.remove(input.name, input.scope ?? "project") });
+      const removed = ctx.skills.remove(input.name, input.scope ?? "project");
+      if (ctx.db) {
+        try {
+          appendAudit(ctx.db, {
+            actor: "agent",
+            action: "skill.remove",
+            resource: input.name,
+            decision: removed ? "ok" : "not_found",
+            metadata: { scope: input.scope ?? "project", session_id: ctx.sessionId ?? null, turn_id: ctx.turnId ?? null }
+          });
+        } catch {
+          // audit skill tidak boleh menggagalkan penghapusan
+        }
+      }
+      return textResult({ removed });
     }
   },
   {

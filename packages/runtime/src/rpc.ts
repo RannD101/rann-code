@@ -1191,13 +1191,24 @@ export class RpcServer {
           input.name as string,
           input.source as string | undefined
         );
-      case "skill.remove":
-        return {
-          removed: this.skillStore(input.projectPath as string | undefined).remove(
-            input.name as string,
-            input.scope as "global" | "project"
-          )
-        };
+      case "skill.remove": {
+        const removed = this.skillStore(input.projectPath as string | undefined).remove(
+          input.name as string,
+          input.scope as "global" | "project"
+        );
+        try {
+          appendAudit(this.db, {
+            actor: "user",
+            action: "skill.remove",
+            resource: input.name as string,
+            decision: removed ? "ok" : "not_found",
+            metadata: { scope: input.scope ?? "project" }
+          });
+        } catch {
+          // audit skill tidak boleh menggagalkan penghapusan
+        }
+        return { removed };
+      }
       default:
         throw new RannError("E_METHOD_NOT_FOUND", `Method belum diimplementasikan: ${request.method}`);
     }
@@ -2083,7 +2094,7 @@ export class RpcServer {
     const runSignal = options.input.timeoutMs
       ? AbortSignal.any([controller.signal, AbortSignal.timeout(options.input.timeoutMs)])
       : controller.signal;
-    const releaseSlot = await this.acquireSubagentSlot(`${target.providerName}/${target.model}`, config.subagents.max_concurrent, runSignal);
+    const releaseSlot = await this.acquireSubagentSlot(`${options.parent.id}:${target.providerName}/${target.model}`, config.subagents.max_concurrent_per_session, runSignal);
     try {
       const result = await runTurn({
         db: this.db,

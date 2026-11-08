@@ -2394,7 +2394,10 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           }
           if (target.length === 0) {
             const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 15, projectPath: process.cwd() });
-            for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
+            for (const item of list) {
+            const updated = Number(item.updated_at ?? item.updatedAt ?? 0);
+            print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.status ?? "?")}  ${String(item.model ?? "?")}  ${String(item.title)}${updated > 0 ? `  ${relativeTime(updated)}` : ""}`);
+          }
             print(ui.dim("pakai /resume <id> untuk melanjutkan"));
             continue;
           }

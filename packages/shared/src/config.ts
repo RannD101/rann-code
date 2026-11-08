@@ -79,6 +79,7 @@ export const configSchema = z.object({
       max_depth: z.number().int().min(1).max(3).default(2),
       max_children: z.number().int().min(1).max(16).default(8),
       max_concurrent: z.number().int().min(1).max(16).default(4),
+      max_concurrent_per_session: z.number().int().min(1).max(8).default(2),
       heartbeat_ms: z.number().int().min(1_000).max(60_000).default(5_000),
       permission_mode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).default("read-only"),
       model: z.string().min(1).optional()
