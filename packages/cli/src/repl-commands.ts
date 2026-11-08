@@ -1,3 +1,5 @@
+import { commandDescription, locale, tr } from "./i18n.js";
+
 export type CommandCategory =
   | "umum"
   | "sesi"
@@ -306,6 +308,15 @@ const CATEGORY_ORDER: CommandCategory[] = [
   "infra"
 ];
 
+const CATEGORY_EN: Record<string, string> = {
+  umum: "general", sesi: "session", model: "model", agen: "agent", memori: "memory",
+  skill: "skill", tool: "tool", proyek: "project", konfigurasi: "configuration", infra: "infra"
+};
+
+function category_en(category: string): string {
+  return locale() === "en" ? CATEGORY_EN[category] ?? category : category;
+}
+
 export function renderCommandCatalog(version: string, query?: string): string {
   const needle = query?.trim().toLowerCase() ?? "";
   if (needle.length > 0) {
@@ -323,13 +334,13 @@ export function renderCommandCatalog(version: string, query?: string): string {
     const lines = [
       `rann-code ${version}`,
       "",
-      `Command: /${command.name}${command.aliases?.length ? ` (alias: ${command.aliases.map((alias) => `/${alias}`).join(", ")})` : ""}`,
-      `Pemakaian: ${command.usage}`,
-      `Kategori: ${command.category}`,
-      `Izin: ${command.permission ?? "read"}`,
-      `Status: ${isAvailable(command) ? "tersedia" : `belum tersedia (${command.unavailableReason ?? "backend"})`}`,
+      `${tr("Command", "Command")}: /${command.name}${command.aliases?.length ? ` (alias: ${command.aliases.map((alias) => `/${alias}`).join(", ")})` : ""}`,
+      `${tr("Pemakaian", "Usage")}: ${command.usage}`,
+      `${tr("Kategori", "Category")}: ${command.category}`,
+      `${tr("Izin", "Permission")}: ${command.permission ?? "read"}`,
+      `${tr("Status", "Status")}: ${isAvailable(command) ? tr("tersedia", "available") : `${tr("belum tersedia", "unavailable")} (${command.unavailableReason ?? "backend"})`}`,
       "",
-      command.description,
+      commandDescription(command.name, command.description),
       command.docs && command.docs !== `${command.usage}  ${command.description}` ? command.docs : "",
       command.arguments.length > 0 ? `Argumen: ${command.arguments.map((arg) => `${arg.name}${arg.required ? " (wajib)" : " (opsional)"}`).join(", ")}` : "",
       command.optionalParams.length > 0 ? `Flag: ${command.optionalParams.map((flag) => `--${flag}`).join(", ")}` : "",
@@ -337,16 +348,16 @@ export function renderCommandCatalog(version: string, query?: string): string {
     ];
     return lines.filter((line) => line !== "").join("\n");
   }
-  const lines = [`rann-code ${version}`, "", "Pemakaian:", "  rann \"instruksi\"              kirim tugas ke sesi terbaru", "  rann chat                     sesi interaktif", "  rann help <command>           bantuan satu command", "", "Command:"];
+  const lines = [`rann-code ${version}`, "", tr("Pemakaian:", "Usage:"), `  rann "instruksi"              ${tr("kirim tugas ke sesi terbaru", "send a task to the latest session")}`, `  rann chat                     ${tr("sesi interaktif", "interactive session")}`, `  rann help <command>           ${tr("bantuan satu command", "help for one command")}`, "", tr("Command:", "Commands:")];
   for (const category of CATEGORY_ORDER) {
     const items = REPL_COMMANDS.filter((command) => command.category === category && !command.hidden);
     if (items.length === 0) continue;
-    lines.push("", `${category}:`);
+    lines.push("", `${category_en(category)}:`);
     for (const command of items) {
       const status = isAvailable(command) ? "" : ` [belum tersedia: ${command.unavailableReason ?? "backend"}]`;
-      lines.push(`  ${command.usage.padEnd(34)} ${command.description}${status}`);
+      lines.push(`  ${command.usage.padEnd(34)} ${commandDescription(command.name, command.description)}${status}`);
     }
   }
-  lines.push("", "Flag umum:", "  --model <nama>        override model", "  --permission <mode>   read-only | ask | accept-edits | trusted | custom", "  --yes                 setujui otomatis semua permintaan tool", "  --output-format <f>   text | json | stream-json | ndjson", "  --theme <nama>        dark | light | auto | custom", "  --no-color            matikan warna dan escape ANSI", "  -v, --version         versi", "  -h, --help            bantuan");
+  lines.push("", tr("Flag umum:", "Common flags:"), `  --model <nama>        ${tr("override model", "override the model")}`, `  --permission <mode>   read-only | ask | accept-edits | trusted | custom`, `  --yes                 ${tr("setujui otomatis semua permintaan tool", "auto-approve all tool requests")}`, `  --output-format <f>   text | json | stream-json | ndjson`, `  --theme <nama>        dark | light | auto | custom`, `  --no-color            ${tr("matikan warna dan escape ANSI", "disable color and ANSI escapes")}`, `  -v, --version         ${tr("versi", "version")}`, `  -h, --help            ${tr("bantuan", "help")}`);
   return lines.join("\n");
 }

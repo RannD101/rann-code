@@ -16,6 +16,7 @@ import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
+import { setLocale } from "./i18n.js";
 
 
 
@@ -58,6 +59,11 @@ async function main(argv: string[]): Promise<number> {
     first !== undefined && !first.startsWith("-") && !KNOWN_COMMANDS.has(first)
       ? parseArgs(["run", ...argv])
       : parseArgs(argv);
+  try {
+    setLocale(loadConfig({ home: resolveHome() }).config.ui.language);
+  } catch {
+    setLocale("id");
+  }
 
   if (flagBool(args, "no-color")) process.env.NO_COLOR = "1";
   const themeFlag = flagString(args, "theme");
