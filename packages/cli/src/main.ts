@@ -1062,6 +1062,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     process.on("SIGINT", sigintListener);
 
     let showStatusBar = true;
+    let hideUnavailable = false;
     const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
@@ -1093,6 +1094,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       if (typeof configValue.provider === "string") providerName = configValue.provider;
       const uiConfig = (configValue.ui as Record<string, unknown> | undefined) ?? {};
       if (uiConfig.status_bar === false || uiConfig.statusBar === false) showStatusBar = false;
+      hideUnavailable = uiConfig.hide_unavailable === true || uiConfig.hideUnavailable === true;
       try {
         const listed = await client.request<Array<Record<string, unknown>>>("provider.list");
         const active = listed.find((item) => item.name === providerName) ?? listed[0];
@@ -1127,7 +1129,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       busy: () => busy,
       prompt: statusPrompt,
       palette: [
-        ...REPL_COMMANDS.map((command: ReplCommand) => ({
+        ...REPL_COMMANDS.filter((command: ReplCommand) => !hideUnavailable || isAvailable(command)).map((command: ReplCommand) => ({
           name: command.name,
           description: isAvailable(command)
             ? command.description
@@ -1347,7 +1349,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
                 ["Ctrl+L", "bersihkan layar", "aktif"],
                 ["Ctrl+C", "bersihkan atau batalkan", "aktif"],
                 ["Ctrl+D", "keluar saat input kosong", "aktif"],
-                ["PgUp / PgDn", "gulir transcript", "pakai scrollback terminal"]
+                ["PgUp / PgDn", "gulir transcript", "tidak tersedia di editor internal; pakai scrollback terminal"]
               ]
             ));
             print(ui.dim("Ctrl+E dipakai untuk editor eksternal; akhir baris memakai End atau Ctrl+End."));

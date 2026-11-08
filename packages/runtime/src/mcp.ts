@@ -371,6 +371,28 @@ export class McpManager {
     state.initialized = true;
   }
 
+  async listResources(name?: string): Promise<Record<string, unknown>> {
+    const output: Record<string, unknown> = {};
+    for (const [server, config] of Object.entries(this.servers)) {
+      if (!config.enabled || (name && server !== name)) continue;
+      const state = await this.start(server, config);
+      await this.initialize(state);
+      output[server] = await this.request(state, "resources/list", {});
+    }
+    return output;
+  }
+
+  async listPrompts(name?: string): Promise<Record<string, unknown>> {
+    const output: Record<string, unknown> = {};
+    for (const [server, config] of Object.entries(this.servers)) {
+      if (!config.enabled || (name && server !== name)) continue;
+      const state = await this.start(server, config);
+      await this.initialize(state);
+      output[server] = await this.request(state, "prompts/list", {});
+    }
+    return output;
+  }
+
   async callTool(fullName: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
     if (!this.routes.has(fullName)) await this.listTools();
     const route = this.routes.get(fullName);

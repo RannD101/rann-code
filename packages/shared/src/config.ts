@@ -157,7 +157,8 @@ export const configSchema = z.object({
   ui: z
     .object({
       color: z.boolean().default(true),
-      language: z.enum(["id", "en"]).default("id")
+      language: z.enum(["id", "en"]).default("id"),
+      hide_unavailable: z.boolean().default(false)
     })
     .default({}),
   storage: z

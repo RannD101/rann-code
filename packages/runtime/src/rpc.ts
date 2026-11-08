@@ -733,6 +733,10 @@ export class RpcServer {
           enabled: server.enabled,
           timeout_ms: server.timeout_ms
         }));
+      case "mcp.resources":
+        return await this.mcp.listResources(input.name as string | undefined);
+      case "mcp.prompts":
+        return await this.mcp.listPrompts(input.name as string | undefined);
       case "mcp.test": {
         const tools = await this.mcp.listTools();
         const name = typeof input.name === "string" ? input.name : undefined;
