@@ -79,6 +79,10 @@ export const sessionSendParams = z.object({
   })).max(20).optional()
 });
 
+export const sessionSetModelParams = z.object({
+  sessionId: z.string().min(1),
+  model: z.string().min(1)
+});
 export const sessionCancelParams = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1).optional()
@@ -401,6 +405,7 @@ export const methodParams = {
   "session.fork": sessionForkParams,
   "session.send": sessionSendParams,
   "session.cancel": sessionCancelParams,
+  "session.setModel": sessionSetModelParams,
   "turn.get": turnGetParams,
   "turn.runtime": turnGetParams,
   "turn.events": turnEventsParams,

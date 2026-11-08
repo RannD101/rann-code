@@ -460,6 +460,20 @@ export class RpcServer {
         return this.turnGet(input);
       case "turn.runtime":
         return getTurnRuntime(this.db, input.turnId as string) ?? null;
+      case "session.setModel": {
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", `Sesi tidak ditemukan: ${String(input.sessionId)}`);
+        const modelName = String(input.model).trim();
+        if (modelName.length === 0) throw new RannError("E_INVALID_PARAMS", "Model tidak boleh kosong");
+        touchSession(this.db, session.id, { model: modelName });
+        const event = appendEvent(this.db, {
+          type: "session.updated",
+          sessionId: session.id,
+          data: { title: session.title, model: modelName }
+        });
+        this.broadcast(event);
+        return { session_id: session.id, model: modelName };
+      }
       case "session.cancel": {
         const sessionId = input.sessionId as string;
         const controller = this.activeTurns.get(sessionId);

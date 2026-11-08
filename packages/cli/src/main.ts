@@ -2116,7 +2116,12 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             }
           } else {
             model = name;
-            print(ui.dim(`model ${model}`));
+            try {
+              await client.request("session.setModel", { sessionId, model });
+              print(ui.dim(`model ${model} disimpan ke sesi`));
+            } catch (error) {
+              print(ui.yellow(`model lokal diganti, tetapi gagal disimpan ke sesi: ${(error as Error).message}`));
+            }
           }
           continue;
         }
