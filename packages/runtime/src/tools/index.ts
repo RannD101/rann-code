@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { RannError } from "@rann/shared";
+import { RannError, toRannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
 import type { Db } from "@rann/storage";
 import { parseTestSummary } from "../test-summary.js";
@@ -297,6 +297,13 @@ function walkRenameFiles(root: string, limit: number): string[] {
   visit(root);
   return out;
 }
+
+const parallelReadSchema = z.object({
+  calls: z.array(z.object({
+    tool: z.string().min(1),
+    args: z.unknown()
+  })).min(2).max(8)
+});
 
 const codeRenameSchema = z.object({
   old_name: z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/, "old_name bukan identifier valid"),
@@ -2186,6 +2193,44 @@ export const tools: ToolDefinition[] = [
       } finally {
         releaseLeases(ctx, leases);
       }
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "parallel_read",
+      description: "Jalankan 2 sampai 8 tool baca secara paralel jika tidak saling bergantung. Hanya tool read-only yang diizinkan.",
+      parameters: {
+        type: "object",
+        properties: {
+          calls: {
+            type: "array",
+            minItems: 2,
+            maxItems: 8,
+            items: {
+              type: "object",
+              properties: { tool: { type: "string" }, args: { type: "object" } },
+              required: ["tool", "args"]
+            }
+          }
+        },
+        required: ["calls"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(parallelReadSchema, args, "parallel_read");
+      const allowed = new Set(["fs_read", "fs_list", "fs_stat", "fs_glob", "git_read", "search_code", "repo_map", "symbol_search", "web_search", "http_request", "database_query", "document_extract", "image_info", "system_info"]);
+      for (const call of input.calls) {
+        if (!allowed.has(call.tool)) throw new RannError("E_TOOL_INVALID_ARGS", `Tool ${call.tool} tidak boleh dijalankan paralel`);
+      }
+      const results = await Promise.all(input.calls.map(async (call) => {
+        try {
+          return { tool: call.tool, ok: true, result: await executeTool(call.tool, call.args, { ...ctx, approved: true }) };
+        } catch (error) {
+          return { tool: call.tool, ok: false, error: toRannError(error).message };
+        }
+      }));
+      return textResult({ results });
     }
   },
   {

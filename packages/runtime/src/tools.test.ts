@@ -216,6 +216,7 @@ describe("tools", () => {
       "agent_message",
       "task",
       "code_rename",
+      "parallel_read",
       "symbol_search",
       "read_file",
       "write_file",
@@ -224,6 +225,21 @@ describe("tools", () => {
       "list_dir",
       "stat_file"
     ]);
+  });
+
+  it("menjalankan beberapa tool baca secara paralel", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "a.txt"), "satu", "utf8");
+    writeFileSync(join(root, "b.txt"), "dua", "utf8");
+    const result = await executeTool("parallel_read", {
+      calls: [
+        { tool: "fs_read", args: { path: "a.txt" } },
+        { tool: "fs_read", args: { path: "b.txt" } }
+      ]
+    }, context(root));
+    const results = (result.output as { results: Array<{ ok: boolean; result?: { output?: { content?: string } } }> }).results;
+    expect(results).toHaveLength(2);
+    expect(results.every((item) => item.ok)).toBe(true);
   });
 
   it("mencari simbol dari indeks kode", async () => {
