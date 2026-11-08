@@ -253,7 +253,7 @@ tr:last-child td{border-bottom:0}
     view.innerHTML = '<div class="grid">' + metric("Mode", data.mode || "-") + metric("Workspace only", data.workspace_only?"ya":"tidak") + metric("Allow", (data.allow||[]).length) + metric("Deny", (data.deny||[]).length) + '</div><div class="panel"><pre class="mono" style="white-space:pre-wrap">' + esc(JSON.stringify(data, null, 2)) + '</pre></div>';
   }
   function renderChat(){
-    view.innerHTML = '<div class="chat"><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button id="send">Kirim</button></div></div>';
+    view.innerHTML = '<div class="chat"><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button class="secondary" id="cancel">Batalkan</button><button id="send">Kirim</button></div></div>';
     api("/v1/chat/ensure",{method:"POST",body:"{}"}).then(function(session){
       chatSession = session.id;
       return api("/v1/sessions/" + encodeURIComponent(chatSession));
@@ -264,6 +264,19 @@ tr:last-child td{border-bottom:0}
     prompt.addEventListener("keydown", function(event){ if(event.key === "Enter" && !event.shiftKey){ event.preventDefault(); sendMessage(); } });
     document.getElementById("send").onclick = sendMessage;
     document.getElementById("attach").onclick = function(){ document.getElementById("file").click(); };
+    document.getElementById("cancel").onclick = function(){
+      if(!chatSession) return;
+      api("/v1/sessions/" + encodeURIComponent(chatSession) + "/cancel",{method:"POST",body:"{}"}).then(function(){ document.getElementById("send").disabled=false; document.getElementById("send").textContent="Kirim"; });
+    };
+    document.getElementById("file").onchange = function(){
+      var file = this.files && this.files[0];
+      if(!file) return;
+      var headers = {"content-type": file.type || "application/octet-stream", "x-filename": file.name};
+      fetch("/v1/sessions/" + encodeURIComponent(chatSession) + "/attachments", {method:"POST",headers:headers,body:file})
+        .then(function(r){ if(!r.ok) throw new Error("unggah gagal"); return r.json(); })
+        .then(function(body){ pendingAttachment = {path: body.path, name: body.name}; document.getElementById("attach").textContent = "Lampiran: " + body.name; })
+        .catch(function(error){ document.getElementById("attach").textContent = "Lampiran gagal"; });
+    };
   }
   function renderMessages(messages){
     var box = document.getElementById("messages");
@@ -287,7 +300,12 @@ tr:last-child td{border-bottom:0}
     var button = document.getElementById("send");
     button.disabled = true;
     button.textContent = "Mengirim...";
-    api("/v1/sessions/" + encodeURIComponent(chatSession) + "/messages", {method:"POST",body:JSON.stringify({text:text})}).then(function(turn){
+    var payload = {text:text};
+    if(pendingAttachment){ payload.attachments = [pendingAttachment]; }
+    api("/v1/sessions/" + encodeURIComponent(chatSession) + "/messages", {method:"POST",body:JSON.stringify(payload)}).then(function(turn){
+      pendingAttachment = null;
+      var attachButton = document.getElementById("attach");
+      if(attachButton) attachButton.textContent = "Lampiran";
       button.textContent = "Berjalan...";
       var poll = setInterval(function(){
         api("/v1/turns/" + encodeURIComponent(turn.id || turn.turnId)).then(function(data){

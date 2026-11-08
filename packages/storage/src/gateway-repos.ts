@@ -268,3 +268,35 @@ export function gatewayStats(db: Db): {
     messages: count("SELECT COUNT(*) AS c FROM gateway_messages")
   };
 }
+
+export interface GatewayUserView {
+  id: string;
+  name: string;
+  role: GatewayRole;
+  created_at: number;
+  disabled_at: number | null;
+}
+
+export function createGatewayUser(db: Db, input: { name: string; role?: GatewayRole }): GatewayUserView {
+  const id = newId("usr");
+  db.prepare("INSERT INTO gateway_users (id, name, role, created_at) VALUES (?, ?, ?, ?)").run(
+    id,
+    input.name.trim(),
+    input.role ?? "operator",
+    Date.now()
+  );
+  return db.prepare("SELECT * FROM gateway_users WHERE id = ?").get(id) as GatewayUserView;
+}
+
+export function listGatewayUsers(db: Db): GatewayUserView[] {
+  return db.prepare("SELECT * FROM gateway_users ORDER BY created_at DESC").all() as GatewayUserView[];
+}
+
+export function updateGatewayUserRole(db: Db, id: string, role: GatewayRole): GatewayUserView | undefined {
+  db.prepare("UPDATE gateway_users SET role = ? WHERE id = ? AND disabled_at IS NULL").run(role, id);
+  return db.prepare("SELECT * FROM gateway_users WHERE id = ?").get(id) as GatewayUserView | undefined;
+}
+
+export function disableGatewayUser(db: Db, id: string): boolean {
+  return db.prepare("UPDATE gateway_users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL").run(Date.now(), id).changes > 0;
+}

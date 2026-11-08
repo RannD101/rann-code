@@ -55,6 +55,7 @@ export type IdPrefix =
   | "msgx"
   | "amsg"
   | "prc"
+  | "usr"
   | "mev"
   | "pacc";
 

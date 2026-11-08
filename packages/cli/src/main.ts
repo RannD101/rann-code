@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, exitCodeFor, loadConfig, providerFor, toRannError, type ErrorCode } from "@rann/shared";
 import { destructiveReason } from "@rann/runtime";
 import { buildProjectMap, commitMessage, ensureLayout, formatReview, projectMapSummary, resolveHome, resolveLayout, reviewUnifiedDiff, saveProjectMap, type RpcClient } from "@rann/runtime";
-import { appendAudit, createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
+import { appendAudit, createBackup, createGatewayUser, disableGatewayUser, exportAuditJsonl, listGatewayUsers, openDatabase, updateGatewayUserRole, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
@@ -328,9 +328,56 @@ async function gatewayCommand(args: ParsedArgs): Promise<number> {
       print(JSON.stringify(stats, null, 2));
       return 0;
     }
+    if (sub === "users") {
+      const opened = openDatabase({ path: homeLayout().dbPath, backupBeforeMigrate: false });
+      try {
+        const users = listGatewayUsers(opened.db);
+        if (flagBool(args, "json")) print(JSON.stringify(users, null, 2));
+        else if (users.length === 0) print("Belum ada pengguna lokal.");
+        else {
+          print(table(["id", "nama", "role", "status"], users.map((user) => [user.id, user.name, user.role, user.disabled_at ? "nonaktif" : "aktif"])));
+        }
+      } finally {
+        opened.db.close();
+      }
+      return 0;
+    }
+    if (sub === "user") {
+      const action = args.positionals[0];
+      const opened = openDatabase({ path: homeLayout().dbPath, backupBeforeMigrate: false });
+      try {
+        if (action === "add") {
+          const name = args.positionals[1];
+          const role = (args.positionals[2] ?? "operator") as "owner" | "operator" | "viewer" | "approver";
+          if (!name) throw new RannError("E_INVALID_PARAMS", "Pakai: rann gateway user add <nama> [owner|operator|viewer|approver]");
+          if (!["owner", "operator", "viewer", "approver"].includes(role)) throw new RannError("E_INVALID_PARAMS", "Role tidak valid");
+          print(JSON.stringify(createGatewayUser(opened.db, { name, role }), null, 2));
+          return 0;
+        }
+        if (action === "role") {
+          const id = args.positionals[1];
+          const role = args.positionals[2] as "owner" | "operator" | "viewer" | "approver";
+          if (!id || !role) throw new RannError("E_INVALID_PARAMS", "Pakai: rann gateway user role <id> <role>");
+          const updated = updateGatewayUserRole(opened.db, id, role);
+          if (!updated) throw new RannError("E_NOT_FOUND", `Pengguna tidak ditemukan: ${id}`);
+          print(`${updated.name}: role ${updated.role}`);
+          return 0;
+        }
+        if (action === "disable") {
+          const id = args.positionals[1];
+          if (!id) throw new RannError("E_INVALID_PARAMS", "Pakai: rann gateway user disable <id>");
+          print(disableGatewayUser(opened.db, id) ? `Pengguna ${id} dinonaktifkan.` : `Pengguna ${id} tidak ditemukan.`);
+          return 0;
+        }
+      } finally {
+        opened.db.close();
+      }
+      print("Pakai: rann gateway user add|role|disable");
+      return 0;
+    }
     throw new RannError(
       "E_INVALID_PARAMS",
-      "Pakai: rann gateway status|start|stop|pair|devices|revoke|role|stats|enable|disable"
+      "Pakai: rann gateway status|start|stop|pair|devices|revoke|role|stats|users|user|enable|disable"
     );
   });
 }
