@@ -64,7 +64,8 @@ export function loadInstructions(workspaceRoot: string, globalConfigDir?: string
   let total = 0;
   let truncated = false;
 
-  const sources = instructionSources(workspaceRoot, globalConfigDir, homeDir);
+  const sources = instructionSources(workspaceRoot, globalConfigDir, homeDir)
+    .sort((a, b) => b.priority - a.priority);
   const seen = new Set<string>();
 
   for (const source of sources) {

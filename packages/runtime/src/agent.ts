@@ -558,6 +558,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     }
   }
   const instructions = loadInstructions(workspaceRoot, undefined, config.instructionsHome);
+  if (instructions.conflicts.length > 0) {
+    publish("log", { level: "warn", event: "instructions.conflict", conflicts: instructions.conflicts });
+  }
   const memoryPrompt = options.memory?.prompt(options.userText) ?? { text: "", count: 0, ids: [] };
   let skillCatalog = options.skills?.catalog() ?? "";
   let selectedSkills: string[] = [];

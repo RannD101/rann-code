@@ -1616,6 +1616,7 @@ export class RpcServer {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
           retrieve: config.memory.retrieve,
+          ttlHours: config.memory.ttl_hours,
           sessionId,
           profileId: this.profileId()
         })
@@ -2020,6 +2021,7 @@ export class RpcServer {
           enabled: config.memory.enabled,
           promptChars: config.memory.prompt_chars,
           retrieve: config.memory.retrieve,
+          ttlHours: config.memory.ttl_hours,
           sessionId: child.id,
           profileId: this.profileId(),
           agentProfile: selected.name
@@ -2171,6 +2173,7 @@ export class RpcServer {
       enabled: config.memory.enabled,
       promptChars: config.memory.prompt_chars,
       retrieve: config.memory.retrieve,
+      ttlHours: config.memory.ttl_hours,
       profileId: this.profileId(),
       ...(sessionId ? { sessionId } : {})
     });

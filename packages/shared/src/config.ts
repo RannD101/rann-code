@@ -61,7 +61,8 @@ export const configSchema = z.object({
     .object({
       enabled: z.boolean().default(true),
       prompt_chars: z.number().int().positive().max(32_000).default(6_000),
-      retrieve: z.number().int().positive().max(50).default(8)
+      retrieve: z.number().int().positive().max(50).default(8),
+      ttl_hours: z.record(z.number().positive().max(8_760)).default({})
     })
     .default({}),
   skills: z

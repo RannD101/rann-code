@@ -232,6 +232,8 @@ export class MemoryService {
       });
       if (contradictory) {
         conflicts.push(contradictory.id);
+        added.push(this.supersede(contradictory.id, candidate.text, "preferensi bertentangan"));
+        continue;
       } else {
         const duplicate = existing.find((entry) => {
           const other = tokens(entry.text);
@@ -396,6 +398,7 @@ export class MemoryService {
   /** Pecah dokumen knowledge jadi bagian kecil per heading. */
   indexKnowledge(root: string, options: { maxFiles?: number } = {}): { files: number; chunks: number; skipped: number } {
     const files: string[] = [];
+    const knowledgeRoot = join(root, ".rann", "knowledge");
     const walk = (dir: string): void => {
       if (!existsSync(dir) || files.length >= (options.maxFiles ?? 500)) return;
       for (const name of readdirSync(dir)) {
@@ -412,6 +415,7 @@ export class MemoryService {
       }
     };
     walk(root);
+    if (existsSync(knowledgeRoot)) walk(knowledgeRoot);
 
     let chunkCount = 0;
     let skipped = 0;

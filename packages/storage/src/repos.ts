@@ -523,9 +523,10 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   const projectPath = scope === "project" ? (input.projectPath ?? "") : null;
   const profileId = input.profileId ?? ensureDefaultProfile(db);
   const at = Date.now();
+  const contentHash = createHash("sha256").update(input.text).digest("hex");
   const existing = db
-    .prepare("SELECT * FROM memory_entries WHERE profile_id = ? AND scope = ? AND COALESCE(project_path, '') = ? AND text = ? LIMIT 1")
-    .get(profileId, scope, projectPath ?? "", input.text) as MemoryDbRow | undefined;
+    .prepare("SELECT * FROM memory_entries WHERE profile_id = ? AND scope = ? AND COALESCE(project_path, '') = ? AND (text = ? OR hash = ?) LIMIT 1")
+    .get(profileId, scope, projectPath ?? "", input.text, contentHash) as MemoryDbRow | undefined;
   if (existing) {
     const tags = [...new Set([...parseTags(existing.tags), ...(input.tags ?? [])])];
     db.prepare("UPDATE memory_entries SET tags = ?, source = COALESCE(?, source), updated_at = ? WHERE id = ?").run(
@@ -538,8 +539,8 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
   }
   const id = newId("mem");
   db.prepare(
-    `INSERT INTO memory_entries (id, profile_id, scope, project_path, session_id, kind, title, text, tags, source, confidence, importance, status, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO memory_entries (id, profile_id, scope, project_path, session_id, kind, title, text, tags, source, confidence, importance, status, expires_at, hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     profileId,
@@ -555,6 +556,7 @@ export function addMemory(db: Db, input: AddMemoryInput): MemoryEntry {
     input.importance ?? 0.5,
     input.status ?? "active",
     input.expiresAt ?? null,
+    contentHash,
     at,
     at
   );
