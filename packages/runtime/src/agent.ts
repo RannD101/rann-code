@@ -19,7 +19,9 @@ import {
 } from "@rann/storage";
 import { RannError, redactSecrets, toRannError, type EventEnvelope, type EventType, type PermissionMode } from "@rann/shared";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ChatAttachment, ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
@@ -34,7 +36,7 @@ import { loadInstructions } from "./instructions.js";
 import { attachmentText, type AttachmentRef } from "./attachments.js";
 import type { MemoryService } from "./memory.js";
 import type { SkillStore } from "./skills.js";
-import { classifyTask, generatePlan, planDecision, planToMarkdown, workspaceBrief, type TaskClass } from "./planner.js";
+import { classifyTask, estimateFromHistory, generatePlan, planDecision, planToMarkdown, workspaceBrief, type TaskClass } from "./planner.js";
 import {
   finishPlan,
   advancePlanTask,
@@ -481,6 +483,32 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   await runHook("SessionStart", { project_path: workspaceRoot });
   await runHook("UserPromptSubmit", { prompt: options.userText });
   markTurnRunning(db, turnId);
+  try {
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: workspaceRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const diff = execFileSync("git", ["diff", "--no-color"], { cwd: workspaceRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const dirtyFiles = status.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (options.checkpointsDir && diff.length > 0) {
+      const dir = join(options.checkpointsDir, "baselines");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${turnId}.diff`), diff, { mode: 0o600 });
+    }
+    publish("log", { level: "debug", event: "git.baseline", dirty_files: dirtyFiles.length, diff_chars: diff.length });
+    appendAudit(db, {
+      actor: "agent",
+      action: "git.baseline",
+      resource: workspaceRoot,
+      decision: "ok",
+      metadata: {
+        session_id: session.id,
+        turn_id: turnId,
+        dirty_files: dirtyFiles.slice(0, 100),
+        diff_sha256: createHash("sha256").update(diff).digest("hex"),
+        diff_chars: diff.length
+      }
+    });
+  } catch {
+    // baseline git tidak wajib untuk workspace non-git
+  }
   publish("turn.start", { model, provider: provider.name, prompt_chars: options.userText.length });
   publish("phase", { phase: "understand", detail: "membaca goal dan konteks" });
 
@@ -565,6 +593,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         workspaceBrief(workspaceRoot),
         signal
       );
+      const historical = estimateFromHistory(db);
+      if (historical) generated.plan.estimate = historical;
       const markdown = planToMarkdown(generated.plan, generated.validation);
       if (generated.validation.highRisk) {
         if (!options.approvePlan) {
@@ -1120,6 +1150,32 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             duration_ms: result.durationMs,
             summary: summary.replace(/\s+/g, " ").slice(0, 240)
           });
+          if (steps > 0 && steps % 10 === 0) {
+            try {
+              createCheckpoint(db, {
+                sessionId: session.id,
+                turnId,
+                label: `langkah ${steps}`,
+                kind: "post_tool",
+                state: {
+                  step: steps,
+                  plan_id: activePlan?.id ?? null,
+                  task_state: activePlan ? currentPlanTask(db, activePlan) ?? null : null,
+                  git_ref: initialGitRef ?? null,
+                  file_checkpoint_id: fileCheckpointId ?? null,
+                  tool: call.name
+                }
+              });
+              if (options.checkpointsDir) {
+                createFileCheckpoint(workspaceRoot, options.checkpointsDir, {
+                  label: `langkah ${steps}`,
+                  ...(initialGitRef ? { gitRef: initialGitRef } : {})
+                });
+              }
+            } catch {
+              // checkpoint berkala bersifat best effort
+            }
+          }
           if (result.ok && (call.name === "project_check" || (call.name === "shell_run" && /\b(test|pytest|vitest|jest|go test|cargo test|npm test|pnpm test)\b/i.test(String((call.args as Record<string, unknown>).command ?? ""))))) {
             try {
               createCheckpoint(db, {

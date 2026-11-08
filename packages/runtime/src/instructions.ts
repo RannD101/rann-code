@@ -46,6 +46,7 @@ export function instructionSources(workspaceRoot: string, globalConfigDir?: stri
   }
   if (globalConfigDir) sources.push({ path: join(globalConfigDir, "RANN.md"), label: "global:RANN.md", priority: 20 });
   sources.push({ path: join(workspaceRoot, "RANN.md"), label: "RANN.md", priority: 30 });
+  sources.push({ path: join(workspaceRoot, "README.md"), label: "README.md", priority: 10 });
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     sources.push({ path: join(workspaceRoot, name), label: name, priority: 28 });
   }

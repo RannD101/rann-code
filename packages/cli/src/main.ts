@@ -1288,9 +1288,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(ui.red("Pakai: !<command> atau !!<command>"));
             continue;
           }
-          const risky = /\brm\s+-[a-zA-Z]*[rf]|\bsudo\b|\bmkfs|\bdd\s+if=|\bshutdown\b|\breboot\b|>\s*\/dev\/sd|\bchmod\s+777/.test(command);
+          if (permissionMode === "read-only") {
+            printErr(ui.red("Mode read-only menolak shell passthrough. Ubah mode izin lewat /permission."));
+            continue;
+          }
+          const riskReason = destructiveReason(command);
+          const risky = riskReason !== undefined || /\bsudo\b|\bmkfs|\bdd\s+if=|\bshutdown\b|\breboot\b|>\s*\/dev\/sd|\bchmod\s+777/.test(command);
           if (risky && permissionMode !== "trusted") {
-            const answer = (await editor.readLine(ui.yellow("perintah berisiko. jalankan? [y/N] "))).trim().toLowerCase();
+            const answer = (await editor.readLine(ui.yellow(`perintah berisiko${riskReason ? ` (${riskReason})` : ""}. jalankan? [y/N] `))).trim().toLowerCase();
             if (answer !== "y" && answer !== "ya") {
               print(ui.dim("dibatalkan"));
               continue;

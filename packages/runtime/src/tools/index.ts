@@ -1480,7 +1480,7 @@ export const tools: ToolDefinition[] = [
         child.on("close", (code) => {
           finish({
             ok: code === 0,
-            output: { stdout: stdout.slice(0, MAX_OUTPUT_CHARS), stderr: stderr.slice(0, MAX_OUTPUT_CHARS), truncated },
+            output: { stdout: stdout.slice(0, MAX_OUTPUT_CHARS), stderr: stderr.slice(0, MAX_OUTPUT_CHARS), truncated, cwd: relPath(ctx, cwd) },
             exitCode: code ?? 1
           });
         });

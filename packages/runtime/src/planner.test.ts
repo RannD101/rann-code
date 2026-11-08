@@ -86,6 +86,7 @@ describe("planner", () => {
     )!;
     const validation = validatePlan(plan);
     expect(validation.highRisk).toBe(true);
-    expect(plan.estimate.minutes).toEqual([5, 15]);
+    expect(plan.estimate.minutes).toEqual([0, 0]);
+    expect(plan.estimate.source).toBe("unavailable");
   });
 });

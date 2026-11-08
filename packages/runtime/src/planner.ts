@@ -37,6 +37,7 @@ export interface PlanRisk {
 export interface PlanEstimate {
   minutes: [number, number];
   costUsd: [number, number];
+  source: "historical" | "heuristic" | "unavailable";
 }
 
 export interface PlanDraft {
@@ -199,8 +200,17 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
   }
 
   const estimateRaw = typeof obj.estimate === "object" && obj.estimate !== null ? (obj.estimate as Record<string, unknown>) : {};
-  const minutes = asNumberPair(estimateRaw.minutes) ?? [5, 15];
-  const cost = asNumberPair(estimateRaw.costUsd) ?? [0, 0];
+  const minutesPair = asNumberPair(estimateRaw.minutes);
+  const costPair = asNumberPair(estimateRaw.costUsd);
+  const suppliedSource = asString(estimateRaw.source);
+  const estimateSource: PlanEstimate["source"] =
+    suppliedSource === "historical" || suppliedSource === "heuristic"
+      ? suppliedSource
+      : minutesPair || costPair
+        ? "heuristic"
+        : "unavailable";
+  const minutes = minutesPair ?? [0, 0];
+  const cost = costPair ?? [0, 0];
 
   const risksRaw = Array.isArray(obj.risks) ? obj.risks : [];
   const risks: PlanRisk[] = [];
@@ -217,7 +227,7 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
     assumptions: asStringArray(obj.assumptions),
     criteria,
     tasks,
-    estimate: { minutes, costUsd: cost },
+    estimate: { minutes, costUsd: cost, source: estimateSource },
     risks
   };
 }
@@ -244,6 +254,7 @@ export function validatePlan(plan: PlanDraft): PlanValidation {
     if (ids.has(task.id)) errors.push(`id task duplikat: ${task.id}`);
     ids.add(task.id);
     if (task.acceptance.trim().length === 0) errors.push(`task ${task.id} tanpa acceptance`);
+    if (task.agent.trim().length === 0) errors.push(`task ${task.id} tanpa agen`);
     if ((task.description ?? "").trim().length === 0) errors.push(`task ${task.id} tanpa deskripsi`);
     if (task.files.length === 0) errors.push(`task ${task.id} tanpa file area`);
     if (task.title.trim().length === 0) errors.push(`task ${task.id} tanpa judul`);
@@ -368,11 +379,26 @@ export async function generatePlan(
   return { plan, validation };
 }
 
+export function estimateFromHistory(db: import("@rann/storage").Db): PlanEstimate | null {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n, AVG(ended_at - started_at) AS avg_ms FROM tasks WHERE status = 'done' AND started_at IS NOT NULL AND ended_at IS NOT NULL AND ended_at > started_at")
+    .get() as { n?: number; avg_ms?: number } | undefined;
+  if (!row || (row.n ?? 0) < 3 || !row.avg_ms || row.avg_ms <= 0) return null;
+  const minutes = Math.max(1, Math.round(row.avg_ms / 60_000));
+  return {
+    minutes: [Math.max(1, Math.round(minutes * 0.8)), Math.max(1, Math.round(minutes * 1.2))],
+    costUsd: [0, 0],
+    source: "historical"
+  };
+}
+
 export function planToMarkdown(plan: PlanDraft, validation: PlanValidation): string {
   const lines = [
     `Rencana: ${plan.goal}`,
     `Task: ${plan.tasks.length}, file: ${validation.fileCount}, risiko tinggi: ${validation.highRisk ? "ya" : "tidak"}`,
-    `Estimasi: ${plan.estimate.minutes[0]}-${plan.estimate.minutes[1]} menit, $${plan.estimate.costUsd[0]}-${plan.estimate.costUsd[1]}`
+    plan.estimate.source === "unavailable"
+      ? "Estimasi: tidak tersedia"
+      : `Estimasi: ${plan.estimate.minutes[0]}-${plan.estimate.minutes[1]} menit, $${plan.estimate.costUsd[0]}-${plan.estimate.costUsd[1]} (${plan.estimate.source})`
   ];
   for (const id of validation.order) {
     const task = plan.tasks.find((item) => item.id === id);
