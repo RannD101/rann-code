@@ -93,21 +93,27 @@ export function persistPlan(
 }
 
 export function startFirstTask(db: Db, plan: ActivePlan, publish: (type: "task.update", data: Record<string, unknown>) => void): void {
-  const queued = new Set(
-    (db.prepare("SELECT id FROM tasks WHERE plan_id = ? AND status = 'queued'").all(plan.id) as { id: string }[]).map((row) => row.id)
-  );
-  const first = plan.draft.tasks
-    .map((task, index) => ({ task, index }))
-    .filter((entry) => entry.task.dependsOn.length === 0 && queued.has(plan.taskIds.get(entry.task.id) ?? ""))
-    .sort((a, b) => {
-      const rank = { high: 3, medium: 2, low: 1 } as const;
-      return rank[b.task.risk] - rank[a.task.risk] || a.index - b.index;
-    })[0]?.task;
-  if (!first) return;
-  const id = plan.taskIds.get(first.id);
-  if (!id) return;
-  updateTaskStatus(db, id, "running");
-  publish("task.update", { task_id: id, plan_task_id: first.id, status: "running", title: first.title });
+  const rows = db
+    .prepare("SELECT id, metadata_json FROM tasks WHERE plan_id = ? AND status = 'queued' ORDER BY priority DESC, created_at ASC")
+    .all(plan.id) as { id: string; metadata_json: string }[];
+  for (const row of rows) {
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = JSON.parse(row.metadata_json) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const deps = Array.isArray(meta.dependsOn) ? (meta.dependsOn as string[]) : [];
+    if (deps.length > 0) continue;
+    updateTaskStatus(db, row.id, "running");
+    publish("task.update", {
+      task_id: row.id,
+      plan_task_id: String(meta.planTaskId ?? ""),
+      status: "running",
+      title: String(meta.title ?? "")
+    });
+    return;
+  }
 }
 
 

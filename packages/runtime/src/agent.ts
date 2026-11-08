@@ -457,6 +457,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let lastCompactionKey = "";
   let prematureCount = 0;
   let goalPrompts = 0;
+  let noPlanNudges = 0;
   let lastToolSignature = "";
   let repeatedToolCalls = 0;
   let fileCheckpointId: string | undefined;
@@ -976,6 +977,23 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         }
         const activeGoal = getActiveGoal(db, session.id);
         const pendingCriteria = activeGoal?.status === "active" ? activeGoal.criteria.filter((criterion) => !criterion.done) : [];
+        if (
+          !activePlan &&
+          pendingCriteria.length === 0 &&
+          noPlanNudges < 1 &&
+          !options.planOnly &&
+          ["modify", "operate", "incident"].includes(taskClass)
+        ) {
+          noPlanNudges += 1;
+          publish("phase", { phase: "reflect", reason: "no_plan_continuation" });
+          addMessage(db, {
+            sessionId: session.id,
+            turnId,
+            role: "system",
+            content: "Kamu berhenti tanpa rencana dan tanpa kriteria goal. Lanjutkan dengan langkah nyata: jalankan verifikasi, perbaiki kegagalan, atau tulis pertanyaan yang diperlukan. Jangan berhenti dengan ringkasan saja."
+          });
+          continue;
+        }
         if (pendingCriteria.length > 0 && goalPrompts < 2) {
           goalPrompts += 1;
           publish("phase", { phase: "reflect", reason: "goal_incomplete", pending: pendingCriteria.length });

@@ -796,7 +796,11 @@ async function readPipedStdin(): Promise<string> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
   }
   const buffer = Buffer.concat(chunks);
-  if (buffer.includes(0)) throw new RannError("E_INVALID_PARAMS", "Input stdin terlihat biner. Kirim teks, atau lampirkan berkas dengan @path.");
+  const sample = buffer.subarray(0, 8_192);
+  const control = [...sample].filter((byte) => byte < 9 || (byte > 13 && byte < 32)).length;
+  if (buffer.includes(0) || (sample.length > 0 && control / sample.length > 0.15)) {
+    throw new RannError("E_INVALID_PARAMS", "Input stdin terlihat biner. Kirim teks, atau lampirkan berkas dengan @path.");
+  }
   return buffer.toString("utf8").trim();
 }
 
