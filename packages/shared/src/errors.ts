@@ -143,6 +143,8 @@ export function toRannError(value: unknown): RannError {
   return new RannError("E_INTERNAL", String(value));
 }
 
+import { redactText } from "./redact.js";
+
 export interface RpcErrorShape {
   code: ErrorCode;
   message: string;
@@ -221,7 +223,7 @@ export function hintFor(code: ErrorCode, locale: "id" | "en" = "id"): string {
 export function toRpcError(value: unknown, traceId?: string, locale: "id" | "en" = "id"): RpcErrorShape {
   const err = toRannError(value);
   const data = { ...(err.data ?? {}), trace_id: traceId ?? `req_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}` };
-  const shape: RpcErrorShape = { code: err.code, message: err.message };
+  const shape: RpcErrorShape = { code: err.code, message: redactText(err.message) };
   if (Object.keys(data).length > 0) shape.data = data;
   shape.hint = hintFor(err.code, locale);
   return shape;
