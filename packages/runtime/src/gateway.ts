@@ -3,6 +3,8 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { createServer as createHttpsServer } from "node:https";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { WebSocketServer, type WebSocket } from "ws";
 import { RannError, toRannError, type EventEnvelope, type RannConfig } from "@rann/shared";
 import type { Db, GatewayDeviceView, GatewayRole, GatewayScope } from "@rann/storage";
@@ -355,6 +357,46 @@ export class GatewayServer {
     });
   }
 
+  private async proxyToNode(
+    node: { name: string; url: string; token_env?: string },
+    request: IncomingMessage,
+    response: ServerResponse,
+    path: string
+  ): Promise<void> {
+    if (request.headers.upgrade?.toLowerCase() === "websocket") {
+      sendJson(response, 501, { error: "WebSocket multi-node belum didukung lewat proxy", node: node.name });
+      return;
+    }
+    const target = new URL(node.url);
+    const body = request.method === "GET" || request.method === "HEAD" ? Buffer.alloc(0) : await readBody(request, MAX_ATTACHMENT);
+    const token = node.token_env ? process.env[node.token_env] : undefined;
+    const client = target.protocol === "https:" ? httpsRequest : httpRequest;
+    await new Promise<void>((resolvePromise) => {
+      const upstream = client({
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || (target.protocol === "https:" ? 443 : 80),
+        path: `${target.pathname.replace(/\/$/, "")}${path}`,
+        method: request.method,
+        headers: {
+          ...(typeof request.headers["content-type"] === "string" ? { "content-type": request.headers["content-type"] } : {}),
+          ...(token ? { authorization: `Bearer ${token}` } : {})
+        }
+      }, (upstreamResponse) => {
+        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+        upstreamResponse.pipe(response);
+        upstreamResponse.on("end", resolvePromise);
+      });
+      upstream.on("error", (error) => {
+        if (!response.headersSent) sendJson(response, 502, { error: "node tidak bisa dihubungi", node: node.name, message: error.message });
+        else response.end();
+        resolvePromise();
+      });
+      if (body.length > 0) upstream.write(body);
+      upstream.end();
+    });
+  }
+
   private authFromRequest(request: IncomingMessage): GatewayDeviceView | undefined {
     const authorization = request.headers.authorization;
     if (typeof authorization === "string" && authorization.startsWith("Bearer ")) {
@@ -399,6 +441,16 @@ export class GatewayServer {
             "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
         });
         response.end(dashboardPage(this.version));
+        return;
+      }
+      const nodeName = typeof request.headers["x-rann-node"] === "string" ? request.headers["x-rann-node"] : undefined;
+      if (nodeName && path.startsWith("/v1/")) {
+        const node = this.config.gateway.nodes.find((item) => item.name === nodeName);
+        if (!node) {
+          sendJson(response, 404, { error: "node tidak ditemukan", node: nodeName });
+          return;
+        }
+        await this.proxyToNode(node, request, response, path);
         return;
       }
       if (path === "/v1/auth/pair" && request.method === "POST") {
