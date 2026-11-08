@@ -458,6 +458,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let prematureCount = 0;
   let goalPrompts = 0;
   let noPlanNudges = 0;
+  let replanNudges = 0;
   let lastToolSignature = "";
   let repeatedToolCalls = 0;
   let fileCheckpointId: string | undefined;
@@ -929,6 +930,17 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       }
 
       if (calls.length === 0) {
+        if (noProgress && activePlan && !options.planOnly && replanNudges < 1) {
+          replanNudges += 1;
+          publish("phase", { phase: "reflect", reason: "auto_replan" });
+          addMessage(db, {
+            sessionId: session.id,
+            turnId,
+            role: "system",
+            content: "Kegagalan berulang membuat rencana saat ini tidak lagi cocok. Gunakan plan_revise dengan alasan konkret, pertahankan task yang sudah selesai, lalu lanjutkan dari task pertama yang belum selesai."
+          });
+          continue;
+        }
         if (noProgress) {
           const message = "Agent berhenti karena tidak ada kemajuan setelah kegagalan berulang";
           publish("error", { error_code: "E_NO_PROGRESS", message, analysis: analyzeFailure(new RannError("E_NO_PROGRESS", message), { provider: provider.name, model, step: steps }) });

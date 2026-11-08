@@ -89,6 +89,7 @@ export function planDecision(taskClass: TaskClass, prompt: string): PlanDecision
   const paths = new Set(prompt.match(/[A-Za-z0-9_.@/-]+\.[A-Za-z0-9]{1,8}\b/g) ?? []);
   if (paths.size >= 3) reasons.push(`${paths.size} file disebut`);
   if (/\b(migrasi|migration|deploy|rilis|release|upgrade|refactor)\b/i.test(prompt)) reasons.push("operasi besar");
+  if (!/^tool:/.test(prompt.trim()) && /\b(api|endpoint|webhook|oauth|database|redis|docker|service|layanan|install|pasang)\b/i.test(prompt)) reasons.push("dependensi eksternal");
   if (taskClass === "modify" || taskClass === "operate" || taskClass === "research" || taskClass === "incident") {
     reasons.push(`task class ${taskClass}`);
   }
