@@ -135,7 +135,7 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 
 ## Progres terkini (2026-11-08)
 
-- Commit terakhir: `4bddd1b`, `pnpm check` hijau 284 tes di 55 berkas.
+- Commit terakhir: `288b6a6`, `pnpm check` hijau 285 tes di 55 berkas.
 - Baseline git dicatat per turn (hash diff, daftar berkas kotor, salinan diff di checkpoints).
 - Checkpoint berkala setiap 10 langkah tool, selain checkpoint sebelum tool mutasi dan setelah test lulus.
 - Estimasi rencana punya label `historical`, `heuristic`, atau `unavailable`; data historis diambil dari rata-rata task selesai.
@@ -155,6 +155,8 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - Registry pengguna lokal gateway tersedia lewat `rann gateway users` dan `rann gateway user add|role|disable`.
 - MCP HTTP mendukung OAuth client credentials dari env.
 - Hint error mengikuti `ui.language` untuk id/en.
+- Indeks simbol lintas bahasa dan tool `symbol_search` tersedia; `/index rebuild` juga membangun indeks simbol.
+- Gateway punya pemantauan node multi-node lewat `gateway.nodes` dan `rann gateway nodes`.
 - Audit lama di `docs/audit/parts/` masih memuat gap usang; audit ulang belum selesai.
 
 ## Aturan
