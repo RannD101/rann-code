@@ -71,6 +71,7 @@ export interface ToolContext {
   }) => Promise<unknown>;
   mcp?: {
     callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
+    permissionFor?(name: string): "read" | "write" | "exec";
   };
   plugins?: {
     list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
@@ -2254,7 +2255,7 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
     assertAllowed({
       mode: ctx.permissionMode,
       tool: name,
-      risk: "exec",
+      risk: ctx.mcp.permissionFor?.(name) ?? "exec",
       approved: ctx.approved,
       allow: ctx.allow,
       deny: ctx.deny

@@ -12,6 +12,7 @@ export interface McpServerConfig {
   url?: string;
   headers?: Record<string, string>;
   oauth?: { token_url: string; client_id: string; client_secret_env: string; scope?: string };
+  permission?: "read" | "write" | "exec";
   enabled: boolean;
   timeout_ms: number;
 }
@@ -84,6 +85,11 @@ export class McpManager {
     private readonly servers: Record<string, McpServerConfig>,
     private readonly version = "0.1.0"
   ) {}
+
+  permissionFor(name: string): "read" | "write" | "exec" {
+    const server = name.replace(/^mcp__/, "").split("__")[0] ?? "";
+    return this.servers[server]?.permission ?? "exec";
+  }
 
   async listTools(): Promise<ToolSpec[]> {
     if (this.cachedSpecs) return this.cachedSpecs;

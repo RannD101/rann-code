@@ -142,6 +142,7 @@ export const configSchema = z.object({
               client_secret_env: z.string().min(1),
               scope: z.string().optional()
             }).optional(),
+            permission: z.enum(["read", "write", "exec"]).default("exec"),
             enabled: z.boolean().default(true),
             timeout_ms: z.number().int().positive().max(120_000).default(20_000)
           }).superRefine((value, ctx) => {
