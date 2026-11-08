@@ -448,7 +448,7 @@ const procedureSchema = z.object({
 });
 
 const skillSchema = z.object({
-  action: z.enum(["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate", "run"]),
+  action: z.enum(["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate", "run", "reference"]),
   name: z.string().min(1).max(64).optional(),
   description: z.string().min(1).max(500).optional(),
   body: z.string().min(1).max(60_000).optional(),
@@ -459,6 +459,7 @@ const skillSchema = z.object({
   triggers: z.array(z.string().min(1).max(80)).max(20).optional(),
   dependencies: z.array(z.string().min(1).max(64)).max(20).optional(),
   version: z.string().min(1).max(40).optional(),
+  file: z.string().min(1).max(500).optional(),
   reason: z.string().min(1).max(500).optional(),
   script: z.string().min(1).max(200).optional(),
   args: z.array(z.string().max(2_000)).max(50).optional(),
@@ -1687,7 +1688,7 @@ export const tools: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate"] },
+          action: { type: "string", enum: ["list", "view", "create", "remove", "select", "edit", "history", "rollback", "validate", "reference"] },
           name: { type: "string" },
           description: { type: "string", description: "Kapan skill dipakai, minimal 12 karakter" },
           body: { type: "string", description: "Langkah kerja, maksimal 60.000 karakter" },
@@ -1698,6 +1699,7 @@ export const tools: ToolDefinition[] = [
           triggers: { type: "array", items: { type: "string" } },
           dependencies: { type: "array", items: { type: "string" } },
           version: { type: "string", description: "Versi target untuk rollback" },
+          file: { type: "string", description: "Nama berkas di folder references atau scripts" },
           reason: { type: "string", description: "Alasan perubahan untuk changelog" }
         },
         required: ["action"]
@@ -1750,6 +1752,12 @@ export const tools: ToolDefinition[] = [
       if (input.action === "rollback") {
         if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill rollback butuh name");
         return textResult({ restored: ctx.skills.rollback(input.name, input.version) });
+      }
+      if (input.action === "reference") {
+        if (!input.name || !input.file) throw new RannError("E_TOOL_INVALID_ARGS", "skill reference butuh name dan file");
+        const content = ctx.skills.readAsset(input.name, input.file, input.file.startsWith("scripts/") ? "scripts" : "references");
+        if (content === undefined) throw new RannError("E_NOT_FOUND", `Aset skill tidak ditemukan: ${input.file}`);
+        return textResult({ name: input.name, file: input.file, content });
       }
       if (!input.name) throw new RannError("E_TOOL_INVALID_ARGS", "skill remove butuh name");
       const removed = ctx.skills.remove(input.name, input.scope ?? "project");

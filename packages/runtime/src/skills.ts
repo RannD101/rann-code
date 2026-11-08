@@ -22,6 +22,8 @@ export interface SkillInfo {
 
 export interface SkillContent extends SkillInfo {
   body: string;
+  references?: string[];
+  scripts?: string[];
 }
 
 export interface SkillSelection {
@@ -294,7 +296,23 @@ export class SkillStore {
 
   view(name: string): SkillContent | undefined {
     const key = slug(name);
-    return this.all().find((skill) => skill.name === key);
+    const skill = this.all().find((item) => item.name === key);
+    if (!skill?.path) return skill;
+    const listDir = (dir: string): string[] => {
+      try {
+        return readdirSync(dir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name)
+          .sort();
+      } catch {
+        return [];
+      }
+    };
+    return {
+      ...skill,
+      references: listDir(join(skill.path, "references")),
+      scripts: listDir(join(skill.path, "scripts"))
+    };
   }
 
   /**
@@ -684,6 +702,16 @@ export class SkillStore {
     if (!existsSync(target)) return false;
     rmSync(target, { recursive: true, force: true });
     return true;
+  }
+
+  readAsset(name: string, file: string, kind: "references" | "scripts" = "references"): string | undefined {
+    const skill = this.view(name);
+    if (!skill?.path) return undefined;
+    const base = join(skill.path, kind);
+    const target = resolve(base, file);
+    if (target !== base && !target.startsWith(base + "/")) throw new RannError("E_PERMISSION", `Path aset skill keluar folder ${kind}`);
+    if (!existsSync(target)) return undefined;
+    return readFileSync(target, "utf8");
   }
 
   paths(): { global: string; project: string } {

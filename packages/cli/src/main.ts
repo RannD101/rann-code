@@ -2502,21 +2502,30 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line === "/create-skill" || line.startsWith("/create-skill ")) {
-          const argument = line.slice(13).trim();
-          const separator = argument.indexOf("|");
-          const name = (separator >= 0 ? argument.slice(0, separator) : argument).trim();
-          const description = (separator >= 0 ? argument.slice(separator + 1) : "").trim();
-          if (name.length === 0 || description.length < 12) {
-            print("Pakai: /create-skill <nama> | <deskripsi minimal 12 karakter>");
+          const parts = line.slice(13).split("|").map((part) => part.trim());
+          const name = parts[0] ?? "";
+          let description = parts[1] ?? "";
+          let triggers = parts[2] ?? "";
+          let steps = parts[3] ?? "";
+          if (name.length === 0) {
+            print("Pakai: /create-skill <nama> | <deskripsi> [| trigger1,trigger2 | langkah]");
             continue;
           }
-          const body = `# ${name}\n\n${description}\n\n## Kapan dipakai\n\nJelaskan pemicu dan konteks pemakaian skill ini.\n\n## Langkah\n\n1. Langkah pertama.\n2. Verifikasi hasil dengan perintah nyata.\n\n## Pitfall\n\nCatat kesalahan yang pernah terjadi dan cara menghindarinya.\n`;
+          if (description.length < 12) description = (await editor.readLine("deskripsi skill (minimal 12 karakter): ")).trim();
+          if (triggers.length === 0) triggers = (await editor.readLine("trigger, pisahkan dengan koma: ")).trim();
+          if (steps.length === 0) steps = (await editor.readLine("langkah kerja, pisahkan dengan titik koma: ")).trim();
+          if (description.length < 12) {
+            print(ui.red("deskripsi minimal 12 karakter"));
+            continue;
+          }
+          const body = `# ${name}\n\n${description}\n\n## Kapan dipakai\n\n${triggers || description}\n\n## Langkah\n\n${steps || "1. Langkah pertama.\n2. Verifikasi hasil dengan perintah nyata."}\n\n## Pitfall\n\nCatat kesalahan yang pernah terjadi dan cara menghindarinya.\n`;
           const skill = await client.request<Record<string, unknown>>("skill.create", {
             projectPath: process.cwd(),
             name,
             description,
             body,
             scope: "project",
+            triggers: triggers.split(",").map((item) => item.trim()).filter(Boolean),
             overwrite: false
           });
           print(ui.green(`skill ${String(skill.name)} dibuat di ${String(skill.path)}`));
