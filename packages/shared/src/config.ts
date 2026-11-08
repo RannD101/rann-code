@@ -188,6 +188,11 @@ export const configSchema = z.object({
       tls_key: z.string().optional(),
       heartbeat_ms: z.number().int().min(5_000).max(120_000).default(20_000),
       allow_origins: z.array(z.string()).default([]),
+      nodes: z.array(z.object({
+        name: z.string().min(1),
+        url: z.string().url(),
+        token_env: z.string().optional()
+      })).default([]),
       profile: z.string().default("default")
     })
     .default({}),

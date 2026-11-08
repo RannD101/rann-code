@@ -762,6 +762,23 @@ export class RpcServer {
         return (
           this.gateway.setRole(input.id as string, input.role as "owner" | "operator" | "viewer" | "approver") ?? null
         );
+      case "gateway.nodes": {
+        const nodes = this.options.config.config.gateway.nodes;
+        const results = await Promise.all(nodes.map(async (node) => {
+          const token = node.token_env ? process.env[node.token_env] : undefined;
+          try {
+            const response = await fetch(`${node.url.replace(/\/$/, "")}/v1/health`, {
+              headers: token ? { authorization: `Bearer ${token}` } : {},
+              signal: AbortSignal.timeout(3_000)
+            });
+            const body = response.ok ? (await response.json() as Record<string, unknown>) : null;
+            return { name: node.name, url: node.url, ok: response.ok, status: response.status, version: body?.version ?? null, pid: body?.pid ?? null };
+          } catch (error) {
+            return { name: node.name, url: node.url, ok: false, status: 0, error: (error as Error).message };
+          }
+        }));
+        return { local: { name: "local", version: this.options.version, pid: process.pid }, nodes: results };
+      }
       case "gateway.stats":
         return this.gateway.stats();
       case "messaging.status":

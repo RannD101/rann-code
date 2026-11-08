@@ -328,6 +328,15 @@ async function gatewayCommand(args: ParsedArgs): Promise<number> {
       print(JSON.stringify(stats, null, 2));
       return 0;
     }
+    if (sub === "nodes") {
+      const data = await client.request<{ local: Record<string, unknown>; nodes: Array<Record<string, unknown>> }>("gateway.nodes", {});
+      if (flagBool(args, "json")) print(JSON.stringify(data, null, 2));
+      else {
+        print(`lokal  ${String(data.local.name)}  versi ${String(data.local.version)}  pid ${String(data.local.pid)}`);
+        for (const node of data.nodes) print(`${node.ok ? "OK  " : "FAIL"}  ${String(node.name)}  ${String(node.url)}  ${node.ok ? `versi ${String(node.version)}` : String(node.error ?? node.status)}`);
+      }
+      return 0;
+    }
     if (sub === "users") {
       const opened = openDatabase({ path: homeLayout().dbPath, backupBeforeMigrate: false });
       try {
