@@ -1482,8 +1482,8 @@ export class RpcServer {
     seedRegistry(this.db, config);
     const projectPath = session.project_id
       ? (this.db.prepare("SELECT path FROM projects WHERE id = ?").get(session.project_id) as { path: string } | undefined)?.path
-      : process.cwd();
-    const workspaceRoot = projectPath ?? process.cwd();
+      : (this.options.config.projectPath ?? process.cwd());
+    const workspaceRoot = projectPath ?? this.options.config.projectPath ?? process.cwd();
     const attachments = prepareAttachments(
       input.attachments as RawAttachment[] | undefined,
       workspaceRoot,

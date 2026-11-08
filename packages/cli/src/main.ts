@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, exitCodeFor, loadConfig, providerFor, toRannError, type ErrorCode } from "@rann/shared";
 import { destructiveReason } from "@rann/runtime";
 import { buildProjectMap, commitMessage, ensureLayout, formatReview, projectMapSummary, resolveHome, resolveLayout, reviewUnifiedDiff, saveProjectMap, type RpcClient } from "@rann/runtime";
-import { createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
+import { appendAudit, createBackup, exportAuditJsonl, openDatabase, inspectDatabase, verifyAuditChain, listBackups, renderGoal, restoreBackup, verifyBackup, type GoalView } from "@rann/storage";
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
@@ -584,6 +584,7 @@ async function doctorCommand(args: ParsedArgs): Promise<number> {
   ensureLayout(layout);
   const checks: Check[] = [];
 
+  checks.push({ name: "versi", ok: true, level: "ok", detail: `rann-code ${packageVersion()}` });
   const major = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
   const minor = Number.parseInt(process.versions.node.split(".")[1] ?? "0", 10);
   const nodeOk = major > 22 || (major === 22 && minor >= 11);
@@ -636,6 +637,21 @@ async function doctorCommand(args: ParsedArgs): Promise<number> {
       ok: envOk,
       level: envOk ? "ok" : "warn",
       detail: envName ? `env ${envName}${process.env[envName] ? " terisi" : " kosong"}` : provider.kind === "mock" ? "mock tidak butuh key" : "key belum diatur"
+    });
+    const gateway = loaded.config.gateway;
+    const loopback = gateway.host === "127.0.0.1" || gateway.host === "::1" || gateway.host === "localhost";
+    checks.push({
+      name: "gateway",
+      ok: !gateway.enabled || loopback,
+      level: gateway.enabled && !loopback ? "warn" : "ok",
+      detail: gateway.enabled ? `${gateway.host}:${gateway.port}${loopback ? " (lokal)" : " (terbuka)"}` : "nonaktif"
+    });
+    const tlsOk = gateway.tls_cert === undefined || (existsSync(gateway.tls_cert) && gateway.tls_key !== undefined && existsSync(gateway.tls_key));
+    checks.push({
+      name: "gateway-tls",
+      ok: tlsOk,
+      level: tlsOk ? "ok" : "warn",
+      detail: gateway.tls_cert === undefined ? "tidak memakai TLS" : tlsOk ? "sertifikat dan key ada" : "sertifikat atau key tidak ditemukan"
     });
   } catch (error) {
     const err = toRannError(error);
@@ -3907,6 +3923,19 @@ async function configCommand(args: ParsedArgs): Promise<number> {
     ensureLayout(layout);
     setConfigValue(layout.home, key, value);
     await stopDaemonForConfig();
+    try {
+      const opened = openDatabase({ path: layout.dbPath, backupBeforeMigrate: false });
+      appendAudit(opened.db, {
+        actor: "user",
+        action: "config.set",
+        resource: key,
+        decision: "ok",
+        metadata: { source: "cli", permission_change: key.startsWith("permissions.") }
+      });
+      opened.db.close();
+    } catch {
+      // audit config tidak boleh menggagalkan perubahan yang sudah ditulis
+    }
     print(`${key} = ${value}`);
     return 0;
   }
