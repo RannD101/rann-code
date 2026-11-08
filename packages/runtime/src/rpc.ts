@@ -220,6 +220,7 @@ export class RpcServer {
       artifactsDir: options.layout.artifactsDir,
       invoke: (method, params) =>
         this.handleRequest({ jsonrpc: "2.0", id: `gw-${Date.now()}`, method, params }),
+      discordInteraction: (payload) => this.handleDiscordInteraction(payload),
       subscribe: (listener) => {
         this.eventListeners.add(listener);
         return () => this.eventListeners.delete(listener);
@@ -1408,7 +1409,11 @@ export class RpcServer {
     this.broadcast(event);
   }
 
-  private requestApproval(
+  private async handleDiscordInteraction(payload: Record<string, unknown>): Promise<string> {
+    return this.messaging ? this.messaging.handleDiscordInteraction(payload) : "Discord tidak aktif";
+  }
+
+  private async requestApproval(
     sessionId: string,
     turnId: string,
     tool: string,

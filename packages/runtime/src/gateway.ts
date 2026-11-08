@@ -3,9 +3,12 @@ import { createServer as createHttpServer, type IncomingMessage, type Server, ty
 import { createServer as createHttpsServer } from "node:https";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, resolve, sep } from "node:path";
+import { connect as netConnect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { WebSocketServer, type WebSocket } from "ws";
+import { createPublicKey, verify } from "node:crypto";
 import { RannError, toRannError, type EventEnvelope, type RannConfig } from "@rann/shared";
 import type { Db, GatewayDeviceView, GatewayRole, GatewayScope } from "@rann/storage";
 import {
@@ -36,6 +39,7 @@ export interface GatewayOptions {
   profile: string;
   artifactsDir: string;
   invoke: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+  discordInteraction?: (payload: Record<string, unknown>) => Promise<string>;
   subscribe: (listener: (event: EventEnvelope) => void) => () => void;
   logger?: GatewayLogger;
 }
@@ -177,6 +181,7 @@ export class GatewayServer {
   private readonly profile: string;
   private readonly artifactsDir: string;
   private readonly invokeRpc: GatewayOptions["invoke"];
+  private readonly discordInteraction?: GatewayOptions["discordInteraction"];
   private readonly subscribeRpc: GatewayOptions["subscribe"];
   private readonly logger?: GatewayLogger;
   private server?: Server;
@@ -196,6 +201,7 @@ export class GatewayServer {
     this.profile = options.profile;
     this.artifactsDir = options.artifactsDir;
     this.invokeRpc = options.invoke;
+    this.discordInteraction = options.discordInteraction;
     this.subscribeRpc = options.subscribe;
     this.logger = options.logger;
   }
@@ -336,6 +342,35 @@ export class GatewayServer {
       (socket as unknown as { destroy: () => void }).destroy();
       return;
     }
+    const nodeName = typeof request.headers["x-rann-node"] === "string" ? request.headers["x-rann-node"] : undefined;
+    if (nodeName) {
+      const node = this.config.gateway.nodes.find((item) => item.name === nodeName);
+      if (!node) {
+        (socket as unknown as { write: (data: string) => void }).write("HTTP/1.1 404 Not Found\r\n\r\n");
+        (socket as unknown as { destroy: () => void }).destroy();
+        return;
+      }
+      const target = new URL(node.url);
+      const token = node.token_env ? process.env[node.token_env] : undefined;
+      const headers: string[] = [`GET ${url.pathname}${url.search} HTTP/1.1`];
+      for (const [key, value] of Object.entries(request.headers)) {
+        if (value === undefined || key === "host" || key === "authorization" || key === "x-rann-node") continue;
+        headers.push(`${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
+      }
+      headers.push(`host: ${target.host}`);
+      if (token) headers.push(`authorization: Bearer ${token}`);
+      const upstream = target.protocol === "https:"
+        ? tlsConnect({ host: target.hostname, port: Number(target.port || 443), servername: target.hostname })
+        : netConnect({ host: target.hostname, port: Number(target.port || 80) });
+      upstream.on("connect", () => {
+        upstream.write(`${headers.join("\r\n")}\r\n\r\n`);
+        if (head.length > 0) upstream.write(head);
+        upstream.pipe(socket as never);
+        (socket as unknown as NodeJS.ReadableStream).pipe(upstream);
+      });
+      upstream.on("error", () => (socket as unknown as { destroy: () => void }).destroy());
+      return;
+    }
     this.wss!.handleUpgrade(request, socket as never, head, (client) => {
       const tagged = client as WebSocket & { rannAlive?: boolean; rannMissed?: number; rannDevice?: GatewayDeviceView };
       tagged.rannAlive = true;
@@ -355,6 +390,43 @@ export class GatewayServer {
         client.send(JSON.stringify({ type: "event", event }));
       }
     });
+  }
+
+  private async handleDiscordInteraction(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const publicKey = this.config.messaging?.discord?.public_key;
+    if (!publicKey) {
+      sendJson(response, 503, { error: "discord public_key belum diatur" });
+      return;
+    }
+    const signature = request.headers["x-signature-ed25519"];
+    const timestamp = request.headers["x-signature-timestamp"];
+    if (typeof signature !== "string" || typeof timestamp !== "string") {
+      sendJson(response, 401, { error: "signature discord tidak ada" });
+      return;
+    }
+    const body = await readBody(request, MAX_ATTACHMENT);
+    try {
+      const der = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(publicKey, "hex")]);
+      const key = createPublicKey({ key: der, format: "der", type: "spki" });
+      const valid = verify(null, Buffer.from(`${timestamp}${body.toString("utf8")}`), key, Buffer.from(signature, "hex"));
+      if (!valid) {
+        sendJson(response, 401, { error: "signature discord tidak valid" });
+        return;
+      }
+      const payload = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+      if (payload.type === 1) {
+        sendJson(response, 200, { type: 1 });
+        return;
+      }
+      if (!this.discordInteraction) {
+        sendJson(response, 503, { error: "adapter discord tidak aktif" });
+        return;
+      }
+      const content = await this.discordInteraction(payload);
+      sendJson(response, 200, { type: 4, data: { content } });
+    } catch (error) {
+      sendJson(response, 400, { error: toRannError(error).message });
+    }
   }
 
   private async proxyToNode(
@@ -451,6 +523,10 @@ export class GatewayServer {
           return;
         }
         await this.proxyToNode(node, request, response, path);
+        return;
+      }
+      if (path === "/v1/discord/interactions" && request.method === "POST") {
+        await this.handleDiscordInteraction(request, response);
         return;
       }
       if (path === "/v1/auth/pair" && request.method === "POST") {

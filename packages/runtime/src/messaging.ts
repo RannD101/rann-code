@@ -567,6 +567,11 @@ export class MessagingService {
     }
   }
 
+  async handleDiscordInteraction(payload: Record<string, unknown>): Promise<string> {
+    if (!this.discord) return "Discord tidak aktif";
+    return this.discord.handleInteraction(payload);
+  }
+
   async stop(): Promise<void> {
     this.unsubscribe?.();
     this.unsubscribe = undefined;

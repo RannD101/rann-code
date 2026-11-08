@@ -145,8 +145,52 @@ export class DiscordAdapter {
     this.running = true;
     await this.loadSelf();
     await Promise.all([...this.allowedChannels].map((channelId) => this.channelInfo(channelId)));
+    await this.registerSlashCommands();
     this.logger?.info("adapter discord aktif");
     if (this.autoPoll) this.loop = this.runLoop();
+  }
+
+  private async registerSlashCommands(): Promise<void> {
+    try {
+      const app = asRecord(await this.api("GET", "/applications/@me"));
+      const applicationId = asString(app.id);
+      if (!applicationId) return;
+      const commands = [
+        { name: "ask", description: "Kirim prompt ke Rann", type: 1, options: [{ name: "prompt", description: "Prompt atau instruksi", type: 3, required: true }] },
+        { name: "status", description: "Status sesi dan antrean", type: 1 },
+        { name: "cancel", description: "Batalkan turn yang sedang berjalan", type: 1 },
+        { name: "cost", description: "Biaya sesi ini", type: 1 },
+        { name: "model", description: "Ganti model sesi", type: 1, options: [{ name: "nama", description: "Nama model", type: 3, required: false }] },
+        { name: "help", description: "Daftar perintah Rann", type: 1 }
+      ];
+      await this.api("PUT", `/applications/${applicationId}/commands`, commands);
+    } catch (error) {
+      this.logger?.warn(`gagal mendaftarkan slash command discord: ${toRannError(error).message}`);
+    }
+  }
+
+  async handleInteraction(payload: Record<string, unknown>): Promise<string> {
+    const type = asNumber(payload.type);
+    if (type === 1) return "pong";
+    if (type !== 2) return "interaksi tidak didukung";
+    const data = asRecord(payload.data);
+    const name = asString(data.name) ?? "";
+    const rawOptions = Array.isArray(data.options) ? data.options : [];
+    const prompt = rawOptions.map((item) => asString(asRecord(item).value) ?? "").filter(Boolean).join(" ").trim();
+    const channelId = asString(payload.channel_id);
+    if (!channelId) return "kanal tidak dikenal";
+    const member = asRecord(payload.member);
+    const user = asRecord(member.user ?? payload.user);
+    const content = name === "ask" ? prompt : `/${name}${prompt ? ` ${prompt}` : ""}`;
+    const fake: DiscordMessage = {
+      id: `int_${Date.now()}`,
+      channel_id: channelId,
+      content,
+      author: { id: asString(user.id) ?? "interaction", username: asString(user.username), bot: false },
+      ...(Array.isArray(member.roles) ? { member: { roles: member.roles.map(String) } } : {})
+    };
+    void this.handleMessage(fake).catch((error) => this.logger?.warn(`interaksi discord gagal: ${toRannError(error).message}`));
+    return `Perintah /${name} diproses.`;
   }
 
   async stop(): Promise<void> {
@@ -583,7 +627,7 @@ export class DiscordAdapter {
     }
   }
 
-  private async api(method: "GET" | "POST", path: string, payload?: JsonRecord): Promise<unknown> {
+  private async api(method: "GET" | "POST" | "PUT", path: string, payload?: unknown): Promise<unknown> {
     const response = await this.fetchImpl(`${this.apiBase}${path}`, {
       method,
       headers: {
