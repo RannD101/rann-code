@@ -1861,12 +1861,15 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           const argument = line.replace(/^\/(?:background|bg)\s*/, "");
           const tokens = tokenizeInline(argument);
           const sub = (tokens[0] ?? "list").toLowerCase();
-          const options = parseInlineOptions(tokens.slice(1), new Set(["status", "queue", "limit", "priority", "max-attempts", "after", "idempotency-key", "session"]));
+          const options = parseInlineOptions(tokens.slice(1), new Set(["status", "queue", "limit", "since", "until", "history", "priority", "max-attempts", "after", "idempotency-key", "session"]));
           const asJson = options.flags.json === true;
           if (sub === "list" || sub === "ls") {
             const rows = await client.request<JobView[]>("background.list", {
               ...(inlineFlag(options.flags, "status") ? { status: inlineFlag(options.flags, "status") } : {}),
               ...(inlineFlag(options.flags, "queue") ? { queue: inlineFlag(options.flags, "queue") } : {}),
+              ...(inlineFlag(options.flags, "since") ? { since: Date.parse(inlineFlag(options.flags, "since") ?? "") || undefined } : {}),
+              ...(inlineFlag(options.flags, "until") ? { until: Date.parse(inlineFlag(options.flags, "until") ?? "") || undefined } : {}),
+              ...(options.flags.history === true ? { history: true } : {}),
               limit: inlineNumber(options.flags, "limit") ?? 20
             });
             if (asJson) print(JSON.stringify(rows, null, 2));

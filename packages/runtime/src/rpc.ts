@@ -628,6 +628,9 @@ export class RpcServer {
         return listJobs(this.db, {
           ...(input.status ? { status: input.status as never } : {}),
           ...(input.queue ? { queue: input.queue as string } : {}),
+          ...(typeof input.since === "number" ? { since: input.since } : {}),
+          ...(typeof input.until === "number" ? { until: input.until } : {}),
+          ...(input.history === true ? { history: true } : {}),
           limit: input.limit as number
         });
       case "background.get": {

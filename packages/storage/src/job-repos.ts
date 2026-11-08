@@ -93,7 +93,7 @@ export function getJob(db: Db, id: string): JobRow | undefined {
 
 export function listJobs(
   db: Db,
-  filter: { status?: JobStatus | JobStatus[]; queue?: string; kind?: string; limit?: number } = {}
+  filter: { status?: JobStatus | JobStatus[]; queue?: string; kind?: string; since?: number; until?: number; history?: boolean; limit?: number } = {}
 ): JobRow[] {
   const where: string[] = [];
   const params: unknown[] = [];
@@ -110,7 +110,16 @@ export function listJobs(
     where.push("kind = ?");
     params.push(filter.kind);
   }
-  const sql = `SELECT * FROM jobs ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY priority DESC, created_at ASC LIMIT ?`;
+  if (typeof filter.since === "number") {
+    where.push("created_at >= ?");
+    params.push(filter.since);
+  }
+  if (typeof filter.until === "number") {
+    where.push("created_at <= ?");
+    params.push(filter.until);
+  }
+  const order = filter.history ? "created_at DESC, rowid DESC" : "priority DESC, created_at ASC";
+  const sql = `SELECT * FROM jobs ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order} LIMIT ?`;
   params.push(Math.min(Math.max(filter.limit ?? 50, 1), 500));
   return db.prepare(sql).all(...params) as JobRow[];
 }
