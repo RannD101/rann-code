@@ -216,6 +216,7 @@ describe("tools", () => {
       "agent_message",
       "task",
       "code_rename",
+      "symbol_search",
       "read_file",
       "write_file",
       "edit_file",
@@ -223,6 +224,15 @@ describe("tools", () => {
       "list_dir",
       "stat_file"
     ]);
+  });
+
+  it("mencari simbol dari indeks kode", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "simbol.ts"), "export function hitungPajak(x: number) { return x; }\nexport class Faktur {}\n", "utf8");
+    const result = await executeTool("symbol_search", { query: "hitung" }, context(root));
+    const entries = (result.output as { results: Array<{ name: string; line: number }> }).results;
+    expect(entries[0]?.name).toBe("hitungPajak");
+    expect(entries[0]?.line).toBe(1);
   });
 
   it("mengganti nama simbol lintas berkas secara transaksional", async () => {

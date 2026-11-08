@@ -11,6 +11,7 @@ export * from "./providers/index.js";
 export * from "./tools/index.js";
 export * from "./git.js";
 export * from "./project-map.js";
+export * from "./symbol-index.js";
 export * from "./code-tools.js";
 export * from "./checkpoint-files.js";
 export * from "./rpc.js";

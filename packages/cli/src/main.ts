@@ -2435,7 +2435,8 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             root: process.cwd(),
             maxFiles: 2_000
           });
-          print(ui.green(`indeks dibangun ulang: ${result.files} berkas, ${result.chunks} chunk, ${result.skipped} dilewati`));
+          const symbols = await client.request<{ entries: { entries?: unknown[] } }>("symbol.index", { root: process.cwd() });
+          print(ui.green(`indeks dibangun ulang: ${result.files} berkas, ${result.chunks} chunk, ${result.skipped} dilewati, ${symbols.entries.entries?.length ?? 0} simbol`));
           continue;
         }
         if (line === "/resume" || line.startsWith("/resume ")) {

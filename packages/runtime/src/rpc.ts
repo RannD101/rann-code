@@ -88,6 +88,7 @@ import {
 import { providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
 import { routeModel, type HealthState } from "./router.js";
+import { saveSymbolIndex, searchSymbols } from "./symbol-index.js";
 import { runTurn, type AgentConfig, type ApprovalDecision, type DelegateInput, type RunTurnOptions } from "./agent.js";
 import { analyzeFailure } from "./failure-analysis.js";
 import { prepareAttachments, type RawAttachment } from "./attachments.js";
@@ -467,6 +468,17 @@ export class RpcServer {
       }
       case "turn.events":
         return eventsForTurn(this.db, input.turnId as string, (input.afterSeq as number) ?? 0);
+      case "symbol.index": {
+        const root = (input.root as string | undefined) ?? (input.projectPath as string | undefined) ?? process.cwd();
+        const entries = saveSymbolIndex(root);
+        return { root, entries: JSON.parse(entries) as unknown };
+      }
+      case "symbol.search":
+        return searchSymbols(
+          (input.root as string | undefined) ?? process.cwd(),
+          input.query as string,
+          typeof input.limit === "number" ? input.limit : 50
+        );
       case "model.list":
         return this.modelList();
       case "provider.list":

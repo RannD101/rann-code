@@ -25,6 +25,7 @@ import {
   restoreFileCheckpoint
 } from "../checkpoint-files.js";
 import { applyFileTransaction, searchCode, type FileChange, type TransactionFile } from "../code-tools.js";
+import { searchSymbols } from "../symbol-index.js";
 import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
@@ -2174,6 +2175,25 @@ export const tools: ToolDefinition[] = [
       } finally {
         releaseLeases(ctx, leases);
       }
+    }
+  },
+  {
+    risk: "read",
+    spec: {
+      name: "symbol_search",
+      description: "Cari simbol kode (fungsi, class, interface, type, method) dari indeks simbol workspace. Hasil memuat path, baris, nama, dan jenis.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Nama simbol atau potongannya" },
+          limit: { type: "integer", minimum: 1, maximum: 200 }
+        },
+        required: ["query"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(200).optional() }), args, "symbol_search");
+      return textResult({ query: input.query, results: searchSymbols(ctx.workspaceRoot, input.query, input.limit ?? 50) });
     }
   },
 ];
