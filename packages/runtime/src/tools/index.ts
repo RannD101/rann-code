@@ -1887,7 +1887,17 @@ export const tools: ToolDefinition[] = [
     },
     async run(args, ctx) {
       const input = parse(httpRequestSchema, args, "http_request");
-      if (input.method === "POST" && !ctx.approved) throw new RannError("E_APPROVAL_REQUIRED", "HTTP POST butuh izin");
+      const method = input.method ?? "GET";
+      assertAllowed({
+        mode: ctx.permissionMode,
+        tool: "http_request",
+        risk: method === "POST" ? "exec" : "read",
+        command: input.url,
+        approved: ctx.approved,
+        allow: ctx.allow,
+        deny: ctx.deny
+      });
+      if (method === "POST" && !ctx.approved) throw new RannError("E_APPROVAL_REQUIRED", "HTTP POST butuh izin");
       return textResult(await httpFetch(input));
     }
   },
