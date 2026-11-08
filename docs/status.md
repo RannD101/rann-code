@@ -135,7 +135,7 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 
 ## Progres terkini (2026-11-08)
 
-- Commit terakhir: `2b3d23b`, `pnpm check` hijau 283 tes di 55 berkas.
+- Commit terakhir: `3b473f6`, `pnpm check` hijau 284 tes di 55 berkas.
 - Baseline git dicatat per turn (hash diff, daftar berkas kotor, salinan diff di checkpoints).
 - Checkpoint berkala setiap 10 langkah tool, selain checkpoint sebelum tool mutasi dan setelah test lulus.
 - Estimasi rencana punya label `historical`, `heuristic`, atau `unavailable`; data historis diambil dari rata-rata task selesai.
@@ -143,7 +143,12 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - Konflik preferensi otomatis menandai entri lama `superseded` dan menyimpan alasan.
 - Instruksi diurutkan berdasarkan prioritas, konflik dilaporkan sebagai event, README ikut dibaca, `.rann/knowledge` ikut diindeks.
 - `doctor` memeriksa versi aplikasi, konfigurasi gateway, dan TLS gateway.
-- Audit lama di `docs/audit/parts/` masih memuat gap usang; audit ulang sedang dijalankan bertahap.
+- `code_rename` mengganti simbol lintas berkas secara transaksional dengan dry-run.
+- Tool yang gagal menulis artefak JSON berisi tool, args teredaksi, error, dan cwd.
+- Evaluasi plan mencatat total task, sukses, gagal, durasi aktual, estimasi, dan jumlah intervensi.
+- `project_check` mengulang tes gagal maksimal dua kali dan menandai hasil flaky.
+- Skill mendukung tarball HTTPS ber-checksum, batas versi dependensi, aset references/scripts, audit hapus, dan wizard `/create-skill`.
+- Audit lama di `docs/audit/parts/` masih memuat gap usang; audit ulang belum selesai.
 
 ## Aturan
 
