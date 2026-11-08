@@ -11,6 +11,7 @@ export interface McpServerConfig {
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
+  oauth?: { token_url: string; client_id: string; client_secret_env: string; scope?: string };
   enabled: boolean;
   timeout_ms: number;
 }
@@ -197,6 +198,17 @@ export class McpManager {
       initialized: false
     };
     this.states.set(name, state);
+    if (config.oauth) {
+      const secret = process.env[config.oauth.client_secret_env];
+      if (!secret) throw new Error(`MCP ${name}: env ${config.oauth.client_secret_env} kosong untuk OAuth`);
+      const body = new URLSearchParams({ grant_type: "client_credentials", client_id: config.oauth.client_id, client_secret: secret });
+      if (config.oauth.scope) body.set("scope", config.oauth.scope);
+      const response = await fetch(config.oauth.token_url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+      if (!response.ok) throw new Error(`MCP ${name}: OAuth token gagal ${response.status}`);
+      const token = (await response.json()) as { access_token?: string };
+      if (!token.access_token) throw new Error(`MCP ${name}: OAuth tidak mengembalikan access_token`);
+      state.config.headers = { ...(state.config.headers ?? {}), authorization: `Bearer ${token.access_token}` };
+    }
     await this.initializeHttp(state);
     return state;
   }

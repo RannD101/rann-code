@@ -136,6 +136,12 @@ export const configSchema = z.object({
             cwd: z.string().min(1).optional(),
             url: z.string().url().optional(),
             headers: z.record(z.string()).default({}),
+            oauth: z.object({
+              token_url: z.string().url(),
+              client_id: z.string().min(1),
+              client_secret_env: z.string().min(1),
+              scope: z.string().optional()
+            }).optional(),
             enabled: z.boolean().default(true),
             timeout_ms: z.number().int().positive().max(120_000).default(20_000)
           }).superRefine((value, ctx) => {
