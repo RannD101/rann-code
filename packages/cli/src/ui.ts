@@ -175,12 +175,14 @@ export function padWidth(text: string, width: number): string {
   return `${text}${" ".repeat(padding)}`;
 }
 
+import { translateUi } from "./i18n.js";
+
 export function print(line = ""): void {
-  process.stdout.write(`${line}\n`);
+  process.stdout.write(`${translateUi(line)}\n`);
 }
 
 export function printErr(line: string): void {
-  process.stderr.write(`${line}\n`);
+  process.stderr.write(`${translateUi(line)}\n`);
 }
 
 export function clearScreen(tty = colorsEnabled()): void {

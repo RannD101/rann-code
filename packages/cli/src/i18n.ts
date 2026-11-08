@@ -111,3 +111,55 @@ export const EN_COMMANDS: Record<string, string> = {
 export function commandDescription(name: string, fallback: string): string {
   return current === "en" ? EN_COMMANDS[name] ?? fallback : fallback;
 }
+
+const EN_UI: Record<string, string> = {
+  "Belum ada pengguna lokal.": "No local users yet.",
+  "Belum ada perangkat terdaftar.": "No registered devices yet.",
+  "Belum ada subagent.": "No subagents yet.",
+  "Buka dashboard, masukkan kode dan nama perangkat.": "Open the dashboard, then enter the code and device name.",
+  "Gateway yang sedang berjalan tetap hidup sampai daemon di-restart.": "The running gateway stays alive until the daemon restarts.",
+  "Restart daemon agar perubahan berlaku.": "Restart the daemon for the change to take effect.",
+  "belum ada backup": "no backups yet",
+  "belum ada daftar model": "no model list yet",
+  "belum ada hook": "no hooks yet",
+  "belum ada pemakaian token": "no token usage yet",
+  "belum ada pemakaian token di sesi ini": "no token usage in this session yet",
+  "belum ada perangkat": "no devices yet",
+  "belum ada plugin": "no plugins yet",
+  "belum ada secret": "no secrets yet",
+  "belum ada skill": "no skills yet",
+  "belum ada subagent": "no subagents yet",
+  "daemon dihentikan": "daemon stopped",
+  "daemon tidak berjalan": "daemon is not running",
+  "git gagal": "git failed",
+  "jalankan /help untuk daftar perintah.": "run /help for the command list.",
+  "nama worktree tidak valid": "invalid worktree name",
+  "subcommand: list, install, enable, disable, remove, rollback": "subcommands: list, install, enable, disable, remove, rollback",
+  "subcommand: list, test": "subcommands: list, test",
+  "teks job kosong": "job text is empty",
+  "tidak ada kandidat memori": "no memory candidates",
+  "tidak ada skill yang cocok": "no matching skills"
+};
+
+const EN_PREFIXES: Array<[RegExp, string]> = [
+  [/^Pakai: /, "Usage: "],
+  [/^pakai: /, "Usage: "],
+  [/^belum ada /, "no "],
+  [/^tidak ditemukan: /, "not found: "],
+  [/^tidak ada /, "no "],
+  [/^Perlu izin: /, "Permission required: "],
+  [/^ditolak user/, "denied by user"],
+  [/^disetujui user/, "approved by user"],
+  [/^Turn dibatalkan/, "Turn cancelled"],
+  [/^Tidak ada turn aktif/, "No active turn"]
+];
+
+export function translateUi(line: string): string {
+  if (current !== "en" || line.length === 0) return line;
+  const exact = EN_UI[line.trim()];
+  if (exact) return line.replace(line.trim(), exact);
+  for (const [pattern, replacement] of EN_PREFIXES) {
+    if (pattern.test(line)) return line.replace(pattern, replacement);
+  }
+  return line;
+}
