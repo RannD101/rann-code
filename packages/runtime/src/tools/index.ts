@@ -131,6 +131,12 @@ function diffForOutput(text: string): { diff: string; diff_truncated: boolean } 
   return { diff: `${text.slice(0, MAX_DIFF_OUTPUT_CHARS)}\n...[diff dipotong]`, diff_truncated: true };
 }
 
+const leaseHeartbeats = new Map<string, NodeJS.Timeout>();
+
+function leaseKey(sessionId: string, path: string): string {
+  return `${sessionId}:${path}`;
+}
+
 function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
   if (!ctx.db || !ctx.sessionId) return [];
   const acquired: string[] = [];
@@ -153,11 +159,31 @@ function acquireLeases(ctx: ToolContext, paths: string[]): string[] {
       });
     }
     acquired.push(path);
+    if (ctx.sessionId) {
+      const key = leaseKey(ctx.sessionId, path);
+      const timer = setInterval(() => {
+        try {
+          heartbeatPathLease(ctx.db!, path, ctx.sessionId!, LEASE_TTL_MS);
+        } catch {
+          // heartbeat lease bersifat best effort
+        }
+      }, Math.max(1_000, Math.floor(LEASE_TTL_MS / 3)));
+      timer.unref?.();
+      leaseHeartbeats.set(key, timer);
+    }
   }
   return acquired;
 }
 
 function releaseLeases(ctx: ToolContext, paths: string[]): void {
+  if (ctx.sessionId) {
+    for (const path of paths) {
+      const key = leaseKey(ctx.sessionId, path);
+      const timer = leaseHeartbeats.get(key);
+      if (timer) clearInterval(timer);
+      leaseHeartbeats.delete(key);
+    }
+  }
   if (!ctx.db || !ctx.sessionId) return;
   for (const path of paths) releasePathLease(ctx.db, path, ctx.sessionId, ctx.agentId);
 }
