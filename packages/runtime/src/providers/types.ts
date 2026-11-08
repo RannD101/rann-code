@@ -25,6 +25,9 @@ export interface ToolSpec {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  permission?: "read" | "write" | "exec";
+  timeoutMs?: number;
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface ChatRequest {

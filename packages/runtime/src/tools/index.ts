@@ -2198,7 +2198,23 @@ const aliasTools: ToolDefinition[] = [
 ];
 
 export function toolSpecs(custom: CustomTool[] = []): ToolSpec[] {
-  return [...tools, ...aliasTools, ...custom.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.schema as ToolSpec["parameters"] }))].map((tool) => "spec" in tool ? tool.spec : tool);
+  const entries = [...tools, ...aliasTools];
+  return [
+    ...entries.map((tool) => ({
+      ...tool.spec,
+      permission: tool.risk === "read" ? "read" as const : tool.risk === "write" ? "write" as const : "exec" as const,
+      timeoutMs: tool.risk === "read" ? 30_000 : tool.risk === "write" ? 60_000 : 120_000,
+      outputSchema: { type: "object", additionalProperties: true }
+    })),
+    ...custom.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.schema as ToolSpec["parameters"],
+      permission: tool.permission === "read" ? "read" as const : tool.permission === "write" ? "write" as const : "exec" as const,
+      timeoutMs: 120_000,
+      outputSchema: { type: "object", additionalProperties: true }
+    }))
+  ];
 }
 
 export function findTool(name: string): ToolDefinition | undefined {
