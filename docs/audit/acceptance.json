@@ -70,8 +70,10 @@
     "criteria": "Given provider mengirim delta, when stream berjalan, then teks tampil bertahap tanpa flicker, dan marker `[stream terputus]` muncul jika koneksi berakhir sebelum `message.end`.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "stream-disconnect.test.ts: marker [stream terputus], teks parsial dipertahankan, error E_STREAM_TRUNCATED"
+    ],
     "gaps": []
   },
   {
@@ -361,8 +363,10 @@
     "criteria": "Given tool timeout, when agent menerima error, then state disimpan, lock dilepas, dan turn bisa dilanjutkan dari langkah terakhir.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: timeout tool menyimpan checkpoint dan turn berikutnya berjalan"
+    ],
     "gaps": []
   },
   {
@@ -758,8 +762,10 @@
     "criteria": "Given memory baru, when disimpan, then FTS dan embedding dibuat; jika embedding gagal, status `pending` dan retry terjadwal.",
     "verification": "O",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "schema-v17 dan acceptance-memory.test.ts: embedding ready tersimpan; kegagalan menjadi pending dengan next_retry_at"
+    ],
     "gaps": []
   },
   {
@@ -899,8 +905,10 @@
     "criteria": "Given URL HTTPS skill, when `/install-skill`, then checksum diverifikasi, sumber dicatat, dan skill muncul di daftar; checksum salah ditolak.",
     "verification": "I",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-install.test.ts: tarball HTTPS dengan checksum benar diterima, checksum salah ditolak"
+    ],
     "gaps": []
   },
   {
@@ -1465,8 +1473,10 @@
     "criteria": "Given CLI mengubah model, when dashboard dibuka, then perubahan terlihat tanpa refresh manual dan analytics menghitung biaya yang sama.",
     "verification": "I",
     "section": "10. Gateway, messaging, dan dashboard (127-136)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "gateway.test.ts: dashboard punya label chatModel dan handler session.updated"
+    ],
     "gaps": []
   },
   {

@@ -162,4 +162,19 @@ describe("acceptance memori dan tool", () => {
     const row = db.prepare("SELECT status FROM memory_entries WHERE id = ?").get(entry.id) as { status: string };
     expect(row.status).toBe("stale");
   });
+
+  it("AC-071 embedding dibuat dan kegagalan masuk pending dengan retry terjadwal", () => {
+    const root = mkdtempSync(join(tmpdir(), "rann-ac-embed-"));
+    const { db } = openDatabase({ path: join(root, "rann.db") });
+    const normal = new MemoryService(db, root, { enabled: true, promptChars: 2_000, retrieve: 10 });
+    const ready = normal.add({ text: "catatan dengan embedding normal", kind: "note", scope: "project" });
+    const indexed = normal.embeddingFor(ready.id);
+    expect(indexed?.status).toBe("ready");
+    expect(indexed?.vector.length).toBe(8);
+    const failing = new MemoryService(db, root, { enabled: true, promptChars: 2_000, retrieve: 10, embedding: () => null });
+    const pending = failing.add({ text: "catatan yang embedding gagal", kind: "note", scope: "project" });
+    const queued = failing.embeddingFor(pending.id);
+    expect(queued?.status).toBe("pending");
+    expect(queued?.nextRetryAt).toBeGreaterThan(Date.now());
+  });
 });

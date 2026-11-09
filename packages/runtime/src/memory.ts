@@ -13,6 +13,8 @@ export interface MemoryServiceOptions {
   sessionId?: string;
   ttlHours?: Record<string, number>;
   autoExtract?: boolean;
+  /** Fungsi embedding; null/throw menandai pending dan retry terjadwal. */
+  embedding?: (text: string) => number[] | null;
 }
 
 export interface MemoryPrompt {
@@ -117,7 +119,7 @@ export class MemoryService {
     const kind = input.kind ?? "fact";
     const ttl = this.options.ttlHours?.[kind] ?? DEFAULT_TTL[kind];
     const expiresAt = input.expiresAt ?? (ttl ? Date.now() + ttl * 3_600_000 : undefined);
-    return addMemory(this.db, {
+    const entry = addMemory(this.db, {
       text,
       scope: input.scope,
       ...(this.options.profileId ? { profileId: this.options.profileId } : {}),
@@ -131,6 +133,46 @@ export class MemoryService {
       ...(expiresAt !== undefined ? { expiresAt } : {}),
       ...(input.status ? { status: input.status } : {})
     });
+    this.indexEmbedding(entry);
+    return entry;
+  }
+
+  private defaultEmbedding(text: string): number[] {
+    const vector = new Array<number>(8).fill(0);
+    for (const [index, char] of [...text].entries()) vector[index % 8]! += (char.codePointAt(0) ?? 0) % 97;
+    const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+    return vector.map((value) => value / norm);
+  }
+
+  private indexEmbedding(entry: MemoryEntry): void {
+    const now = Date.now();
+    let vector: number[] | null = null;
+    try {
+      vector = this.options.embedding ? this.options.embedding(entry.text) : this.defaultEmbedding(entry.text);
+    } catch {
+      vector = null;
+    }
+    if (vector && vector.length > 0) {
+      this.db.prepare(
+        `INSERT INTO memory_embeddings (memory_id, vector_json, status, attempts, next_retry_at, created_at, updated_at)
+         VALUES (?, ?, 'ready', 1, NULL, ?, ?)
+         ON CONFLICT(memory_id) DO UPDATE SET vector_json = excluded.vector_json, status = 'ready', attempts = memory_embeddings.attempts + 1, next_retry_at = NULL, updated_at = excluded.updated_at`
+      ).run(entry.id, JSON.stringify(vector), now, now);
+      return;
+    }
+    this.db.prepare(
+      `INSERT INTO memory_embeddings (memory_id, vector_json, status, attempts, next_retry_at, created_at, updated_at)
+       VALUES (?, '[]', 'pending', 1, ?, ?, ?)
+       ON CONFLICT(memory_id) DO UPDATE SET status = 'pending', attempts = memory_embeddings.attempts + 1, next_retry_at = excluded.next_retry_at, updated_at = excluded.updated_at`
+    ).run(entry.id, now + 60_000, now, now);
+  }
+
+  embeddingFor(id: string): { vector: number[]; status: string; nextRetryAt: number | null } | undefined {
+    const row = this.db.prepare("SELECT vector_json, status, next_retry_at FROM memory_embeddings WHERE memory_id = ?").get(id) as
+      | { vector_json: string; status: string; next_retry_at: number | null }
+      | undefined;
+    if (!row) return undefined;
+    return { vector: JSON.parse(row.vector_json) as number[], status: row.status, nextRetryAt: row.next_retry_at };
   }
 
   private visible(): MemoryEntry[] {

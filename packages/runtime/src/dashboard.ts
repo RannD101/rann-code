@@ -253,9 +253,11 @@ tr:last-child td{border-bottom:0}
     view.innerHTML = '<div class="grid">' + metric("Mode", data.mode || "-") + metric("Workspace only", data.workspace_only?"ya":"tidak") + metric("Allow", (data.allow||[]).length) + metric("Deny", (data.deny||[]).length) + '</div><div class="panel"><pre class="mono" style="white-space:pre-wrap">' + esc(JSON.stringify(data, null, 2)) + '</pre></div>';
   }
   function renderChat(){
-    view.innerHTML = '<div class="chat"><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button class="secondary" id="newSession">Sesi baru</button><button class="secondary" id="setModel">Ganti model</button><button class="secondary" id="cancel">Batalkan</button><button class="secondary" id="endSession">Akhiri sesi</button><button id="send">Kirim</button></div></div>';
+    view.innerHTML = '<div class="chat"><div class="status" id="chatModel">memuat model...</div><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button class="secondary" id="newSession">Sesi baru</button><button class="secondary" id="setModel">Ganti model</button><button class="secondary" id="cancel">Batalkan</button><button class="secondary" id="endSession">Akhiri sesi</button><button id="send">Kirim</button></div></div>';
     api("/v1/chat/ensure",{method:"POST",body:"{}"}).then(function(session){
       chatSession = session.id;
+      var modelLabel = document.getElementById("chatModel");
+      if(modelLabel) modelLabel.textContent = "model: " + String(session.model || "-");
       return api("/v1/sessions/" + encodeURIComponent(chatSession));
     }).then(function(session){
       renderMessages(session.messages || []);
@@ -351,6 +353,13 @@ tr:last-child td{border-bottom:0}
       var payload = JSON.parse(message.data);
       if(payload.type !== "event") return;
       var event = payload.event;
+      if(event.type === "session.updated" && currentPage === "chat" && chatSession && event.sessionId === chatSession){
+        api("/v1/sessions/" + encodeURIComponent(chatSession)).then(function(session){
+          var label = document.getElementById("chatModel");
+          if(label) label.textContent = "model: " + String(session.model || "-");
+          renderMessages(session.messages || []);
+        });
+      }
       if(event.type === "turn.end" && currentPage === "chat" && chatSession && event.sessionId === chatSession){
         api("/v1/sessions/" + encodeURIComponent(chatSession)).then(function(session){ renderMessages(session.messages || []); });
       }

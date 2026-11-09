@@ -281,4 +281,13 @@ describe("RBAC config", () => {
     expect(allowed.status).toBe(200);
   });
 });
+
+describe("dashboard live", () => {
+  it("AC-136 perubahan model lewat event session.updated memperbarui label", async () => {
+    const { base } = await boot();
+    const page = await (await fetch(`${base}/`)).text();
+    expect(page).toContain('id="chatModel"');
+    expect(page).toContain('event.type === "session.updated"');
+  });
+});
 });

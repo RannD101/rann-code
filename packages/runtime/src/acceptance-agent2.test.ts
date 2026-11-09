@@ -141,4 +141,34 @@ describe("acceptance agent lanjutan", () => {
     expect(decisions[0]?.tool).toBe("fs_list");
     expect(String(decisions[0]?.reason)).toContain("langkah");
   });
+
+  it("AC-034 timeout tool menyimpan checkpoint dan sesi bisa dilanjutkan", async () => {
+    const { db, dir, session, turn } = setup();
+    const checkpoints = join(dir, "checkpoints");
+    await runTurn({
+      db,
+      session,
+      turnId: turn.id,
+      userText: 'tool:shell_run {"command":"sleep 2"}',
+      provider: new MockProvider(),
+      model: "mock-1",
+      workspaceRoot: dir,
+      checkpointsDir: checkpoints,
+      config: { ...config, shellTimeoutMs: 200 }
+    }).catch(() => undefined);
+    const rows = db.prepare("SELECT COUNT(*) AS n FROM checkpoints WHERE session_id = ?").get(session.id) as { n: number };
+    expect(rows.n).toBeGreaterThan(0);
+    const next = createTurn(db, { sessionId: session.id });
+    const result = await runTurn({
+      db,
+      session,
+      turnId: next.id,
+      userText: "halo",
+      provider: new MockProvider(),
+      model: "mock-1",
+      workspaceRoot: dir,
+      config
+    });
+    expect(result.text.length).toBeGreaterThan(0);
+  });
 });

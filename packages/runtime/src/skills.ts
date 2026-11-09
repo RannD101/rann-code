@@ -694,7 +694,7 @@ export class SkillStore {
       const url = rawUrl ?? source;
       if (!/\.(tgz|tar\.gz)(\?|$)/i.test(url)) throw new RannError("E_TOOL_INVALID_ARGS", "URL HTTPS harus menunjuk tarball .tgz atau .tar.gz");
       const archive = `${staging}.tgz`;
-      execFileSync("curl", ["-fsSL", "--max-time", "120", url, "-o", archive], { stdio: "pipe", timeout: 130_000 });
+      execFileSync("curl", ["-fsSL", "--noproxy", "*", "--max-time", "120", url, "-o", archive], { stdio: "pipe", timeout: 130_000 });
       const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
       if (fragment && fragment.toLowerCase() !== digest) {
         rmSync(archive, { force: true });
