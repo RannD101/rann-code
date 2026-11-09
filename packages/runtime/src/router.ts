@@ -176,6 +176,17 @@ export function routeModel(input: RouteInput): RouteDecision {
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
   const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
   const prefer = new Set(input.prefer ?? []);
+  const effective = { ...weights };
+  if (policy === "cost-first") {
+    effective.cost *= 2;
+    effective.quality *= 0.5;
+  } else if (policy === "quality-first") {
+    effective.quality *= 2;
+    effective.cost *= 0.5;
+  } else if (policy === "latency-first") {
+    effective.latency *= 2;
+    effective.quality *= 0.7;
+  }
 
   const candidates = usable.map(({ descriptor, price, quality }) => {
     const costScore = price === null ? 0.5 : maxPrice === minPrice ? 1 : 1 - (price - minPrice) / (maxPrice - minPrice);
@@ -183,13 +194,13 @@ export function routeModel(input: RouteInput): RouteDecision {
     const toolScore = descriptor.capabilities.toolCalling ? 1 : 0.5;
     const bonus = descriptor.aliases.some((alias) => prefer.has(alias)) || prefer.has(descriptor.model) ? 0.05 : 0;
     const score =
-      weights.quality * quality +
-      weights.taskFit * quality +
-      weights.context * contextScore +
-      weights.tool * toolScore +
-      weights.cost * costScore +
-      weights.latency * latencyScore(descriptor) +
-      weights.health * healthScore(input.health?.[descriptor.provider]) +
+      effective.quality * quality +
+      effective.taskFit * quality +
+      effective.context * contextScore +
+      effective.tool * toolScore +
+      effective.cost * costScore +
+      effective.latency * latencyScore(descriptor) +
+      effective.health * healthScore(input.health?.[descriptor.provider]) +
       bonus;
     const parts = [
       `${taskClass} ${quality.toFixed(2)}`,

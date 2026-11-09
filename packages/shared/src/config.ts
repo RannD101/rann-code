@@ -108,7 +108,7 @@ export const configSchema = z.object({
   routing: z
     .object({
       mode: z.enum(["auto", "manual"]).default("manual"),
-      policy: z.string().default("balanced"),
+      policy: z.enum(["balanced", "cost-first", "quality-first", "latency-first"]).default("balanced"),
       pinned: z.string().min(1).optional(),
       prefer: z.array(z.string()).default([]),
       min_quality: z.number().min(0).max(1).optional(),
