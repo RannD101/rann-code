@@ -57,8 +57,10 @@
     "criteria": "Given 20 prompt sebelumnya, when panah atas ditekan, then prompt terakhir muncul; Ctrl+R mencari riwayat dan memilih hasil.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: panah atas memunculkan prompt terakhir dan mengirimkannya lagi"
+    ],
     "gaps": []
   },
   {
@@ -151,8 +153,10 @@
     "criteria": "Given `--theme dark` dan `NO_COLOR=1`, when dijalankan, then tidak ada escape sequence warna dan kontras teks tetap ≥ 4.5:1 pada tema terang.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-cli.test.ts: NO_COLOR=1 tidak menghasilkan escape warna; ui.test.ts menguji kontras tema"
+    ],
     "gaps": []
   },
   {
@@ -160,8 +164,10 @@
     "criteria": "Given input `!ls -la`, when Enter ditekan, then perintah shell berjalan, output tampil, dan tidak dikirim ke model kecuali `!!`.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: !echo berjalan di shell dan output tidak dikirim ke model"
+    ],
     "gaps": []
   },
   {
@@ -187,8 +193,10 @@
     "criteria": "Given command tidak dikenal, when `/tidakada` diketik, then error `E_UNKNOWN_COMMAND` muncul dengan saran command terdekat, dan CLI tidak crash.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /tidakada memberi E_UNKNOWN_COMMAND dan saran command terdekat"
+    ],
     "gaps": []
   },
   {

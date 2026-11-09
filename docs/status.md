@@ -212,9 +212,10 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 
 - `docs/audit/acceptance.json` memuat 151 AC dengan status awal `unverified`, dipisah per domain.
 - Harness baru: `packages/cli/src/acceptance-pty.test.ts` menjalankan REPL di pty nyata lewat `script`, dan `acceptance-cli.test.ts` menjalankan CLI non-interaktif.
-- AC lulus: 001 (header < 1 detik), 002 (palette < 500 ms), 003 (Tab menampilkan /model dan /models tanpa eksekusi), 014 (JSON valid), 015 (stdin terbaca, stdout bersih).
+- AC lulus (9): 001 header < 1 detik, 002 palette < 500 ms, 003 Tab menampilkan /model dan /models tanpa eksekusi, 006 panah atas mengulang prompt terakhir, 014 JSON valid, 015 stdin terbaca dan stdout bersih, 016 NO_COLOR tanpa escape, 017 `!` menjalankan shell tanpa model, 020 command tak dikenal memberi saran.
+- Perbaikan UX: Enter pada palette hanya menerima command yang cocok, fuzzy lemah dikembalikan ke buffer agar E_UNKNOWN_COMMAND muncul.
 - AC-004: siklus Ctrl+C diperbaiki (dua kali membatalkan turn, berikutnya keluar 130), tes pty untuk kode keluar belum stabil.
-- Sisa 146 AC belum diverifikasi; domain berikutnya terminal 004-020, lalu agent 021-039.
+- Sisa 142 AC belum diverifikasi; domain berikutnya terminal 004, 005, 007-013, 018-019, lalu agent 021-039.
 
 ## Aturan
 

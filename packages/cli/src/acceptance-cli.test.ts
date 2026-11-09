@@ -36,4 +36,15 @@ describe("acceptance CLI non-interaktif", () => {
     expect(parsed.text).toContain("b");
     expect(out.stderr.trim()).toBe("");
   }, 40_000);
+
+  it("AC-016 NO_COLOR menghapus escape warna", () => {
+    const home = mkdtempSync(join(tmpdir(), "rann-ac-cli-"));
+    const result = spawnSync(process.execPath, [main, "--theme", "dark", "--help"], {
+      env: { ...process.env, RANN_HOME: home, NO_COLOR: "1" },
+      encoding: "utf8",
+      timeout: 20_000
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("\u001b[");
+  }, 30_000);
 });

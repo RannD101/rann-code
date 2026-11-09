@@ -37,7 +37,7 @@ function startPty(): { pty: Pty; home: string } {
   const exit = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
   cleanups.push(() => {
     child.kill("SIGKILL");
-    const pidPath = join(home, "profiles", "default", "daemon.pid");
+    const pidPath = join(home, "run", "daemon.pid");
     if (existsSync(pidPath)) {
       try {
         process.kill(Number(readFileSync(pidPath, "utf8").trim()), "SIGKILL");
@@ -96,4 +96,37 @@ describe("acceptance terminal", () => {
     await pty.waitFor("Command palette", 2_000);
     expect(Date.now() - before).toBeLessThan(500);
   }, 20_000);
+
+  it("AC-020 command tidak dikenal memberi saran tanpa crash", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("/tidakada\n");
+    await pty.waitFor("E_UNKNOWN_COMMAND", 5_000);
+    await pty.waitFor("mungkin:", 5_000);
+    expect(pty.output()).toContain("/help");
+  }, 20_000);
+
+  it("AC-017 !menjalankan shell tanpa mengirim ke model", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("!echo halo-shell\n");
+    await pty.waitFor("halo-shell", 5_000);
+    expect(pty.output()).not.toContain("Balasan mock");
+  }, 20_000);
+
+  it("AC-006 panah atas memunculkan prompt terakhir", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("halo\n");
+    await pty.waitFor("Balasan mock: halo", 10_000);
+    pty.write("\u001b[A");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    pty.write("\n");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if ((pty.output().match(/Balasan mock: halo/g) ?? []).length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect((pty.output().match(/Balasan mock: halo/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  }, 30_000);
 });

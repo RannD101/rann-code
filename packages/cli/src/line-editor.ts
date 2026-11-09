@@ -605,7 +605,24 @@ export class LineEditor {
   }
 
   private async submit(): Promise<void> {
-    if (this.overlay) {
+    if (this.overlay?.kind === "palette") {
+      const query = (this.overlay.query ?? "").toLowerCase();
+      const item = this.overlay.items[this.overlay.selected];
+      const name = item?.value.replace(/^\//, "").toLowerCase() ?? "";
+      if (query.length > 0 && !name.startsWith(query)) {
+        // Fuzzy match yang lemah tidak boleh menelan command tak dikenal.
+        this.overlay = undefined;
+        this.buffer = `/${query}`;
+        this.cursor = this.buffer.length;
+      } else {
+        this.acceptOverlay();
+        if (this.buffer.startsWith("/")) {
+          await this.submit();
+          return;
+        }
+        return;
+      }
+    } else if (this.overlay) {
       this.acceptOverlay();
       return;
     }
@@ -772,6 +789,14 @@ export class LineEditor {
       overlay.items = this.paletteItems(overlay.query ?? "");
     }
     overlay.selected = Math.min(overlay.selected, Math.max(0, overlay.items.length - 1));
+    if (overlay.kind === "palette" && overlay.items.length === 0 && (overlay.query ?? "").length > 0) {
+      // Tidak ada command yang cocok: kembalikan teks ke buffer supaya Enter
+      // memunculkan E_UNKNOWN_COMMAND, bukan menelan input (AC-020).
+      const typed = `/${overlay.query ?? ""}`;
+      this.overlay = undefined;
+      this.buffer = typed;
+      this.cursor = typed.length;
+    }
   }
 
   private historyOverlayItems(query: string): Array<{ value: string; description?: string }> {
