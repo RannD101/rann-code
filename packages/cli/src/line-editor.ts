@@ -223,6 +223,10 @@ export class LineEditor {
   private resolveRead?: (line: string) => void;
   private rejectRead?: (error: Error) => void;
 
+  cancelRead(): void {
+    if (this.listening) this.finish("");
+  }
+
   private finish(line: string): void {
     this.stopListening();
     this.clearRender();

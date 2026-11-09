@@ -231,4 +231,26 @@ describe("acceptance terminal", () => {
     await pty.waitFor("Balasan mock", 15_000);
     expect(pty.output().toLowerCase()).toContain("debug masalah");
   }, 30_000);
+
+  it("AC-011 dialog izin menampilkan dampak dan Esc menolak", async () => {
+    const project = mkdtempSync(join(tmpdir(), "rann-appr-"));
+    const { pty } = startPty({ cwd: project });
+    await pty.waitFor("›", 10_000);
+    pty.write('tool:write_file {"path":"bukti.txt","content":"halo"}\n');
+    try {
+      await pty.waitFor("dampak", 10_000);
+    } catch (error) {
+      console.log("OUTPUT_011", JSON.stringify(pty.output().slice(-1500)));
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    pty.write("\x1b");
+    try {
+      await pty.waitFor("ditolak", 5_000);
+    } catch (error) {
+      { const out = pty.output(); const at = out.indexOf("Perlu izin"); console.log("OUTPUT_011B", JSON.stringify(at >= 0 ? out.slice(at, at + 900) : out.slice(-900))); }
+      throw error;
+    }
+    expect(existsSync(join(project, "bukti.txt"))).toBe(false);
+  }, 30_000);
 });

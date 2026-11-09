@@ -1253,7 +1253,16 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         return blocks.length > 0 ? blocks.join("\n\n") : lastResponse || undefined;
       }
     });
-    const onApproval = makeApprovalHandler(args, (question) => editor.readLine(question, { escapeSubmits: true }));
+    const askApproval = (question: string): Promise<string> => {
+      const pending = editor.readLine(question, { escapeSubmits: true });
+      const onData = (chunk: Buffer | string): void => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        if (text.includes("\u001b")) editor.cancelRead();
+      };
+      process.stdin.on("data", onData);
+      return pending.finally(() => process.stdin.off("data", onData));
+    };
+    const onApproval = makeApprovalHandler(args, askApproval);
 
     const header = (): void => {
       for (const line of headerLines({

@@ -114,8 +114,10 @@
     "criteria": "Given tool yang butuh izin, when approval diminta, then dialog menampilkan tool, args, dampak, dan pilihan izinkan, tolak, selalu izinkan pola; Esc menolak.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: dialog menampilkan tool, args, dampak, diff, tiga pilihan; Esc menutup dialog dan menolak, berkas tidak dibuat"
+    ],
     "gaps": []
   },
   {
@@ -134,8 +136,10 @@
     "criteria": "Given ukuran terminal 40x20, when di-resize ke 200x60, then layout tidak overflow, tidak ada teks terpotong permanen, dan transcript tetap bisa digulir.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-resize.test.ts: pty 40x20 di-resize ke 200x60 lewat TIOCSWINSZ, prompt muncul lagi, tidak ada error"
+    ],
     "gaps": []
   },
   {
@@ -484,8 +488,10 @@
     "criteria": "Given fungsi 40 baris, when refactor diminta, then perilaku tes tetap sama dan tidak ada simbol publik yang hilang tanpa alasan.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-refactor.test.ts: refactor fungsi 40 baris, tes node tetap lulus, ekspor publik tidak berubah"
+    ],
     "gaps": []
   },
   {
