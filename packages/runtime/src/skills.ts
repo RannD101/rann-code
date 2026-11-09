@@ -26,6 +26,8 @@ export interface SkillInfo {
 
 export interface SkillContent extends SkillInfo {
   body: string;
+  /** Perkiraan token isi SKILL.md yang dimuat; referensi dihitung saat dibaca. */
+  tokens?: number;
   references?: string[];
   scripts?: string[];
 }
@@ -380,10 +382,12 @@ export class SkillStore {
         return [];
       }
     };
+    const baseDir = skill.path.endsWith("SKILL.md") ? dirname(skill.path) : skill.path;
     return {
       ...skill,
-      references: listDir(join(skill.path, "references")),
-      scripts: listDir(join(skill.path, "scripts"))
+      tokens: Math.ceil(skill.body.length / 4),
+      references: listDir(join(baseDir, "references")),
+      scripts: listDir(join(baseDir, "scripts"))
     };
   }
 
@@ -789,7 +793,7 @@ export class SkillStore {
   readAsset(name: string, file: string, kind: "references" | "scripts" = "references"): string | undefined {
     const skill = this.view(name);
     if (!skill?.path) return undefined;
-    const base = join(skill.path, kind);
+    const base = join(skill.path.endsWith("SKILL.md") ? dirname(skill.path) : skill.path, kind);
     const target = resolve(base, file);
     if (target !== base && !target.startsWith(base + "/")) throw new RannError("E_PERMISSION", `Path aset skill keluar folder ${kind}`);
     if (!existsSync(target)) return undefined;

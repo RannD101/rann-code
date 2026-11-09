@@ -799,8 +799,10 @@
     "criteria": "Given skill dengan 5 referensi, when diaktifkan, then hanya SKILL.md yang dimuat dulu; referensi dimuat saat dibutuhkan dan jumlah token tercatat.",
     "verification": "O",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-skills.test.ts: referensi tidak dimuat di katalog, readAsset membacanya, token SKILL.md tercatat"
+    ],
     "gaps": []
   },
   {
@@ -1439,8 +1441,10 @@
     "criteria": "Given path `../../etc/passwd` dan symlink keluar workspace, when dibaca, then keduanya ditolak dan audit mencatat percobaan.",
     "verification": "O",
     "section": "11. Keamanan, storage, config, dan operasi (137-151)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: path traversal ditolak dan audit_log mencatat tool.call error"
+    ],
     "gaps": []
   },
   {

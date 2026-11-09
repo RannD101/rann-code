@@ -1,4 +1,5 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,5 +59,17 @@ describe("acceptance skill", () => {
       expect((error as { code?: string }).code).toBe("E_AGENT_DEPTH");
     }
     expect(() => checkAgentDepth(2, 3)).not.toThrow();
+  });
+
+  it("AC-078 hanya SKILL.md dimuat awal dan referensi dibaca sesuai kebutuhan", () => {
+    const s = store();
+    s.create({ name: "ref", description: "Gunakan saat menguji referensi", body: "Isi utama yang cukup panjang untuk validasi.", scope: "project" });
+    const dir = join(dirname(s.view("ref")!.path!), "references");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "detail.md"), "ISI_REFERENSI_RAHASIA");
+    expect(s.view("ref")?.references).toContain("detail.md");
+    expect(s.catalog()).not.toContain("ISI_REFERENSI_RAHASIA");
+    expect(s.readAsset("ref", "detail.md")).toContain("ISI_REFERENSI_RAHASIA");
+    expect(s.view("ref")?.tokens).toBeGreaterThan(0);
   });
 });

@@ -133,4 +133,5 @@ describe("acceptance memori dan tool", () => {
     expect(owner.prompt("rahasia sesi").text).toContain("rahasia sesi A");
     expect(other.prompt("rahasia sesi").text).toBe("");
   });
+
 });

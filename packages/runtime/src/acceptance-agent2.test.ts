@@ -103,4 +103,22 @@ describe("acceptance agent lanjutan", () => {
     const calls = db.prepare("SELECT COUNT(*) AS n FROM tool_calls WHERE turn_id = ?").get(turn.id) as { n: number };
     expect(calls.n).toBeLessThanOrEqual(3);
   });
+
+  it("AC-138 path traversal ditolak dan percobaan tercatat di audit", async () => {
+    const { db, dir, session, turn } = setup();
+    await runTurn({
+      db,
+      session,
+      turnId: turn.id,
+      userText: 'tool:fs_read {"path":"../../etc/passwd"}',
+      provider: new MockProvider(),
+      model: "mock-1",
+      workspaceRoot: dir,
+      config
+    }).catch(() => undefined);
+    const rows = db
+      .prepare("SELECT decision, resource FROM audit_log WHERE resource = 'fs_read' AND action = 'tool.call'")
+      .all() as Array<{ decision: string; resource: string }>;
+    expect(rows.some((row) => row.decision === "error")).toBe(true);
+  });
 });
