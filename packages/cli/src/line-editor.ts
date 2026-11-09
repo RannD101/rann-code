@@ -657,7 +657,8 @@ export class LineEditor {
 
   private async handleCtrlC(): Promise<void> {
     const now = Date.now();
-    if (now - this.ctrlCAt > 1_500) this.ctrlCCount = 0;
+    const step = idleCtrlCStep(this.ctrlCCount, this.ctrlCAt, now);
+    this.ctrlCCount = step.count;
     this.ctrlCAt = now;
     if (this.overlay) {
       this.overlay = undefined;
@@ -697,13 +698,12 @@ export class LineEditor {
       this.render();
       return;
     }
-    this.ctrlCCount += 1;
-    if (this.ctrlCCount === 1) {
+    if (step.count === 1) {
       process.stdout.write("\nTekan Ctrl+C lagi untuk membatalkan turn, tiga kali untuk keluar.\n");
       this.render();
       return;
     }
-    if (this.ctrlCCount === 2) {
+    if (step.count === 2) {
       process.stdout.write("Tidak ada turn aktif. Tekan Ctrl+C sekali lagi untuk keluar.\n");
       this.render();
       return;
@@ -1104,6 +1104,14 @@ export function nextIndent(line: string, insideFence: boolean): string {
   const trimmed = line.trimEnd();
   if (/[{[(]$/.test(trimmed) || /:\s*$/.test(trimmed)) return `${base}  `;
   return base;
+}
+
+
+/** Hitung siklus Ctrl+C idle: 1 kosongkan, 2 peringatan, 3 keluar 130. */
+export function idleCtrlCStep(count: number, lastAt: number, now: number, windowMs = 1_500): { count: number; exit: boolean } {
+  const base = now - lastAt > windowMs ? 0 : count;
+  const next = base + 1;
+  return { count: next >= 3 ? 3 : next, exit: next >= 3 };
 }
 
 export function completionForPalette(items: PaletteItem[]): Array<{ value: string; description?: string }> {

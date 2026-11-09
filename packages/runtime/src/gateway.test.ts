@@ -231,4 +231,54 @@ describe("scope gateway", () => {
     expect(await response.text()).toContain("E_SCOPE");
   });
 });
+
+describe("replay event WebSocket", () => {
+  it("AC-131 event yang terlewat dikirim ulang tanpa duplikasi", async () => {
+    const { gateway } = await boot();
+    const internal = gateway as unknown as {
+      recent: Array<{ seq: number; event: { seq: number; type: string; sessionId?: string } }>;
+      replay: (since: number, sessionId?: string) => Array<{ seq: number }>;
+    };
+    internal.recent.push(
+      { seq: 1, event: { seq: 1, type: "message.delta", sessionId: "ses-a" } },
+      { seq: 2, event: { seq: 2, type: "message.delta", sessionId: "ses-b" } },
+      { seq: 3, event: { seq: 3, type: "turn.end", sessionId: "ses-a" } }
+    );
+    const replayed = internal.replay(1);
+    expect(replayed.map((event) => event.seq)).toEqual([2, 3]);
+    const scoped = internal.replay(1, "ses-a");
+    expect(scoped.map((event) => event.seq)).toEqual([3]);
+  });
+});
+
+describe("RBAC config", () => {
+  it("AC-141 viewer tidak bisa mengubah config, owner bisa", async () => {
+    const { base, db } = await boot();
+    const pair = async (name: string): Promise<{ token: string; device: { id: string } }> => {
+      const { code } = issuePairCode(db, { createdBy: "uji" });
+      const response = await fetch(`${base}/v1/auth/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, name })
+      });
+      return (await response.json()) as { token: string; device: { id: string } };
+    };
+    const viewer = await pair("viewer");
+    updateDeviceRole(db, viewer.device.id, "viewer");
+    const denied = await fetch(`${base}/v1/config`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${viewer.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ key: "gateway.heartbeat_ms", value: 30000 })
+    });
+    expect(denied.status).toBe(403);
+    const owner = await pair("owner");
+    updateDeviceRole(db, owner.device.id, "owner");
+    const allowed = await fetch(`${base}/v1/config`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ key: "gateway.heartbeat_ms", value: 30000 })
+    });
+    expect(allowed.status).toBe(200);
+  });
+});
 });

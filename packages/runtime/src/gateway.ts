@@ -598,6 +598,20 @@ export class GatewayServer {
         sendJson(response, 200, data);
         return;
       }
+      if (path === "/v1/config" && request.method === "POST") {
+        requireScope(device, "admin");
+        const body = await readJson(request);
+        const allowed = new Set(["agent.max_steps", "permissions.mode", "gateway.heartbeat_ms"]);
+        const key = typeof body.key === "string" ? body.key : "";
+        if (!allowed.has(key)) throw new RannError("E_PERMISSION", `Kunci config tidak boleh diubah lewat gateway: ${key}`);
+        const parts = key.split(".");
+        let cursor = this.config as unknown as Record<string, unknown>;
+        for (const part of parts.slice(0, -1)) cursor = cursor[part] as Record<string, unknown>;
+        cursor[parts.at(-1)!] = body.value;
+        appendAudit(this.db, { actor: "gateway", action: "config.update", resource: key, decision: "ok", metadata: { value: body.value } });
+        sendJson(response, 200, { ok: true, key, value: body.value });
+        return;
+      }
       if (path === "/v1/sessions" && request.method === "GET") {
         const sessions = await this.invokeRpc("session.list", {
           limit: Number(url.searchParams.get("limit") ?? "50")

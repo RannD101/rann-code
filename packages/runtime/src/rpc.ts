@@ -98,6 +98,7 @@ import { listFileCheckpoints, restoreFileCheckpoint } from "./checkpoint-files.j
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
 import { discoverAllProviders, discoverModels } from "./model-discovery.js";
+import { buildSharedContext } from "./subagent-context.js";
 import { listCapabilityChanges, listModels as listModelRows } from "@rann/storage";
 import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
@@ -222,7 +223,7 @@ export class RpcServer {
         // migrasi kunci env bersifat best effort
       }
     }
-    this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
+    this.mcp = new McpManager(options.config.config.mcp.servers, options.version, this.secrets);
     this.browser = new BrowserManager(process.cwd(), {
       ...options.config.config.browser,
       artifacts_dir: join(options.layout.artifactsDir, "browser")
@@ -1776,6 +1777,7 @@ export class RpcServer {
       allow: config.permissions.allow,
       deny: config.permissions.deny,
       maxSteps: overrides.max_steps ?? config.agent.max_steps,
+      strictVerification: true,
       maxRuntimeMs: config.agent.max_runtime_ms,
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
@@ -2239,22 +2241,27 @@ export class RpcServer {
     const skills = config.skills.enabled ? new SkillStore(this.options.layout.profileDir, options.projectPath) : undefined;
     const mcp = config.mcp.enabled && Object.keys(config.mcp.servers).length > 0 ? this.mcp : undefined;
 
-    const sharedLines: string[] = [];
+    let sharedContext = "";
     if (contextMode === "shared") {
       const goal = getActiveGoal(this.db, options.parent.id);
-      if (goal) {
-        sharedLines.push(`Goal induk: ${goal.goal}`);
-        const done = goal.criteria.filter((criterion) => criterion.done).length;
-        sharedLines.push(`Kriteria induk: ${done}/${goal.criteria.length} selesai`);
-      }
       const plan = listPlans(this.db, options.parent.id, 1)[0];
-      if (plan) sharedLines.push(`Plan induk: ${plan.goal} (versi ${plan.version}, status ${plan.status})`);
       const summary = listMessages(this.db, options.parent.id, 200)
         .filter((message) => message.role === "assistant")
         .slice(-1)[0]?.content ?? "";
-      if (summary.trim().length > 0) sharedLines.push(`Ringkasan keputusan induk: ${summary.trim().slice(0, 3_000)}`);
+      sharedContext = buildSharedContext({
+        ...(goal
+          ? {
+              goal: {
+                text: goal.goal,
+                done: goal.criteria.filter((criterion) => criterion.done).length,
+                total: goal.criteria.length
+              }
+            }
+          : {}),
+        ...(plan ? { plan: { goal: plan.goal, version: plan.version, status: plan.status } } : {}),
+        ...(summary.trim().length > 0 ? { decisionSummary: summary } : {})
+      });
     }
-    const sharedContext = sharedLines.join("\n");
     const childConfig: AgentConfig = {
       permissionMode,
       workspaceOnly: config.permissions.workspace_only,

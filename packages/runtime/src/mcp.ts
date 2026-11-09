@@ -161,7 +161,8 @@ export class McpManager {
 
   constructor(
     private readonly servers: Record<string, McpServerConfig>,
-    private readonly version = "0.1.0"
+    private readonly version = "0.1.0",
+    private readonly secrets?: { set(name: string, value: string, provider?: string): unknown }
   ) {}
 
   permissionFor(name: string): "read" | "write" | "exec" {
@@ -284,6 +285,7 @@ export class McpManager {
     this.states.set(name, state);
     if (config.oauth) {
       const accessToken = await fetchOAuthToken(name, config.oauth);
+      this.secrets?.set(`mcp-${name}`, accessToken, "mcp");
       state.config.headers = { ...(state.config.headers ?? {}), authorization: `Bearer ${accessToken}` };
     }
     await this.initializeHttp(state);

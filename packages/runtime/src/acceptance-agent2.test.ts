@@ -121,4 +121,24 @@ describe("acceptance agent lanjutan", () => {
       .all() as Array<{ decision: string; resource: string }>;
     expect(rows.some((row) => row.decision === "error")).toBe(true);
   });
+
+  it("AC-031 tool yang dipilih disertai alasan di event", async () => {
+    const { db, dir, session, turn } = setup();
+    const decisions: Array<Record<string, unknown>> = [];
+    await runTurn({
+      db,
+      session,
+      turnId: turn.id,
+      userText: 'tool:fs_list {"path":"."}',
+      provider: new MockProvider(),
+      model: "mock-1",
+      workspaceRoot: dir,
+      config,
+      emit: (event) => {
+        if (event.type === "tool.decision") decisions.push(event.data as Record<string, unknown>);
+      }
+    });
+    expect(decisions[0]?.tool).toBe("fs_list");
+    expect(String(decisions[0]?.reason)).toContain("langkah");
+  });
 });

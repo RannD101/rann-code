@@ -11,11 +11,11 @@ import {
 } from "./types.js";
 
 const TOOL_PATTERN = /^tool:([a-z_][a-z0-9_]*)\s+(\{[\s\S]*\})$/i;
-const SCENARIO_PATTERN = /^scenario:(timeout|429|500|invalid-tool|truncated)$/i;
+const SCENARIO_PATTERN = /^scenario:(timeout|429|500|invalid-tool|truncated|slow)$/i;
 
 export interface MockOptions {
   prefix?: string;
-  scenario?: "timeout" | "429" | "500" | "invalid-tool" | "truncated";
+  scenario?: "timeout" | "429" | "500" | "invalid-tool" | "truncated" | "slow";
 }
 
 /**
@@ -89,10 +89,20 @@ export class MockProvider implements Provider {
     const lastUser = lastUserIndex >= 0 ? request.messages[lastUserIndex] : undefined;
     const text = lastUser?.content ?? "";
     const prompted = SCENARIO_PATTERN.exec(text.trim())?.[1]?.toLowerCase() as MockOptions["scenario"] | undefined;
-    const scenario = prompted ?? this.scenario;
+    const scenario = prompted ?? this.scenario ?? (process.env.RANN_MOCK_SCENARIO as MockOptions["scenario"] | undefined);
     if (scenario === "timeout") throw new RannError("E_TIMEOUT", "Mock timeout");
     if (scenario === "429") throw new RannError("E_PROVIDER_RATE_LIMIT", "Mock 429", { data: { status: 429 } });
     if (scenario === "500") throw new RannError("E_PROVIDER_UNAVAILABLE", "Mock 500", { data: { status: 500 } });
+    if (scenario === "slow") {
+      for (let index = 0; index < 50; index += 1) {
+        if (request.signal?.aborted) throw new RannError("E_CANCELLED", "Mock dibatalkan");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        yield { type: "text", text: "." };
+      }
+      yield { type: "usage", inputTokens: 1, outputTokens: 50 };
+      yield { type: "done", finishReason: "stop" };
+      return;
+    }
     if (scenario === "truncated") {
       yield { type: "text", text: "sebagian" };
       throw new RannError("E_STREAM_TRUNCATED", "Mock stream terpotong");

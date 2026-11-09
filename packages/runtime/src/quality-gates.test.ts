@@ -209,5 +209,23 @@ describe("verifikasi turn tanpa plan", () => {
       .all();
     expect(phases.length).toBe(1);
   });
-});
 
+  it("AC-039 klaim selesai tanpa bukti ditolak saat strictVerification aktif", async () => {
+    const root = workspace();
+    const { db } = openDatabase({ path: join(root, "rann.db") });
+    const session = createSession(db, { projectPath: root, model: "tulis", permissionMode: "trusted" });
+    const turn = createTurn(db, { sessionId: session.id });
+    await expect(
+      runTurn({
+        db,
+        session,
+        turnId: turn.id,
+        userText: "halo",
+        provider: new WriteThenTextProvider(),
+        model: "tulis-1",
+        workspaceRoot: root,
+        config: { ...config, maxSteps: 5, strictVerification: true }
+      })
+    ).rejects.toMatchObject({ code: "E_VERIFICATION_FAILED" });
+  });
+});

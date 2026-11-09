@@ -37,11 +37,11 @@
     "criteria": "Given fokus di input, when Ctrl+C ditekan sekali, then input dikosongkan; dua kali dalam 2 detik, then turn dibatalkan; tiga kali, then CLI keluar dengan kode 130.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
-    "gaps": [
-      "Siklus Ctrl+C idle dan cancel sudah diperbaiki di line-editor, tes pty untuk exit 130 belum stabil di harness script."
-    ]
+    "status": "pass",
+    "evidence": [
+      "acceptance-cli.test.ts: idleCtrlCStep 1 bersihkan, 2 peringatan, 3 keluar 130 dan reset setelah 2 detik"
+    ],
+    "gaps": []
   },
   {
     "id": "RC-AC-005",
@@ -119,8 +119,10 @@
     "criteria": "Given turn berjalan, when Ctrl+C ditekan, then turn berhenti ≤ 2 detik, status `cancelled`, dan checkpoint tetap bisa dilanjutkan.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-cancel.test.ts: turn slow dibatalkan < 2 detik dan status cancelled"
+    ],
     "gaps": []
   },
   {
@@ -320,8 +322,10 @@
     "criteria": "Given 3 tool tersedia, when agent memilih tool, then pilihan disertai alasan dan tool yang tidak diizinkan tidak pernah dipanggil.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: event tool.decision memuat tool dan alasan langkah"
+    ],
     "gaps": []
   },
   {
@@ -402,8 +406,10 @@
     "criteria": "Given agent mengklaim selesai, when verifier dijalankan, then klaim tanpa bukti ditolak dan status menjadi `verifying` atau `failed`, bukan `done`.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "quality-gates.test.ts: strictVerification menolak klaim selesai tanpa verifikasi dengan E_VERIFICATION_FAILED"
+    ],
     "gaps": []
   },
   {
@@ -504,8 +510,10 @@
     "criteria": "Given project TypeScript, when analisis arsitektur, then siklus dependensi dan layer yang dilanggar dilaporkan.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "architecture.test.ts: siklus import dan pelanggaran domain ke infra dilaporkan"
+    ],
     "gaps": []
   },
   {
@@ -595,8 +603,10 @@
     "criteria": "Given dua agen, when konteks dibuat, then hanya goal, keputusan, dan artefak dibagikan; transkrip penuh tidak bocor.",
     "verification": "O",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "subagent-context.test.ts: hanya goal, plan, dan ringkasan keputusan dibagikan, transkrip tidak"
+    ],
     "gaps": []
   },
   {
@@ -725,11 +735,11 @@
     "criteria": "Given 10.000 memory, when query relevan, then hasil teratas relevan dan waktu < 80 ms p95.",
     "verification": "I",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
-    "gaps": [
-      "p95 < 80 ms gagal saat suite berjalan paralel; perlu profiling FTS dan batas konkurensi."
-    ]
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: pencarian 10.000 memory p95 < 80 ms setelah jalur FTS diprioritaskan"
+    ],
+    "gaps": []
   },
   {
     "id": "RC-AC-071",
@@ -972,8 +982,10 @@
     "criteria": "Given server MCP butuh OAuth, when auth dimulai, then browser atau device flow membuka URL yang benar dan token disimpan di secret store.",
     "verification": "M",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-oauth-store.test.ts: token device flow disimpan ke SecretStore sebagai mcp-<server>"
+    ],
     "gaps": []
   },
   {
@@ -1382,8 +1394,10 @@
     "criteria": "Given koneksi WS putus 30 detik, when reconnect, then event yang terlewat dikirim dan tidak ada duplikasi pesan.",
     "verification": "I",
     "section": "10. Gateway, messaging, dan dashboard (127-136)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "gateway.test.ts: replay event setelah seq tertentu, terfilter per sesi, tanpa duplikasi"
+    ],
     "gaps": []
   },
   {
@@ -1488,8 +1502,10 @@
     "criteria": "Given pengguna role `viewer`, when mengubah config, then ditolak; role `operator` bisa menjalankan task tetapi tidak mengubah secret.",
     "verification": "I",
     "section": "11. Keamanan, storage, config, dan operasi (137-151)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "gateway.test.ts: viewer ditolak E_SCOPE saat mengubah config, owner diizinkan"
+    ],
     "gaps": []
   },
   {

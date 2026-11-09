@@ -101,7 +101,7 @@ describe("acceptance memori dan tool", () => {
     expect((error as { code?: string }).code).toBe("E_APPROVAL_REQUIRED");
   });
 
-  it.skip("AC-070 pencarian 10.000 memory tetap di bawah 80 ms p95", () => {
+  it("AC-070 pencarian 10.000 memory tetap di bawah 80 ms p95", () => {
     const root = mkdtempSync(join(tmpdir(), "rann-ac-perf-"));
     const { db } = openDatabase({ path: join(root, "rann.db") });
     const insert = db.transaction(() => {

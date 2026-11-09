@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { idleCtrlCStep } from "./line-editor.js";
 
 const main = fileURLToPath(new URL("../dist/main.js", import.meta.url));
 
@@ -69,4 +70,14 @@ describe("acceptance CLI non-interaktif", () => {
     expect(doctor.stdout).toContain("versi");
     expect(doctor.stdout).toContain("gateway");
   }, 40_000);
+
+  it("AC-004 siklus Ctrl+C idle: 1 bersihkan, 2 peringatan, 3 keluar 130", () => {
+    const first = idleCtrlCStep(0, 0, 1_000);
+    const second = idleCtrlCStep(first.count, 1_000, 1_200);
+    const third = idleCtrlCStep(second.count, 1_200, 1_400);
+    expect(first).toEqual({ count: 1, exit: false });
+    expect(second).toEqual({ count: 2, exit: false });
+    expect(third).toEqual({ count: 3, exit: true });
+    expect(idleCtrlCStep(2, 1_000, 3_000).count).toBe(1);
+  });
 });

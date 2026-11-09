@@ -213,4 +213,5 @@ describe("acceptance terminal", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(pty.output()).not.toContain("E_PERMISSION");
   }, 30_000);
+
 });

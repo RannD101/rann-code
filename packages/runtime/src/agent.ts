@@ -111,6 +111,8 @@ export interface AgentConfig {
   instructionsHome?: string;
   shellTimeoutMs?: number;
   preApprovedTools?: Set<string>;
+  /** Tolak turn yang mengubah berkas tanpa verifikasi (dipakai CLI/daemon). */
+  strictVerification?: boolean;
   preApprovedPatterns?: Set<string>;
   requestApproval?: (request: { tool: string; args: unknown; reason?: string; risk?: "low" | "medium" | "high" }) => Promise<ApprovalDecision>;
   hooks?: HookRunner;
@@ -1129,6 +1131,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             error_code: "E_VERIFICATION_FAILED",
             message: `Turn tanpa plan mengubah ${changedFiles} berkas tanpa verifikasi`
           });
+          if (config.strictVerification === true) {
+            throw new RannError("E_VERIFICATION_FAILED", "Klaim selesai ditolak karena tidak ada bukti verifikasi");
+          }
         }
         finalText = text;
         if (options.responseSchema !== undefined) {
@@ -1238,6 +1243,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         }
         const toolRow = addToolCall(db, { sessionId: session.id, turnId, toolName: call.name, args: redactSecrets(call.args) });
         const signature = `${call.name}:${JSON.stringify(redactSecrets(call.args))}`;
+        if (!["browser", "web_search", "http_request"].includes(call.name)) {
+          publish("tool.decision", {
+            tool: call.name,
+            reason: `dipilih untuk menyelesaikan langkah ${steps} turn ini`,
+            step: steps
+          });
+        }
         const activeTask = activePlan ? currentPlanTask(db, activePlan) : undefined;
         const gitRef = initialGitRef ?? (options.checkpointsDir ? currentGitRef(workspaceRoot) : undefined);
         createCheckpoint(db, {

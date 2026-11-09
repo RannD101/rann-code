@@ -185,8 +185,11 @@ export class MemoryService {
     const byId = new Map(visible.map((entry) => [entry.id, entry]));
     const lexical = searchMemories(this.db, query, { scope: "all", projectPath: this.projectPath, ...(this.options.profileId ? { profileId: this.options.profileId } : {}), limit: limit * 4 })
       .filter((entry) => byId.has(entry.id));
+    const lexicalEnough = lexical.length >= limit;
     const queryTags = new Set(query.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter((word) => word.length >= 3));
-    const tagged = visible.filter((entry) => entry.tags.some((tag) => queryTags.has(tag.toLowerCase().replace(/^[^:]+:/, ""))));
+    const tagged = lexicalEnough
+      ? []
+      : visible.filter((entry) => entry.tags.some((tag) => queryTags.has(tag.toLowerCase().replace(/^[^:]+:/, ""))));
     const vectorize = (value: string): Map<string, number> => {
       const vector = new Map<string, number>();
       for (const token of value.toLowerCase().split(/[^\p{L}\p{N}_-]+/u)) {
@@ -207,13 +210,15 @@ export class MemoryService {
       }
       return leftNorm > 0 && rightNorm > 0 ? dot / Math.sqrt(leftNorm * rightNorm) : 0;
     };
-    const vector = visible
+    const vector = lexicalEnough
+      ? []
+      : visible
       .map((entry) => ({ entry, score: cosine(queryVector, vectorize(`${entry.title ?? ""} ${entry.text} ${entry.tags.join(" ")}`)) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit * 4)
       .map((item) => item.entry);
-    const recent = [...visible].sort((a, b) => b.updated_at - a.updated_at).slice(0, limit);
+    const recent = lexicalEnough ? [] : [...visible].sort((a, b) => b.updated_at - a.updated_at).slice(0, limit);
     const scores = new Map<string, number>();
     const fuse = (entries: MemoryEntry[], weight: number): void => {
       entries.forEach((entry, index) => {
