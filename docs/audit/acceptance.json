@@ -502,8 +502,10 @@
     "criteria": "Given modul tanpa tes, when `/test`, then tes dibuat, dijalankan, dan hasil lulus/gagal dilaporkan dengan output asli.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /test menjalankan npm test project dan melaporkan \"tes lulus\""
+    ],
     "gaps": []
   },
   {

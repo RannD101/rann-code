@@ -214,4 +214,13 @@ describe("acceptance terminal", () => {
     expect(pty.output()).not.toContain("E_PERMISSION");
   }, 30_000);
 
+
+  it("AC-047 /test menjalankan tes project dan melaporkan hasil", async () => {
+    const project = mkdtempSync(join(tmpdir(), "rann-test-proj-"));
+    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "uji", version: "1.0.0", scripts: { test: 'node -e "process.exit(0)"' } }));
+    const { pty } = startPty({ cwd: project });
+    await pty.waitFor("›", 10_000);
+    pty.write("/test\n");
+    await pty.waitFor("tes lulus", 20_000);
+  }, 40_000);
 });
