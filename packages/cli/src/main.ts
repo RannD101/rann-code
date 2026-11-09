@@ -9,7 +9,7 @@ import { appendAudit, createBackup, createGatewayUser, disableGatewayUser, expor
 import { parseArgs, flagBool, flagString, type ParsedArgs } from "./args.js";
 import { ensureDaemon, packageVersion, tryConnect } from "./daemon.js";
 import { setConfigValue, unsetConfigValue } from "./config-store.js";
-import { choose, chooseWith, clearScreen, colorEnabled, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
+import { choose, chooseWith, clearScreen, colorDepth, colorEnabled, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
 import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, renderCommandCatalog, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
 import { registerProjectCommands } from "./project-commands.js";
@@ -18,7 +18,13 @@ import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./c
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
 import { formatApprovalArgs } from "./approval.js";
-import { ctrlDAction, headerLines } from "./session-header.js";
+import { ctrlDAction, renderHeader } from "./session-header.js";
+import { statusPrompt as renderStatusPrompt } from "./tui/status.js";
+import { renderEditPreview } from "./tui/tool-view.js";
+import { renderPlan } from "./tui/plan-view.js";
+import { renderAgents } from "./tui/agent-view.js";
+import { resolveUiMode, type UiMode } from "./tui/modes.js";
+import { renderDiffText } from "./tui/diff-view.js";
 import { chooseTurnFailureAction } from "./turn-failure.js";
 import { setLocale, tr } from "./i18n.js";
 
@@ -72,8 +78,8 @@ async function main(argv: string[]): Promise<number> {
   if (flagBool(args, "no-color")) process.env.NO_COLOR = "1";
   const themeFlag = flagString(args, "theme");
   if (themeFlag !== undefined) {
-    if (themeFlag !== "dark" && themeFlag !== "light" && themeFlag !== "auto" && themeFlag !== "custom") {
-      throw new RannError("E_INVALID_PARAMS", "--theme harus dark, light, auto, atau custom.");
+    if (themeFlag !== "dark" && themeFlag !== "light" && themeFlag !== "minimal" && themeFlag !== "auto" && themeFlag !== "custom") {
+      throw new RannError("E_INVALID_PARAMS", "--theme harus dark, light, minimal, auto, atau custom.");
     }
     setTheme(themeFlag);
   }
@@ -467,7 +473,8 @@ interface AgentProfileInfo {
 function printAgentTree(rows: AgentRow[], indent = 0): void {
   for (const row of rows) {
     const pad = "  ".repeat(indent);
-    print(`${pad}${row.id}  ${row.profile.padEnd(10)} ${row.status.padEnd(9)} ${row.steps} langkah  $${row.cost_usd.toFixed(4)}  ${row.goal.slice(0, 60)}`);
+    const color = row.status === "done" || row.status === "completed" ? ui.green : row.status === "failed" ? ui.red : row.status === "running" ? ui.yellow : ui.dim;
+    print(`${pad}${ui.accent(row.id)}  ${ui.fg(row.profile.padEnd(10))} ${color(row.status.padEnd(9))} ${ui.dim(`${row.steps} langkah  $${row.cost_usd.toFixed(4)}`)}  ${row.goal.slice(0, 60)}`);
     if (row.children && row.children.length > 0) printAgentTree(row.children, indent + 1);
   }
 }
@@ -492,9 +499,12 @@ async function agentCommand(args: ParsedArgs): Promise<number> {
       }
       if (tree) printAgentTree(rows);
       else {
-        for (const row of rows) {
-          print(`${row.id}  ${row.profile.padEnd(10)} ${row.status.padEnd(9)} ${row.steps} langkah  $${row.cost_usd.toFixed(4)}  ${row.goal.slice(0, 60)}`);
-        }
+        for (const line of renderAgents(rows.map((row) => ({
+          id: row.id,
+          profile: row.profile,
+          status: row.status,
+          goal: `${row.goal.slice(0, 60)}  ${row.steps} langkah  $${row.cost_usd.toFixed(4)}`
+        })))) print(line);
       }
       return 0;
     }
@@ -932,10 +942,17 @@ function makeApprovalHandler(
     const targetValue = args.path ?? args.file ?? args.cwd ?? args.url ?? args.domain ?? args.target;
     const target = typeof targetValue === "string" ? `\n  target: ${targetValue}` : "";
     const preview = previewEdit(request.tool, request.args, process.cwd());
-    const diff = preview
-      ? `\n  diff ${preview.path} (+${preview.added} -${preview.removed}):\n${preview.lines.map((line) => `    ${line}`).join("\n")}`
-      : "";
-    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
+    const width = process.stdout.columns ?? 80;
+    const prompt = [
+      "",
+      ui.border("─".repeat(Math.max(20, width))),
+      `${ui.bold(ui.yellow("Perlu izin"))}  ${ui.accent(request.tool)}`,
+      `  ${ui.dim("args")}    ${detail}`,
+      `  ${ui.dim("dampak")}  ${impact}${target}`,
+      ...(preview ? ["", ...renderEditPreview(preview)] : []),
+      ui.border("─".repeat(Math.max(20, width))),
+      ui.dim("A izinkan sekali   S izinkan sesi ini   D tolak   Esc tolak")
+    ].join("\n");
     if (request.tool === "plan" && ask) {
       const planText = typeof args.text === "string" ? args.text : detail;
       print(planText);
@@ -951,9 +968,9 @@ function makeApprovalHandler(
       return { approved: false, reason: "rencana ditolak user" };
     }
     const choices = [
-      { key: "once", label: "Izinkan sekali" },
-      { key: "always", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
-      { key: "deny", label: "Tolak" }
+      { key: "once", shortcut: "A", label: "Izinkan sekali" },
+      { key: "always", shortcut: "S", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
+      { key: "deny", shortcut: "D", label: "Tolak" }
     ] as const;
     const answer = ask
       ? await chooseWith(async (question) => {
@@ -989,15 +1006,22 @@ function extractAttachments(line: string): { text: string; attachments: Array<{ 
 }
 
 async function chatCommand(args: ParsedArgs): Promise<number> {
+  let uiMode: UiMode = "interactive";
+  try {
+    uiMode = resolveUiMode(flagString(args, "ui") ?? process.env.RANN_UI_MODE);
+  } catch (error) {
+    throw new RannError("E_INVALID_PARAMS", error instanceof Error ? error.message : String(error));
+  }
   // Header dicetak sebelum daemon dinyalakan supaya REPL terlihat di bawah
   // satu detik, lalu diulang dengan data sesi setelah tersambung (AC-001).
   if (process.stdin.isTTY === true) {
-    for (const line of headerLines({
+    for (const line of renderHeader({
       cwd: process.cwd(),
       session: "baru",
       model: flagString(args, "model") ?? "default",
       permission: flagString(args, "permission") ?? "default",
-      profile: process.env.RANN_PROFILE ?? "default"
+      profile: process.env.RANN_PROFILE ?? "default",
+      mode: uiMode
     })) {
       print(line);
     }
@@ -1057,6 +1081,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     let contextLimit = 24_000;
     let providerName = "";
     let providerStatus = "unknown";
+    let agentCount = 0;
     let lastTurnMs = 0;
     let lastTurnId: string | undefined;
     let lastCancelled = false;
@@ -1079,25 +1104,27 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
-      const parts = [model ?? "default"];
-      if (providerName) parts.push(`${providerName}:${providerStatus}`);
-      if (branch) parts.push(branch);
-      if (lastTurnMs > 0) parts.push(`${(lastTurnMs / 1000).toFixed(1)}s`);
-      if (totalTokens > 0) parts.push(`${(totalTokens / 1000).toFixed(1)}k tok`);
-      if (lastInputTokens > 0 || lastOutputTokens > 0) parts.push(`in ${lastInputTokens} out ${lastOutputTokens}`);
-      if (contextLimit > 0) {
-        const percent = Math.min(100, Math.round((lastInputTokens / contextLimit) * 100));
-        const zone = percent >= 90 ? ui.red : percent >= 75 ? ui.orange : percent >= 50 ? ui.yellow : ui.green;
-        parts.push(zone(`${percent}% ctx`));
-      }
-      const turnCost = lastTurnCost === undefined ? "?" : lastTurnCost === null ? "?" : lastTurnCost.toFixed(4);
-      parts.push(`turn $${turnCost}`);
-      parts.push(totalCost > 0 ? `${tr("hari", "day")} $${totalCost.toFixed(3)}` : `${tr("hari", "day")} $?`);
-      parts.push(permissionMode ?? "ask");
-      if (pendingAttachment) parts.push(`${tr("lampiran", "attachment")} ${pendingAttachment.name}`);
-      if (!showStatusBar) return ui.cyan("› ");
-      const text = parts.join("  ");
-      return ui.cyan("› ") + (width >= 64 ? ui.dim(`${truncateWidth(text, Math.max(10, width - 8))} `) : "");
+      const percent = contextLimit > 0 ? Math.min(100, Math.round((lastInputTokens / contextLimit) * 100)) : undefined;
+      return renderStatusPrompt({
+        width,
+        model: model ?? "default",
+        ...(providerName ? { provider: providerName } : {}),
+        ...(providerStatus ? { providerStatus } : {}),
+        ...(branch ? { branch } : {}),
+        ...(permissionMode ? { permission: permissionMode } : {}),
+        session: sessionLabel(),
+        project: process.cwd().split(/[\\/]/).pop() ?? process.cwd(),
+        ...(percent !== undefined ? { contextPercent: percent } : {}),
+        inputTokens: lastInputTokens,
+        outputTokens: lastOutputTokens,
+        totalTokens,
+        turnCost: lastTurnCost,
+        dayCost: totalCost,
+        agents: agentCount,
+        mode: uiMode,
+        task: busy ? `${tr("aktif", "active")}${lastTurnMs > 0 ? ` ${(lastTurnMs / 1000).toFixed(1)}s` : ""}` : tr("siap", "ready"),
+        ...(pendingAttachment ? { task: tr("lampiran", "attachment") + " " + pendingAttachment.name } : {})
+      }, showStatusBar);
     };
 
     let disabledShortcuts: string[] = (process.env.RANN_DISABLED_SHORTCUTS ?? "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -1187,7 +1214,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           return { start: tokenStart, items: PERMISSION_MODES.filter((item) => item.startsWith(query)).map((value) => ({ value })) };
         }
         if (command === "/theme") {
-          return { start: tokenStart, items: ["dark", "light", "auto", "custom"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
+          return { start: tokenStart, items: ["dark", "light", "minimal", "auto", "custom"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
         }
         if (command === "/task") {
           return { start: tokenStart, items: ["list", "show", "add", "prioritas", "priority", "retry", "cancel", "block"].filter((item) => item.startsWith(query)).map((value) => ({ value })) };
@@ -1265,13 +1292,15 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const onApproval = makeApprovalHandler(args, askApproval);
 
     const header = (): void => {
-      for (const line of headerLines({
+      for (const line of renderHeader({
         cwd: process.cwd(),
         ...(branch ? { branch } : {}),
         session: sessionLabel(),
         model: model ?? "default",
         permission: permissionMode ?? "default",
-        profile: process.env.RANN_PROFILE ?? "default"
+        profile: process.env.RANN_PROFILE ?? "default",
+        mode: uiMode,
+        ...(providerName ? { provider: providerName } : {})
       })) {
         print(line);
       }
@@ -1301,6 +1330,12 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       }
       lastTurnCost = result.costUsd;
       try {
+        const listedAgents = await client.request<Array<Record<string, unknown>>>("agent.list", { limit: 100 });
+        agentCount = listedAgents.length;
+      } catch {
+        // jumlah agen bersifat pelengkap
+      }
+      try {
         const budget = await client.request<Record<string, unknown>>("budget.status", {});
         totalCost = Number(budget.spent_usd_today ?? totalCost);
       } catch {
@@ -1324,6 +1359,12 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
 
     registerProjectCommands(process.cwd());
     header();
+    try {
+      const listedAgents = await client.request<Array<Record<string, unknown>>>("agent.list", { limit: 100 });
+      agentCount = listedAgents.length;
+    } catch {
+      // jumlah agen bersifat pelengkap
+    }
     const bootHealth = await client.request<Record<string, unknown>>("health");
     const recoveredTurns = Array.isArray(bootHealth.recovered_turns) ? bootHealth.recovered_turns : [];
     if (recoveredTurns.length > 0) {
@@ -1351,7 +1392,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
               if (pathArg === "--") args.push(target);
             }
             const diff = execFileSync("git", args, { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-            print(formatReview(reviewUnifiedDiff(diff)));
+            print(renderDiffText(formatReview(reviewUnifiedDiff(diff))));
           } catch {
             print(ui.red("gagal membaca diff: bukan repositori git, ref tidak dikenal, atau git tidak tersedia"));
           }
@@ -2305,14 +2346,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         if (line === "/theme" || line.startsWith("/theme ")) {
           const argument = line.slice(6).trim();
           if (argument.length === 0 || argument === "list" || argument === "status") {
-            print(`tema aktif: ${process.env.RANN_THEME ?? "auto"}  warna ${colorsEnabled() ? "aktif" : "nonaktif"}`);
+            print(`tema aktif: ${process.env.RANN_THEME ?? "auto"}  warna ${colorsEnabled() ? "aktif" : "nonaktif"}  depth ${colorDepth()}`);
             const tokens = themeTokens();
             print(`contoh  ${ui.fg("teks")}  ${ui.dim("dim")}  ${ui.accent("accent")}  ${ui.green("ok")}  ${ui.yellow("peringatan")}  ${ui.red("bahaya")}`);
             print(`token   ${Object.keys(tokens).join(", ")}`);
             continue;
           }
-          if (!["dark", "light", "auto", "custom"].includes(argument)) {
-            print(ui.red("tema tidak dikenal. Pilihan: dark, light, auto, custom"));
+          if (!["dark", "light", "minimal", "auto", "custom"].includes(argument)) {
+            print(ui.red("tema tidak dikenal. Pilihan: dark, light, minimal, auto, custom"));
             continue;
           }
           if (argument === "custom") {
@@ -2323,7 +2364,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             }
             loadCustomThemeIfPresent(resolveHome());
           } else {
-            setTheme(argument as "dark" | "light" | "auto");
+            setTheme(argument as "dark" | "light" | "minimal" | "auto");
           }
           history.add(`/theme ${argument}`);
           print(ui.dim(`tema ${argument}`));
@@ -2529,7 +2570,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             const stat = execFileSync("git", ["diff", "--no-color", "--stat"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
             const diff = execFileSync("git", ["diff", "--no-color"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
             print(stat.trim() || ui.dim("tidak ada perubahan"));
-            if (diff.trim().length > 0) print(diff.length > 60_000 ? `${diff.slice(0, 60_000)}\n[dipotong]` : diff);
+            if (diff.trim().length > 0) print(renderDiffText(diff.length > 60_000 ? `${diff.slice(0, 60_000)}\n[dipotong]` : diff));
           } catch {
             print(ui.red("bukan repositori git atau git tidak tersedia"));
           }
@@ -2826,7 +2867,20 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         if (line === "/sessions") {
           const list = await client.request<Array<Record<string, unknown>>>("session.list", { limit: 10, projectPath: process.cwd() });
-          for (const item of list) print(`${item.id === sessionId ? "*" : " "} ${String(item.id)}  ${String(item.title)}`);
+          if (list.length === 0) {
+            print(ui.dim("belum ada sesi di folder ini"));
+            continue;
+          }
+          print(table(
+            ["", "sesi", "judul", "status", "diperbarui"],
+            list.map((item) => [
+              item.id === sessionId ? ui.accent("*") : " ",
+              String(item.id),
+              String(item.title ?? ""),
+              String(item.status ?? ""),
+              typeof item.updated_at === "number" ? relativeTime(item.updated_at) : String(item.updated_at ?? "")
+            ])
+          ));
           continue;
         }
         if (line === "/tasks") {
@@ -2837,9 +2891,13 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             continue;
           }
           for (const plan of plans) {
-            print(`${String(plan.id)}  ${String(plan.status)}  ${String(plan.goal)}`);
+            print(`${ui.accent(String(plan.id))}  ${String(plan.status)}  ${String(plan.goal)}`);
             const tasks = (plan.tasks as Array<Record<string, unknown>> | undefined) ?? [];
-            for (const task of tasks) print(`  - [${String(task.status)}] ${String(task.title)}`);
+            for (const line of renderPlan(tasks.map((task) => ({
+              title: String(task.title ?? ""),
+              status: String(task.status ?? "pending"),
+              ...(typeof task.agent === "string" ? { agent: task.agent } : {})
+            })))) print(line);
           }
           if (jobs.length > 0) {
             print(ui.dim("job background:"));

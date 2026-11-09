@@ -217,6 +217,15 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 - Catatan: AC-070 (p95 pencarian memori di bawah 80 ms) sensitif beban. Pada mesin 2 core, suite paralel pernah mencatat 86 ms; run tunggal dan `pnpm check` terakhir lulus.
 - Keterbatasan: tes pty dan resize hanya dijalankan di Linux. Windows belum diuji di mesin fisik.
 
+## Progres terkini (2026-11-10)
+
+- Lapisan tampilan dipisah ke `packages/cli/src/tui/`: `layout`, `palette`, `status`, `tool-view`, `plan-view`, `agent-view`, `approval-view`, `diff-view`, `syntax`, dan `modes`.
+- `ui.ts` mendeteksi `RANN_COLOR` (`truecolor`, `256`, `16`, `none`); header dan status bar menyesuaikan lebar terminal dan menyembunyikan informasi sekunder di bawah 60 kolom.
+- `--ui interactive|compact|verbose|debug` dan `RANN_UI_MODE` tersedia; nilai asing ditolak dengan pesan yang menyebut pilihan yang sah.
+- Command palette `Ctrl+K`, pratinjau edit, plan, daftar subagent, dialog izin, dan diff memakai prefix serta status yang stabil agar mudah dipindai.
+- `MemoryService.search` mencatat `last_used_at` dan event `retrieved` dalam satu transaksi, bukan dua pernyataan per entri; AC-070 p95 tetap di bawah 80 ms.
+- `pnpm check` lulus: 462 tes di 99 berkas, 2 dilewati, lint dan depcruise bersih.
+
 ## Aturan
 
 - Setiap FR hanya boleh ditandai done bila ada kode dan tes yang membuktikan.

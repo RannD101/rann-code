@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
-export type ThemeName = "dark" | "light" | "auto" | "custom";
+export type ThemeName = "dark" | "light" | "minimal" | "auto" | "custom";
+export type ColorDepth = "none" | "16" | "256" | "truecolor";
 
 export interface ThemeTokens {
   foreground: string;
@@ -12,34 +13,64 @@ export interface ThemeTokens {
   border: string;
 }
 
-const THEMES: Record<"dark" | "light", ThemeTokens> = {
+const THEMES: Record<"dark" | "light" | "minimal", ThemeTokens> = {
   dark: {
-    foreground: "#e6e6e6",
-    dim: "#9aa0a6",
-    accent: "#7cc7ff",
-    success: "#6ddc8a",
-    warning: "#f2c14e",
+    foreground: "#e6edf3",
+    dim: "#8b949e",
+    accent: "#7ee787",
+    success: "#7ee787",
+    warning: "#e3b341",
     danger: "#ff7b72",
-    border: "#5f6368"
+    border: "#30363d"
   },
   light: {
     foreground: "#1f2328",
     dim: "#57606a",
-    accent: "#0550ae",
+    accent: "#1a7f37",
     success: "#1a7f37",
     warning: "#9a6700",
     danger: "#cf222e",
-    border: "#8c959f"
+    border: "#d0d7de"
+  },
+  minimal: {
+    foreground: "#f0f0f0",
+    dim: "#a8a8a8",
+    accent: "#ffffff",
+    success: "#ffffff",
+    warning: "#ffffff",
+    danger: "#ffffff",
+    border: "#4a4a4a"
   }
 };
 
-let themeName: ThemeName = (process.env.RANN_THEME as ThemeName | undefined) ?? "auto";
+const VALID_THEMES: ThemeName[] = ["dark", "light", "minimal", "auto", "custom"];
+const configuredTheme = process.env.RANN_THEME as ThemeName | undefined;
+let themeName: ThemeName = configuredTheme && VALID_THEMES.includes(configuredTheme) ? configuredTheme : "auto";
 let customTokens: Partial<ThemeTokens> = {};
 
+/** Deteksi kemampuan warna sekali per proses, dengan override untuk tes. */
+export function colorDepth(): ColorDepth {
+  const forced = process.env.RANN_COLOR;
+  if (forced === "none" || process.env.NO_COLOR !== undefined || process.env.RANN_NO_COLOR === "1" || process.env.RANN_SCREEN_READER === "1") return "none";
+  if (forced === "16" || forced === "256" || forced === "truecolor") return forced;
+  const force = process.env.FORCE_COLOR;
+  if (force !== undefined) {
+    if (force === "0" || force === "false") return "none";
+    if (force === "3") return "truecolor";
+    if (force === "2") return "256";
+    return "16";
+  }
+  if (process.stdout.isTTY !== true || process.env.TERM === "dumb") return "none";
+  const term = process.env.TERM ?? "";
+  const colorTerm = (process.env.COLORTERM ?? "").toLowerCase();
+  if (colorTerm === "truecolor" || colorTerm === "24bit") return "truecolor";
+  if (term.includes("256color")) return "256";
+  if (term.includes("color") || term.includes("xterm") || term.includes("screen") || term.includes("tmux") || term.includes("ansi")) return "16";
+  return "16";
+}
+
 export function colorEnabled(): boolean {
-  if (process.env.NO_COLOR !== undefined || process.env.RANN_NO_COLOR === "1") return false;
-  if (process.env.FORCE_COLOR !== undefined && process.env.FORCE_COLOR !== "0") return true;
-  return process.stdout.isTTY === true && process.env.TERM !== "dumb";
+  return colorDepth() !== "none";
 }
 
 function parseHex(hex: string): [number, number, number] {
@@ -65,12 +96,14 @@ export function contrastRatio(foreground: string, background: string): number {
 }
 
 export function activeTheme(): { name: ThemeName; tokens: ThemeTokens; background: string } {
-  const resolved: "dark" | "light" = themeName === "auto" ? (process.env.COLORFGBG?.endsWith(";15") ? "light" : "dark") : themeName === "custom" ? "dark" : themeName;
+  const resolved: "dark" | "light" | "minimal" = themeName === "auto"
+    ? (process.env.COLORFGBG?.endsWith(";15") ? "light" : "dark")
+    : themeName === "custom" ? "dark" : themeName === "minimal" ? "minimal" : themeName;
   const base = THEMES[resolved];
   return {
     name: themeName,
     tokens: { ...base, ...customTokens },
-    background: resolved === "light" ? "#ffffff" : "#0d1117"
+    background: resolved === "light" ? "#ffffff" : resolved === "minimal" ? "#000000" : "#0d1117"
   };
 }
 
@@ -95,10 +128,44 @@ export function themeTokens(): ThemeTokens {
   return activeTheme().tokens;
 }
 
+function rgbTo256(r: number, g: number, b: number): number {
+  if (r === g && g === b) {
+    if (r < 8) return 16;
+    if (r > 248) return 231;
+    return 232 + Math.round(((r - 8) / 247) * 24);
+  }
+  const toCube = (value: number): number => Math.round((value / 255) * 5);
+  return 16 + 36 * toCube(r) + 6 * toCube(g) + toCube(b);
+}
+
+const ANSI16: Array<[number, number, number]> = [
+  [0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+  [0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],
+  [128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+  [0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255]
+];
+
+function rgbTo16(r: number, g: number, b: number): number {
+  let best = 0;
+  let distance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < ANSI16.length; index += 1) {
+    const [rr, gg, bb] = ANSI16[index]!;
+    const next = (r - rr) ** 2 + (g - gg) ** 2 + (b - bb) ** 2;
+    if (next < distance) {
+      distance = next;
+      best = index;
+    }
+  }
+  return best < 8 ? 30 + best : 90 + (best - 8);
+}
+
 function wrapRgb(hex: string, text: string): string {
-  if (!colorEnabled()) return text;
+  const depth = colorDepth();
+  if (depth === "none") return text;
   const [r, g, b] = parseHex(hex);
-  return `\u001b[38;2;${r};${g};${b}m${text}\u001b[0m`;
+  if (depth === "truecolor") return `\u001b[38;2;${r};${g};${b}m${text}\u001b[0m`;
+  if (depth === "256") return `\u001b[38;5;${rgbTo256(r, g, b)}m${text}\u001b[0m`;
+  return `\u001b[${rgbTo16(r, g, b)}m${text}\u001b[0m`;
 }
 
 function wrap(code: number, text: string): string {
@@ -116,8 +183,21 @@ export const ui = {
   cyan: (text: string) => wrapRgb(themeTokens().accent, text),
   accent: (text: string) => wrapRgb(themeTokens().accent, text),
   border: (text: string) => wrapRgb(themeTokens().border, text),
-  fg: (text: string) => wrapRgb(themeTokens().foreground, text)
+  fg: (text: string) => wrapRgb(themeTokens().foreground, text),
+  white: (text: string) => wrapRgb("#ffffff", text),
+  label: (text: string) => wrapRgb(themeTokens().dim, text.toUpperCase()),
+  selected: (text: string) => wrapRgb(themeTokens().accent, text)
 };
+
+/** Rule horizontal tanpa border berlebih; aman untuk terminal sempit. */
+export function rule(width = process.stdout.columns ?? 80, label = ""): string {
+  const safe = Math.max(1, width);
+  if (label.length === 0) return ui.border("─".repeat(safe));
+  const text = ` ${label} `;
+  const left = Math.max(0, Math.floor((safe - displayWidth(text)) / 2));
+  const right = Math.max(0, safe - left - displayWidth(text));
+  return `${ui.border("─".repeat(left))}${ui.dim(text)}${ui.border("─".repeat(right))}`;
+}
 
 export function colorsEnabled(): boolean {
   return colorEnabled();
@@ -211,6 +291,7 @@ export function relativeTime(timestamp: number): string {
 export interface Choice<T extends string> {
   key: T;
   label: string;
+  shortcut?: string;
 }
 
 export async function chooseWith<T extends string>(
@@ -221,12 +302,12 @@ export async function chooseWith<T extends string>(
 ): Promise<T> {
   for (;;) {
     process.stderr.write(`${prompt}\n`);
-    choices.forEach((choice, index) => process.stderr.write(`  [${index + 1}] ${choice.label}\n`));
-    const answer = (await ask(`Pilih 1-${choices.length} (Enter = ${fallback}): `)).trim().toLowerCase();
+    choices.forEach((choice, index) => process.stderr.write(`  [${choice.shortcut ?? index + 1}] ${choice.label}\n`));
+    const answer = (await ask(`Pilih ${choices.map((choice, index) => choice.shortcut ?? index + 1).join("/")} (Enter = ${fallback}): `)).trim().toLowerCase();
     if (answer.length === 0) return fallback;
     const numeric = Number.parseInt(answer, 10);
     if (Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length) return choices[numeric - 1]!.key;
-    const direct = choices.find((choice) => choice.key === answer);
+    const direct = choices.find((choice) => choice.key === answer || choice.shortcut?.toLowerCase() === answer);
     if (direct) return direct.key;
     process.stderr.write(`${translateUi("Pilihan tidak dikenal, coba lagi.")}\n`);
   }
@@ -256,7 +337,7 @@ export class Spinner {
     this.stop();
     this.label = label;
     this.startedAt = Date.now();
-    if (!colorEnabled() || screenReaderMode() || this.stream.isTTY !== true) {
+    if (!colorEnabled() || screenReaderMode() || this.stream.isTTY !== true || process.env.RANN_REDUCED_MOTION === "1" || process.env.RANN_ANIMATIONS === "0") {
       this.stream.write(`${translateUi(label)}\n`);
       return;
     }

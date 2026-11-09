@@ -220,6 +220,16 @@ Saat meminta izin, CLI menampilkan tiga pilihan: setujui sekali, selalu untuk to
 
 Perintah shell berbahaya seperti `rm -rf /`, `mkfs`, atau `shutdown` tetap ditolak walaupun mode `trusted`.
 
+## Tampilan
+
+`--ui` mengatur kerapatan tampilan chat: `interactive` (default), `compact`, `verbose`, atau `debug`. Nilai yang sama bisa diset permanen lewat `RANN_UI_MODE`.
+
+```bash
+rann chat --ui compact
+```
+
+Warna mengikuti `RANN_COLOR`: `truecolor`, `256`, `16`, atau `none`. Header, status bar, dan panel menyesuaikan lebar terminal, dan informasi sekunder disembunyikan di terminal sempit.
+
 ## Penyimpanan
 
 Default di `~/.rann`, bisa dipindah lewat `RANN_HOME`:

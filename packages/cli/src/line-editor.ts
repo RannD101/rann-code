@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { displayWidth, screenReaderMode } from "./ui.js";
+import { displayWidth, screenReaderMode, ui } from "./ui.js";
+import { renderPalette } from "./tui/palette.js";
 import type { HistoryStore } from "./history.js";
 
 export interface CompletionItem {
@@ -48,10 +49,17 @@ export class ReplExit extends Error {
   }
 }
 
+interface OverlayItem {
+  value: string;
+  description?: string;
+  category?: string;
+  usage?: string;
+}
+
 interface Overlay {
   kind: "completion" | "history" | "palette";
   title: string;
-  items: Array<{ value: string; description?: string }>;
+  items: OverlayItem[];
   selected: number;
   start?: number;
   query?: string;
@@ -162,6 +170,7 @@ export class LineEditor {
   private busyCtrlCount = 0;
   private busyCtrlAt = 0;
   private followCursor = true;
+  private paletteFromSlash = false;
   private viewLine = 0;
   private lastViewStart = 0;
   private closed = false;
@@ -405,6 +414,15 @@ export class LineEditor {
         if (action) this.handleAction(action);
         continue;
       }
+      if (this.overlay?.kind === "palette" && char === " ") {
+        const query = this.overlay.query ?? "";
+        this.overlay = undefined;
+        this.paletteFromSlash = false;
+        this.buffer = `/${query} `;
+        this.cursor = this.buffer.length;
+        this.render();
+        continue;
+      }
       if (this.overlay?.kind === "history" || this.overlay?.kind === "palette") {
         this.overlay.query = `${this.overlay.query ?? ""}${char}`;
         this.refreshOverlay();
@@ -616,6 +634,7 @@ export class LineEditor {
       if (query.length > 0 && !name.startsWith(query)) {
         // Fuzzy match yang lemah tidak boleh menelan command tak dikenal.
         this.overlay = undefined;
+        this.paletteFromSlash = false;
         this.buffer = `/${query}`;
         this.cursor = this.buffer.length;
       } else {
@@ -803,7 +822,7 @@ export class LineEditor {
     }
   }
 
-  private historyOverlayItems(query: string): Array<{ value: string; description?: string }> {
+  private historyOverlayItems(query: string): OverlayItem[] {
     const entries = this.options.history?.all() ?? [];
     return entries
       .slice()
@@ -820,6 +839,7 @@ export class LineEditor {
       this.render();
       return;
     }
+    this.paletteFromSlash = this.buffer === "/";
     this.overlay = {
       kind: "palette",
       title: "Command palette (Ctrl+K, Esc batal)",
@@ -830,14 +850,19 @@ export class LineEditor {
     this.render();
   }
 
-  private paletteItems(query: string): Array<{ value: string; description?: string }> {
+  private paletteItems(query: string): OverlayItem[] {
     const palette = this.options.palette ?? [];
     return palette
       .map((item) => ({ item, score: fuzzyScore(`${item.name} ${item.description} ${item.category ?? ""}`, query) }))
       .filter((entry) => entry.score >= 0)
       .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name))
       .slice(0, 12)
-      .map((entry) => ({ value: `/${entry.item.name}`, description: entry.item.description }));
+      .map((entry) => ({
+        value: `/${entry.item.name}`,
+        description: entry.item.description,
+        ...(entry.item.category ? { category: entry.item.category } : {}),
+        ...(entry.item.usage ? { usage: entry.item.usage } : {})
+      }));
   }
 
   private navigateHistory(delta: -1 | 1): void {
@@ -870,6 +895,7 @@ export class LineEditor {
     if (!overlay) return;
     const item = overlay.items[overlay.selected];
     this.overlay = undefined;
+    this.paletteFromSlash = false;
     if (!item) {
       this.render();
       return;
@@ -886,6 +912,11 @@ export class LineEditor {
 
   private cancelOverlay(): void {
     if (!this.overlay) return;
+    if (this.overlay.kind === "palette" && this.paletteFromSlash && this.buffer === "/") {
+      this.buffer = "";
+      this.cursor = 0;
+    }
+    this.paletteFromSlash = false;
     this.overlay = undefined;
     this.render();
   }
@@ -976,18 +1007,12 @@ export class LineEditor {
   private overlayLines(): string[] {
     const overlay = this.overlay;
     if (!overlay) return [];
-    const lines = [overlay.title];
-    const visible = 8;
-    const start = Math.max(0, Math.min(overlay.selected - Math.floor(visible / 2), overlay.items.length - visible));
-    const slice = overlay.items.slice(start, start + visible);
-    slice.forEach((item, offset) => {
-      const index = start + offset;
-      const marker = index === overlay.selected ? "> " : "  ";
-      const description = item.description ? `  ${item.description}` : "";
-      lines.push(`${marker}${item.value}${description}`);
+    return renderPalette({
+      title: overlay.title,
+      items: overlay.items,
+      selected: overlay.selected,
+      width: this.width()
     });
-    if (overlay.items.length > visible) lines.push(`  ${start + 1}-${Math.min(start + visible, overlay.items.length)} dari ${overlay.items.length}`);
-    return lines;
   }
 
   private scrollView(delta: number): void {
@@ -1062,7 +1087,7 @@ export class LineEditor {
       const prefix = index === 0 ? prompt : "  ";
       const content = lines[index] ?? "";
       const isFence = content.includes("```");
-      const colored = fenceOpen || isFence ? `\u001b[36m${content}\u001b[0m` : content;
+      const colored = fenceOpen || isFence ? ui.cyan(content) : content;
       rendered.push(`${prefix}${colored}`);
       if (isFence) fenceOpen = !fenceOpen;
     }

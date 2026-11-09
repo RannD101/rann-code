@@ -12,9 +12,9 @@ describe("markdown terminal", () => {
 
   it("mempertahankan isi blok kode apa adanya", () => {
     const state = { inFence: false };
-    expect(stripAnsi(renderMarkdownLine("```ts", state))).toBe("+-- ts");
-    expect(stripAnsi(renderMarkdownLine("const x = **bukan bold**;", state))).toBe("| const x = **bukan bold**;");
-    expect(stripAnsi(renderMarkdownLine("```", state))).toBe("+--");
+    expect(stripAnsi(renderMarkdownLine("```ts", state))).toBe("╭─ ts");
+    expect(stripAnsi(renderMarkdownLine("const x = **bukan bold**;", state))).toBe("│ const x = **bukan bold**;");
+    expect(stripAnsi(renderMarkdownLine("```", state))).toBe("╰─");
   });
 
   it("hanya mengeluarkan baris yang sudah selesai", () => {

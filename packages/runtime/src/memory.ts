@@ -282,12 +282,16 @@ export class MemoryService {
       .slice(0, limit)
       .map(([id]) => byId.get(id))
       .filter((entry): entry is MemoryEntry => entry !== undefined);
-    for (const entry of result) {
-      this.db.prepare("UPDATE memory_entries SET last_used_at = ?, updated_at = updated_at WHERE id = ?").run(Date.now(), entry.id);
-      this.db.prepare("INSERT INTO memory_events (id, memory_id, action, actor, created_at) VALUES (?, ?, 'retrieved', ?, ?)").run(
-        newId("mev"), entry.id, this.options.agentProfile ?? "user", Date.now()
-      );
-    }
+    const markUsed = this.db.transaction((entries: MemoryEntry[]) => {
+      const now = Date.now();
+      const touch = this.db.prepare("UPDATE memory_entries SET last_used_at = ?, updated_at = updated_at WHERE id = ?");
+      const log = this.db.prepare("INSERT INTO memory_events (id, memory_id, action, actor, created_at) VALUES (?, ?, 'retrieved', ?, ?)");
+      for (const entry of entries) {
+        touch.run(now, entry.id);
+        log.run(newId("mev"), entry.id, this.options.agentProfile ?? "user", now);
+      }
+    });
+    markUsed(result);
     return result;
   }
 

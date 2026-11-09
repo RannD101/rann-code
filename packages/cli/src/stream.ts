@@ -4,6 +4,9 @@ import { RannError } from "@rann/shared";
 import { printErr, Spinner, ui } from "./ui.js";
 import { previewEdit } from "./edit-preview.js";
 import { MarkdownStream } from "./markdown.js";
+import { renderEditPreview, renderToolEnd, renderToolStart } from "./tui/tool-view.js";
+import { renderPlan, renderPlanEvent } from "./tui/plan-view.js";
+import { renderAgentEvent } from "./tui/agent-view.js";
 
 export type OutputFormat = "text" | "json" | "stream-json" | "ndjson";
 
@@ -128,6 +131,7 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
     let pendingError: StreamError | undefined;
     let collected = "";
     let planDraft: Record<string, unknown> | undefined;
+    let planSignature = "";
     let costUsd: number | null | undefined;
     let pendingText = "";
     let flushTimer: NodeJS.Timeout | undefined;
@@ -308,18 +312,16 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         }
         breakLine();
         const tool = String(event.data.tool);
-        const argText = brief(event.data.args);
         const preview = format === "text" ? previewEdit(tool, event.data.args, process.cwd()) : null;
         if (preview) {
-          printErr(ui.dim(`[diff] ${preview.path}  +${preview.added} -${preview.removed}`));
-          for (const line of preview.lines) printErr(ui.dim(`  ${line}`));
+          for (const line of renderEditPreview(preview)) printErr(line);
         }
         if (format === "text") {
           if (process.stderr.isTTY) {
             toolStartedAt = Date.now();
-            toolSpinner.start(`[tool] ${tool} ${argText}`);
+            toolSpinner.start(renderToolStart(tool, event.data.args));
           } else {
-            printErr(ui.dim(`[tool] ${tool} ${argText}`));
+            printErr(renderToolStart(tool, event.data.args));
           }
         }
         emit({ type: "tool.start", turn_id: turnId, tool, args: event.data.args });
@@ -329,34 +331,64 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         const status = String(event.data.status ?? "ok");
         const tool = String(event.data.tool);
         if (format === "text") {
-          const label = status === "ok" ? ui.green("ok") : ui.red(status);
           const duration = Number(event.data.duration_ms ?? (toolStartedAt > 0 ? Date.now() - toolStartedAt : 0));
-          const timing = duration > 0 ? ` ${(duration / 1000).toFixed(1)}s` : "";
-          const exit = event.data.exit_code === undefined || event.data.exit_code === null ? "" : ` exit ${String(event.data.exit_code)}`;
-          const cwd = tool === "shell_run" && typeof event.data.cwd === "string" ? ` di ${event.data.cwd}` : "";
           const summary = typeof event.data.summary === "string" && event.data.summary.length > 0
             ? `  ${brief(event.data.summary, 160)}`
             : typeof event.data.reason === "string" && event.data.reason.length > 0
               ? `  ${brief(event.data.reason, 160)}`
               : "";
-          if (process.stderr.isTTY) {
-            toolSpinner.stop(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${cwd}${summary}`));
-          } else {
-            printErr(ui.dim(`[tool] ${tool} ${label}${timing}${exit}${cwd}${summary}`));
-          }
+          const rendered = renderToolEnd({
+            tool,
+            state: status === "ok" ? "ok" : status === "cancelled" ? "cancelled" : "failed",
+            ...(duration > 0 ? { durationMs: duration } : {}),
+            ...(event.data.exit_code === undefined || event.data.exit_code === null ? {} : { exitCode: Number(event.data.exit_code) }),
+            ...(summary.length > 0 ? { summary: summary.trim() } : {})
+          });
+          if (process.stderr.isTTY) toolSpinner.stop(rendered);
+          else printErr(rendered);
           toolStartedAt = 0;
         }
         emit({ type: "tool.end", turn_id: turnId, tool, status, duration_ms: event.data.duration_ms });
         return;
       }
+      if (event.type === "agent.update") {
+        const id = String(event.data.agent_id ?? "");
+        const profile = String(event.data.profile ?? "agent");
+        const status = String(event.data.status ?? "");
+        if (format === "text" && id && status) {
+          printErr(renderAgentEvent({
+            id,
+            profile,
+            status,
+            ...(typeof event.data.steps === "number" ? { steps: event.data.steps } : {}),
+            ...(typeof event.data.cost_usd === "number" ? { cost: event.data.cost_usd } : {})
+          }));
+        }
+        emit({ type: "agent.update", turn_id: turnId, ...event.data });
+        return;
+      }
       if (event.type === "plan.update") {
         if (event.data.draft && typeof event.data.draft === "object") planDraft = event.data.draft as Record<string, unknown>;
         if (typeof event.data.tasks === "number") planTotal = event.data.tasks;
+        const draftTasks = planDraft && Array.isArray(planDraft.tasks) ? planDraft.tasks as Array<Record<string, unknown>> : [];
+        if (format === "text" && draftTasks.length > 0) {
+          const signature = draftTasks.map((task) => String(task.title ?? task.id ?? "")).join("|");
+          if (signature !== planSignature) {
+            planSignature = signature;
+            for (const line of renderPlan(draftTasks.map((task) => ({
+              title: String(task.title ?? task.id ?? "langkah"),
+              status: String(task.status ?? "pending"),
+              ...(typeof task.agent === "string" ? { agent: task.agent } : {})
+            })))) printErr(line);
+          }
+        }
         if (format === "text" && typeof event.data.status === "string") {
-          const total = planTotal > 0 ? ` ${planTotal} langkah` : "";
-          const version = Number(event.data.version ?? 1);
-          const replan = version > 1 ? ` [replan v${version}]` : "";
-          printErr(ui.dim(`[plan]${replan} ${event.data.status}${total}${event.data.reason ? `: ${event.data.reason}` : ""}`));
+          printErr(renderPlanEvent({
+            status: String(event.data.status),
+            ...(planTotal > 0 ? { total: planTotal } : {}),
+            ...(typeof event.data.reason === "string" ? { reason: event.data.reason } : {}),
+            ...(Number(event.data.version ?? 1) > 1 ? { version: Number(event.data.version) } : {})
+          }));
         }
         emit({ type: "plan.update", turn_id: turnId, ...event.data });
         return;
