@@ -253,7 +253,7 @@ tr:last-child td{border-bottom:0}
     view.innerHTML = '<div class="grid">' + metric("Mode", data.mode || "-") + metric("Workspace only", data.workspace_only?"ya":"tidak") + metric("Allow", (data.allow||[]).length) + metric("Deny", (data.deny||[]).length) + '</div><div class="panel"><pre class="mono" style="white-space:pre-wrap">' + esc(JSON.stringify(data, null, 2)) + '</pre></div>';
   }
   function renderChat(){
-    view.innerHTML = '<div class="chat"><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button class="secondary" id="cancel">Batalkan</button><button id="send">Kirim</button></div></div>';
+    view.innerHTML = '<div class="chat"><div class="messages" id="messages"><div class="empty">Menyiapkan sesi...</div></div><div class="composer"><textarea id="prompt" placeholder="Tulis pesan, Enter untuk kirim"></textarea><input type="file" id="file" style="display:none"><button class="secondary" id="attach">Lampiran</button><button class="secondary" id="newSession">Sesi baru</button><button class="secondary" id="setModel">Ganti model</button><button class="secondary" id="cancel">Batalkan</button><button class="secondary" id="endSession">Akhiri sesi</button><button id="send">Kirim</button></div></div>';
     api("/v1/chat/ensure",{method:"POST",body:"{}"}).then(function(session){
       chatSession = session.id;
       return api("/v1/sessions/" + encodeURIComponent(chatSession));
@@ -264,6 +264,25 @@ tr:last-child td{border-bottom:0}
     prompt.addEventListener("keydown", function(event){ if(event.key === "Enter" && !event.shiftKey){ event.preventDefault(); sendMessage(); } });
     document.getElementById("send").onclick = sendMessage;
     document.getElementById("attach").onclick = function(){ document.getElementById("file").click(); };
+    document.getElementById("newSession").onclick = function(){
+      api("/v1/sessions",{method:"POST",body:JSON.stringify({title:"Web baru"})}).then(function(session){
+        chatSession = session.id;
+        renderChat();
+      }).catch(function(error){alert(error.message);});
+    };
+    document.getElementById("setModel").onclick = function(){
+      var next = prompt("Nama model, contoh mock-1", "");
+      if(!next) return;
+      api("/v1/sessions/"+encodeURIComponent(chatSession)+"/model",{method:"POST",body:JSON.stringify({model:next})})
+        .then(function(){alert("Model diganti ke "+next);})
+        .catch(function(error){alert(error.message);});
+    };
+    document.getElementById("endSession").onclick = function(){
+      if(!confirm("Akhiri sesi ini?")) return;
+      api("/v1/sessions/"+encodeURIComponent(chatSession)+"/end",{method:"POST",body:"{}"})
+        .then(function(){chatSession=null;renderChat();})
+        .catch(function(error){alert(error.message);});
+    };
     document.getElementById("cancel").onclick = function(){
       if(!chatSession) return;
       api("/v1/sessions/" + encodeURIComponent(chatSession) + "/cancel",{method:"POST",body:"{}"}).then(function(){ document.getElementById("send").disabled=false; document.getElementById("send").textContent="Kirim"; });

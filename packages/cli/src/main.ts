@@ -18,6 +18,8 @@ import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./c
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
 import { formatApprovalArgs } from "./approval.js";
+import { ctrlDAction, headerLines } from "./session-header.js";
+import { chooseTurnFailureAction } from "./turn-failure.js";
 import { setLocale, tr } from "./i18n.js";
 
 
@@ -1215,15 +1217,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         const result = await client.request<Record<string, unknown>>("session.cancel", { sessionId });
         return result.cancelled === true;
       },
-      onCtrlD: async (isBusy: boolean) => {
-        if (!isBusy) return "exit";
-        return choose("Turn masih berjalan. Pilih tindakan:", [
-          { key: "wait" as const, label: "tunggu sampai selesai" },
-          { key: "cancel" as const, label: "batalkan turn" },
-          { key: "background" as const, label: "biarkan berjalan di background" },
-          { key: "exit" as const, label: "keluar dan hentikan klien" }
-        ], "wait");
-      },
+      onCtrlD: async (isBusy: boolean) => ctrlDAction(isBusy, (title, options, fallback) => choose(title, options, fallback)),
       onExpand: async () => {
         if (!lastTurnId) return lastResponse || undefined;
         const data = await client.request<Record<string, unknown>>("session.get", { sessionId });
@@ -1249,9 +1243,16 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     const onApproval = makeApprovalHandler(args, (question) => editor.readLine(question, { escapeSubmits: true }));
 
     const header = (): void => {
-      print(ui.bold("Rann Code") + ui.dim(`  ${process.cwd()}${branch ? `  (${branch})` : ""}`));
-      print(ui.dim(`sesi ${sessionLabel()}  model ${model ?? "default"}  izin ${permissionMode ?? "default"}  profil ${process.env.RANN_PROFILE ?? "default"}`));
-      print(ui.dim("ketik /help untuk perintah, /plan <tugas> untuk rencana, /exit untuk keluar"));
+      for (const line of headerLines({
+        cwd: process.cwd(),
+        ...(branch ? { branch } : {}),
+        session: sessionLabel(),
+        model: model ?? "default",
+        permission: permissionMode ?? "default",
+        profile: process.env.RANN_PROFILE ?? "default"
+      })) {
+        print(line);
+      }
     };
 
     const outgoing = (text: string): string => {
@@ -2633,9 +2634,17 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(ui.red(`folder project tidak ditemukan: ${target}`));
             continue;
           }
+          const previousProject = process.cwd();
+          history.saveDraft(previousProject, editor.draft());
           const session = await client.request<Record<string, unknown>>("session.create", { projectPath: target, model, permissionMode });
           process.chdir(target);
           history.switchTo(target);
+          try {
+            await client.request("config.reload", {});
+          } catch {
+            // Config global mungkin belum berubah; sesi tetap bisa dipakai.
+          }
+          editor.setDraft(history.takeDraft(target));
           custom.commands = reloadCustomCommands();
           loadCustomThemeIfPresent(resolveHome());
           sessionId = String(session.id);
@@ -3187,14 +3196,31 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
         }
         busy = true;
         try {
-          const result = await runStreaming(client, sessionId, outgoing(line), {
-            ...(model ? { model } : {}),
-            ...(permissionMode ? { permissionMode } : {}),
-            ...(parsedInput.attachments.length > 0 ? { attachments: parsedInput.attachments } : {}),
-            ...(onApproval ? { onApproval } : {})
-          });
-          await recordResult(result);
-          if (!result.ok) print(ui.red("[turn gagal]"));
+          let attemptText = line;
+          for (;;) {
+            const result = await runStreaming(client, sessionId, outgoing(attemptText), {
+              ...(model ? { model } : {}),
+              ...(permissionMode ? { permissionMode } : {}),
+              ...(parsedInput.attachments.length > 0 ? { attachments: parsedInput.attachments } : {}),
+              ...(onApproval ? { onApproval } : {})
+            });
+            await recordResult(result);
+            if (result.ok) break;
+            print(ui.red("[turn gagal]"));
+            const action = await chooseTurnFailureAction(result.error?.code, (question) => editor.readLine(question));
+            if (action === "retry") continue;
+            if (action === "alternative") {
+              const alternative = (await editor.readLine("Pendekatan alternatif: ")).trim();
+              if (alternative.length === 0) break;
+              attemptText = alternative;
+              continue;
+            }
+            if (action === "replan") {
+              attemptText = `Susun ulang rencana untuk tugas berikut, lalu kerjakan: ${line}`;
+              continue;
+            }
+            break;
+          }
         } finally {
           busy = false;
         }

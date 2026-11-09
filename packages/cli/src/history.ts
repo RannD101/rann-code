@@ -51,6 +51,37 @@ export class HistoryStore {
     this.load();
   }
 
+  private draftsPath(): string {
+    return join(this.dir, "drafts.json");
+  }
+
+  saveDraft(cwd: string, text: string): void {
+    if (text.trim().length === 0) return;
+    let all: Record<string, string> = {};
+    try {
+      all = JSON.parse(readFileSync(this.draftsPath(), "utf8")) as Record<string, string>;
+    } catch {
+      all = {};
+    }
+    all[cwd] = text;
+    writeFileSync(this.draftsPath(), JSON.stringify(all), { mode: 0o600 });
+  }
+
+  takeDraft(cwd: string): string {
+    let all: Record<string, string> = {};
+    try {
+      all = JSON.parse(readFileSync(this.draftsPath(), "utf8")) as Record<string, string>;
+    } catch {
+      return "";
+    }
+    const text = all[cwd] ?? "";
+    if (text.length > 0) {
+      delete all[cwd];
+      writeFileSync(this.draftsPath(), JSON.stringify(all), { mode: 0o600 });
+    }
+    return text;
+  }
+
   switchTo(cwd: string): void {
     this.path = join(this.dir, `${projectKey(cwd)}.jsonl`);
     this.entries = [];

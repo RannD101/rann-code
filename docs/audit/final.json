@@ -2,14 +2,13 @@
   {
     "id": "RC-FR-001",
     "title": "REPL interaktif",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/main.ts, line-editor.ts, stream.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "headerLines diekstrak dan diuji tampil di bawah 1 detik; ctrlDAction menawarkan background saat turn berjalan; tes session-header.test.ts"
     ],
-    "gaps": [
-      "Header belum diuji tampil dalam 1 detik; pilihan background pada Ctrl+D ada tetapi belum ada tes end-to-end."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-002",
@@ -45,14 +44,13 @@
   {
     "id": "RC-FR-005",
     "title": "Multiline input dan editor eksternal",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/line-editor.ts, stream.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "nextIndent menambah indentasi setelah blok dan di dalam fence; baris dalam fence diberi warna; tes editor-format.test.ts"
     ],
-    "gaps": [
-      "Multiline belum punya indentasi terstruktur atau syntax highlight blok kode."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-006",
@@ -67,14 +65,13 @@
   {
     "id": "RC-FR-007",
     "title": "Streaming response",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/line-editor.ts, stream.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "chooseTurnFailureAction menawarkan ulangi, pendekatan alternatif, susun ulang rencana, atau lanjut setelah turn gagal; tes turn-failure.test.ts"
     ],
-    "gaps": [
-      "Saat stream gagal total, pengguna belum diberi pilihan lanjut atau ulangi secara interaktif."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-008",
@@ -181,14 +178,13 @@
   {
     "id": "RC-FR-018",
     "title": "Project dan session switching",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/main.ts, stream.ts, attachments.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "/project switch menyimpan draft lewat HistoryStore, memuat config.reload, dan mengembalikan draft project tujuan; tes history.test.ts dan rpc-session.test.ts"
     ],
-    "gaps": [
-      "Config project tidak dimuat ulang saat /project switch; draft input belum disimpan."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-019",
@@ -344,14 +340,13 @@
   {
     "id": "RC-FR-034",
     "title": "Pemulihan error",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/agent.ts, plan-runtime.ts, checkpoint-files.ts; plan-runtime tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "prompt kegagalan turn yang sama mencakup retry, alternatif, dan replan untuk kegagalan tool; tes turn-failure.test.ts"
     ],
-    "gaps": [
-      "Saat tool gagal, pengguna belum diberi pilihan retry, alternatif, atau replan secara eksplisit."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-035",
@@ -1379,14 +1374,13 @@
   {
     "id": "RC-FR-135",
     "title": "Halaman dashboard",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "dashboard punya aksi sesi baru, ganti model, dan akhiri sesi lewat REST; tes gateway.test.ts"
     ],
-    "gaps": [
-      "Dashboard baru punya aksi pairing, lampiran, dan cancel; aksi state lain belum ada."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-136",

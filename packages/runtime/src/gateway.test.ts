@@ -148,3 +148,37 @@ describe("gateway HTTP", () => {
     expect([403, 404]).toContain(response.status);
   });
 });
+
+describe("aksi dashboard tambahan", () => {
+  it("mengganti model dan mengakhiri sesi lewat REST", async () => {
+    const { base, db } = await boot();
+    const { code } = issuePairCode(db, { createdBy: "uji" });
+    const pair = await fetch(`${base}/v1/auth/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, name: "web" })
+    });
+    const body = (await pair.json()) as { token: string; device: { id: string } };
+    updateDeviceRole(db, body.device.id, "owner");
+
+    const model = await fetch(`${base}/v1/sessions/ses-baru/model`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${body.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "mock-1" })
+    });
+    expect(model.status).toBe(200);
+
+    const ended = await fetch(`${base}/v1/sessions/ses-baru/end`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${body.token}`, "content-type": "application/json" },
+      body: "{}"
+    });
+    expect(ended.status).toBe(200);
+
+    const page = await (await fetch(`${base}/`)).text();
+    expect(page).toContain('id="newSession"');
+    expect(page).toContain('id="setModel"');
+    expect(page).toContain('id="endSession"');
+  });
+});
+

@@ -64,3 +64,17 @@ describe("riwayat prompt", () => {
     expect(new HistoryStore(dirname(history.path), "/tmp/proyek").all()).toHaveLength(0);
   });
 });
+
+describe("draft per project", () => {
+  it("menyimpan dan mengambil draft saat pindah project", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-draft-"));
+    const store = new HistoryStore(dir, "/proyek/a");
+    store.saveDraft("/proyek/a", "setengah pesan");
+    store.switchTo("/proyek/b");
+    expect(store.takeDraft("/proyek/b")).toBe("");
+    store.switchTo("/proyek/a");
+    expect(store.takeDraft("/proyek/a")).toBe("setengah pesan");
+    expect(store.takeDraft("/proyek/a")).toBe("");
+  });
+});
+

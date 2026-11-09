@@ -24,6 +24,8 @@ describe("override config per sesi", () => {
         skills_deny: ["code-review"]
       });
       expect(configured.overrides).toMatchObject({ max_steps: 3, skills_force: ["debug-sistematis"] });
+      const reloaded = await client.request<{ files: string[] }>("config.reload", {});
+      expect(Array.isArray(reloaded.files)).toBe(true);
       const fetched = await client.request<{ metadata_json: string }>("session.get", { sessionId: session.id });
       expect(JSON.parse(fetched.metadata_json).overrides.max_steps).toBe(3);
     } finally {

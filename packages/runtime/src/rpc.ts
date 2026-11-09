@@ -87,7 +87,7 @@ import {
   gcStorage,
   listBackups
 } from "@rann/storage";
-import { providerFor, type LoadedConfig } from "@rann/shared";
+import { loadConfig, providerFor, type LoadedConfig } from "@rann/shared";
 import type { Layout } from "./paths.js";
 import { routeModel, type HealthState } from "./router.js";
 import { saveSymbolIndex, searchSymbols } from "./symbol-index.js";
@@ -513,6 +513,12 @@ export class RpcServer {
         });
         this.broadcast(event);
         return { session_id: session.id, model: modelName };
+      }
+      case "config.reload": {
+        const fresh = loadConfig({ home: this.options.layout.home, projectPath: this.options.config.projectPath });
+        this.options.config = fresh;
+        seedRegistry(this.db, fresh.config);
+        return { files: fresh.files, config: fresh.config };
       }
       case "session.configure": {
         const patch: Record<string, unknown> = {};

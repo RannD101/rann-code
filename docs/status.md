@@ -189,7 +189,14 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - `system-tools.ts`: metadata gambar dibaca dari header PNG/GIF/JPEG saat ImageMagick tidak tersedia.
 - `pnpm check` lulus: 330 tes di 64 berkas, lint dan depcruise bersih.
 
-Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149. Audit kini 145 `done`, 6 `partial`: 001, 005, 007, 018, 034, 135.
+Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149. Putaran keempat menutup 001, 005, 007, 018, 034, dan 135. Audit kini 151 `done`, 0 `partial`.
+
+- Header sesi diekstrak ke `session-header.ts` dan diuji tampil di bawah satu detik; Ctrl+D menawarkan background saat turn berjalan.
+- Editor multiline memakai indentasi terstruktur dan mewarnai blok kode di dalam fence.
+- Turn gagal memberi pilihan ulangi, pendekatan alternatif, susun ulang rencana, atau lanjut.
+- `/project switch` menyimpan draft, memuat ulang config, dan mengembalikan draft project tujuan.
+- Dashboard punya aksi sesi baru, ganti model, dan akhiri sesi.
+- `pnpm check` lulus: 353 tes di 73 berkas, lint dan depcruise bersih.
 
 - `.rann/commands/*.md` dimuat sebagai command proyek dan boleh menimpa command bawaan.
 - `/resume` menampilkan replay event terakhir sebelum prompt lanjutan.

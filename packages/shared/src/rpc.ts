@@ -435,6 +435,7 @@ export const methodParams = {
   "provider.list": empty,
   "config.explain": configExplainParams,
   "config.get": empty,
+  "config.reload": empty,
   "provider.test": providerTestParams,
   "usage.summary": usageSummaryParams,
   "permission.respond": permissionRespondParams,

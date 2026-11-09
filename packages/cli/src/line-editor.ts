@@ -464,7 +464,8 @@ export class LineEditor {
         this.overlay = undefined;
         const before = this.buffer.slice(0, this.cursor);
         const fenceCount = (before.match(/```/g) ?? []).length;
-        this.insert(fenceCount % 2 === 1 ? "\n  " : "\n");
+        const line = before.slice(before.lastIndexOf("\n") + 1);
+        this.insert(`\n${nextIndent(line, fenceCount % 2 === 1)}`);
         return;
       }
       case "backtab":
@@ -716,6 +717,16 @@ export class LineEditor {
         await this.options.onCancel?.();
       });
     }
+    this.render();
+  }
+
+  draft(): string {
+    return this.buffer;
+  }
+
+  setDraft(text: string): void {
+    this.buffer = text;
+    this.cursor = text.length;
     this.render();
   }
 
@@ -1002,9 +1013,17 @@ export class LineEditor {
     this.viewLine = start;
 
     const rendered: string[] = [];
+    let fenceOpen = false;
+    for (let index = 0; index < start; index += 1) {
+      if ((lines[index] ?? "").includes("```")) fenceOpen = !fenceOpen;
+    }
     for (let index = start; index < end; index += 1) {
       const prefix = index === 0 ? prompt : "  ";
-      rendered.push(`${prefix}${lines[index] ?? ""}`);
+      const content = lines[index] ?? "";
+      const isFence = content.includes("```");
+      const colored = fenceOpen || isFence ? `\u001b[36m${content}\u001b[0m` : content;
+      rendered.push(`${prefix}${colored}`);
+      if (isFence) fenceOpen = !fenceOpen;
     }
     rows += bodyRows;
 
@@ -1038,6 +1057,16 @@ export class LineEditor {
     this.renderedRows = 0;
     this.cursorRow = 0;
   }
+}
+
+
+/** Indentasi untuk baris baru: ikuti blok `{`/`(`/`[`/`:` dan fence kode. */
+export function nextIndent(line: string, insideFence: boolean): string {
+  const base = /^(\s*)/.exec(line)?.[1] ?? "";
+  if (insideFence) return `${base}  `;
+  const trimmed = line.trimEnd();
+  if (/[{[(]$/.test(trimmed) || /:\s*$/.test(trimmed)) return `${base}  `;
+  return base;
 }
 
 export function completionForPalette(items: PaletteItem[]): Array<{ value: string; description?: string }> {

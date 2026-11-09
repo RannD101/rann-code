@@ -616,7 +616,7 @@ export class GatewayServer {
         sendJson(response, 201, session);
         return;
       }
-      const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(messages|cancel|attachments))?$/.exec(path);
+      const sessionMatch = /^\/v1\/sessions\/([^/]+)(?:\/(messages|cancel|attachments|model|end))?$/.exec(path);
       if (sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const action = sessionMatch[2];
@@ -627,6 +627,21 @@ export class GatewayServer {
         if (!action && request.method === "GET") {
           const session = await this.invokeRpc("session.get", { sessionId });
           sendJson(response, 200, session);
+          return;
+        }
+        if (action === "model" && request.method === "POST") {
+          requireScope(device, "run");
+          const body = await readJson(request);
+          const model = typeof body.model === "string" ? body.model.trim() : "";
+          if (!model) throw new RannError("E_INVALID_PARAMS", "model wajib diisi");
+          const updated = await this.invokeRpc("session.configure", { sessionId, model });
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (action === "end" && request.method === "POST") {
+          requireScope(device, "run");
+          const ended = await this.invokeRpc("session.end", { sessionId });
+          sendJson(response, 200, ended);
           return;
         }
         if (action === "messages" && request.method === "GET") {
