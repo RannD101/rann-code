@@ -5,7 +5,7 @@ import { z } from "zod";
 import { RannError } from "./errors.js";
 
 export const providerConfigSchema = z.object({
-  kind: z.enum(["openai-compatible", "openai-chat", "openai-responses", "anthropic", "gemini", "mock"]).default("openai-compatible"),
+  kind: z.enum(["openai-compatible", "openai-chat", "openai-responses", "openrouter", "anthropic", "gemini", "mock"]).default("openai-compatible"),
   base_url: z.string().url().optional(),
   api_key_env: z.string().min(1).optional(),
   api_key_file: z.string().min(1).optional(),

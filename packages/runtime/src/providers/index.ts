@@ -19,7 +19,8 @@ export function createProvider(
 ): Provider {
   if (config.kind === "mock") return new MockProvider();
 
-  if (!config.base_url) {
+  const baseUrl = config.base_url ?? (config.kind === "openrouter" ? "https://openrouter.ai/api/v1" : undefined);
+  if (!baseUrl) {
     throw new RannError("E_CONFIG_INVALID", `Provider ${name} butuh base_url`, { data: { provider: name } });
   }
 
@@ -39,10 +40,24 @@ export function createProvider(
     });
   }
 
+  if (config.kind === "openrouter") {
+    return new OpenAiCompatibleProvider({
+      name,
+      baseUrl,
+      apiKey,
+      headers: {
+        "HTTP-Referer": "https://github.com/RannD101/rann-code",
+        "X-Title": "Rann Code",
+        ...config.headers
+      },
+      timeoutMs: config.timeout_ms
+    });
+  }
+
   if (config.kind === "anthropic") {
     return new AnthropicProvider({
       name,
-      baseUrl: config.base_url,
+      baseUrl,
       apiKey,
       headers: config.headers,
       timeoutMs: config.timeout_ms
@@ -52,7 +67,7 @@ export function createProvider(
   if (config.kind === "gemini") {
     return new GeminiProvider({
       name,
-      baseUrl: config.base_url,
+      baseUrl,
       apiKey,
       headers: config.headers,
       timeoutMs: config.timeout_ms
@@ -62,7 +77,7 @@ export function createProvider(
   if (config.kind === "openai-responses") {
     return new OpenAiResponsesProvider({
       name,
-      baseUrl: config.base_url,
+      baseUrl,
       apiKey,
       headers: config.headers,
       timeoutMs: config.timeout_ms
@@ -71,7 +86,7 @@ export function createProvider(
 
   return new OpenAiCompatibleProvider({
     name,
-    baseUrl: config.base_url,
+    baseUrl,
     apiKey,
     headers: config.headers,
     timeoutMs: config.timeout_ms,
