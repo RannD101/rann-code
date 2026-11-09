@@ -79,8 +79,10 @@
     "criteria": "Given tool dieksekusi, when tool berjalan > 200 ms, then blok tool menampilkan nama, args ringkas, spinner, dan durasi; Ctrl+O memperluas output.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: blok [tool] fs_stat menampilkan nama, args, spinner, durasi; Ctrl+O memperluas output berisi size"
+    ],
     "gaps": []
   },
   {

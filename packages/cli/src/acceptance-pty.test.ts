@@ -175,4 +175,13 @@ describe("acceptance terminal", () => {
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect((pty.output().match(new RegExp(b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length).toBeGreaterThanOrEqual(2);
   }, 30_000);
+
+  it("AC-008 blok tool menampilkan nama, args, spinner, dan durasi", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write('tool:fs_stat {"path":"package.json"}\n');
+    await pty.waitFor("[tool] fs_stat", 10_000);
+    await pty.waitFor("0.", 5_000);
+    expect(pty.output()).toContain("package.json");
+  }, 30_000);
 });
