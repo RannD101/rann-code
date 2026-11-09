@@ -221,6 +221,12 @@ export function cancelJob(db: Db, id: string, reason = "cancelled by user"): boo
   return changed.changes === 1;
 }
 
+export function runningJobsForRun(db: Db, runId: string): Array<{ id: string }> {
+  return db
+    .prepare("SELECT id FROM jobs WHERE status = 'running' AND json_extract(payload_json, '$.runId') = ?")
+    .all(runId) as Array<{ id: string }>;
+}
+
 export function cancelQueuedJobsForRun(db: Db, runId: string, reason: string): number {
   const rows = db
     .prepare("SELECT id FROM jobs WHERE status = 'queued' AND json_extract(payload_json, '$.runId') = ?")

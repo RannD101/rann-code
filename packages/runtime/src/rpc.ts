@@ -218,6 +218,10 @@ export class RpcServer {
     this.scheduler = new SchedulerEngine({
       db: this.db,
       pollMs: options.config.config.scheduler.poll_ms,
+      onCancelRun: (jobId, reason) => {
+        this.background.cancel(jobId);
+        cancelJob(this.db, jobId, reason);
+      },
       onError: (error, row) => {
         appendJobEvent(this.db, row?.id ?? "scheduler", "scheduler_error", {
           message: error instanceof Error ? error.message : String(error)

@@ -3,6 +3,7 @@ import type { Db, SchedulerRow, SchedulerRunRow } from "@rann/storage";
 import {
   dueSchedulers,
   cancelQueuedJobsForRun,
+  runningJobsForRun,
   enqueueJob,
   finishSchedulerRun,
   getScheduler,
@@ -20,6 +21,7 @@ export interface ScheduleSpec {
 }
 
 export interface SchedulerEngineOptions {
+  onCancelRun?: (jobId: string, reason: string) => void;
   db: Db;
   pollMs?: number;
   onError?: (error: unknown, scheduler?: SchedulerRow) => void;
@@ -113,6 +115,7 @@ export class SchedulerEngine {
   private readonly db: Db;
   private readonly pollMs: number;
   private readonly onError?: SchedulerEngineOptions["onError"];
+  private readonly onCancelRun?: SchedulerEngineOptions["onCancelRun"];
   private timer?: ReturnType<typeof setInterval>;
   private stopped = true;
   private ticking = false;
@@ -121,6 +124,7 @@ export class SchedulerEngine {
     this.db = options.db;
     this.pollMs = Math.max(100, options.pollMs ?? 1_000);
     this.onError = options.onError;
+    this.onCancelRun = options.onCancelRun;
   }
 
   start(): void {
@@ -152,6 +156,7 @@ export class SchedulerEngine {
           }
           if (plan.shouldRun && running.length > 0 && row.overlap_policy === "replace") {
             for (const run of running) {
+              for (const job of runningJobsForRun(this.db, run.id)) this.onCancelRun?.(job.id, "diganti jadwal baru");
               cancelQueuedJobsForRun(this.db, run.id, "diganti jadwal baru");
               finishSchedulerRun(this.db, run.id, "cancelled", undefined, "diganti jadwal baru");
             }
