@@ -1,6 +1,6 @@
 # Tutorial Claude Code CLI
 
-Jalur lain: [Rann Code CLI](tutorial-rann-code.md). Kembali ke [pilihan tutorial](tutorial-v1.0.0.md).
+Jalur lain: [Rann Code CLI](tutorial-rann-code.md). Kembali ke [pilihan tutorial](tutorial-v1.1.0.md).
 
 Panduan ini memasang dan memakai Claude Code, CLI agent dari Anthropic. Panduan ini bukan bagian dari Rann Code dan tidak memakai provider Rann. Perintahnya `claude`, bukan `rann`.
 

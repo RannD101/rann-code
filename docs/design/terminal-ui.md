@@ -23,8 +23,9 @@ Warna tidak pernah menjadi satu-satunya pembeda. Status tool memakai penanda tek
 - Di bawah 60 kolom, header hanya menampilkan nama, model, dan direktori; status bar menyisakan model dan context.
 - Di bawah 100 kolom, hint izin dipendekkan menjadi `A/S/D/V · Esc tolak`.
 - Pada 100 kolom ke atas, hint izin ditulis penuh dan detail argumen tetap dipotong 600 karakter sampai pengguna menekan `V`.
-- Status bar menampilkan project pada 134 kolom, task pada 126 kolom, dan jumlah agen pada 120 kolom.
-- Semua panel diuji pada 40 kolom; tidak ada baris yang melewati lebar terminal.
+- Header lengkap dicetak sekali setelah sesi tersambung. Sebelum daemon siap hanya ada satu baris `Rann Code  memuat sesi...`, bukan header penuh kedua.
+- Status bar default hanya menampilkan model, context, branch, dan izin. Token serta biaya muncul setelah turn pertama pada 84 sampai 104 kolom; sesi, project, dan task hanya pada mode `verbose`.
+- Jumlah agen muncul pada 120 kolom bila ada agen aktif. Semua panel diuji pada 40 kolom; tidak ada baris yang melewati lebar terminal.
 
 ## Pintasan
 

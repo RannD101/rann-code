@@ -31,7 +31,7 @@ export function renderHeader(input: HeaderInput, width = terminalWidth()): strin
   const mode = breakpoint(width);
   const workspace = input.mode === "debug" ? input.cwd : shortenHome(input.cwd);
   const branch = input.branch && input.branch.length > 0 ? ` (${input.branch})` : "";
-  const title = `${ui.bold(ui.accent("Rann Code"))}${ui.dim("  autonomous development agent")}`;
+  const title = `${ui.bold(ui.accent("Rann Code"))}${ui.dim("  coding agent")}`;
   if (isCompact(input.mode ?? "interactive")) {
     return [
       ui.bold(ui.accent("Rann Code")),

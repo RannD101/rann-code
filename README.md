@@ -2,9 +2,9 @@
 
 CLI agent coding lokal dengan daemon, sesi SQLite, memori jangka panjang, skill yang bisa tumbuh, subagent, MCP, dan alur izin eksplisit. Dibangun ulang dari PRD v1.
 
-Status: rilis 1.0.0. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
+Status: rilis 1.1.0. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
 
-Pilih panduan sesuai CLI yang kamu pakai: [Rann Code CLI](docs/tutorial-rann-code.md) atau [Claude Code CLI](docs/tutorial-claude-code.md). Ringkasan keduanya ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
+Pilih panduan sesuai CLI yang kamu pakai: [Rann Code CLI](docs/tutorial-rann-code.md) atau [Claude Code CLI](docs/tutorial-claude-code.md). Ringkasan keduanya ada di [`docs/tutorial-v1.1.0.md`](docs/tutorial-v1.1.0.md).
 
 Versi publik Rann Code: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-rann-code.md
 

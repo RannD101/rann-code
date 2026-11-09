@@ -2,7 +2,7 @@
 # Jalankan di PowerShell:
 #   irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
 # Versi tertentu:
-#   $env:RANN_VERSION = "1.0.0"; irm ... | iex
+#   $env:RANN_VERSION = "1.1.0"; irm ... | iex
 
 $ErrorActionPreference = "Stop"
 $repo = "RannD101/rann-code"
@@ -62,7 +62,7 @@ try {
   Write-Host '  3. rann new --title "Coba pertama"'
   Write-Host '  4. rann "jelaskan isi folder ini"'
   Write-Host ""
-  Write-Host "Tutorial: https://github.com/$repo/blob/main/docs/tutorial-v1.0.0.md"
+  Write-Host "Tutorial: https://github.com/$repo/blob/main/docs/tutorial-v1.1.0.md"
 } finally {
   Remove-Item -Recurse -Force $temp -ErrorAction SilentlyContinue
 }

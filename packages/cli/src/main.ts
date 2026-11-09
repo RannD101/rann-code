@@ -1020,19 +1020,11 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
   } catch (error) {
     throw new RannError("E_INVALID_PARAMS", error instanceof Error ? error.message : String(error));
   }
-  // Header dicetak sebelum daemon dinyalakan supaya REPL terlihat di bawah
-  // satu detik, lalu diulang dengan data sesi setelah tersambung (AC-001).
+  // Satu baris singkat sebelum daemon siap, lalu header lengkap setelah
+  // sesi tersambung. Header lengkap dua kali membuat layar pembuka penuh
+  // dengan informasi yang sama (AC-001 tetap terpenuhi).
   if (process.stdin.isTTY === true) {
-    for (const line of renderHeader({
-      cwd: process.cwd(),
-      session: "baru",
-      model: flagString(args, "model") ?? "default",
-      permission: flagString(args, "permission") ?? "default",
-      profile: process.env.RANN_PROFILE ?? "default",
-      mode: uiMode
-    })) {
-      print(line);
-    }
+    print(`${ui.bold(ui.accent("Rann Code"))}${ui.dim("  memuat sesi...")}`);
   }
   const client = await ensureDaemon();
   try {

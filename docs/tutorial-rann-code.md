@@ -1,6 +1,6 @@
-# Tutorial Rann Code v1.0.0
+# Tutorial Rann Code v1.1.0
 
-Jalur lain: [Claude Code CLI](tutorial-claude-code.md). Kembali ke [pilihan tutorial](tutorial-v1.0.0.md).
+Jalur lain: [Claude Code CLI](tutorial-claude-code.md). Kembali ke [pilihan tutorial](tutorial-v1.1.0.md).
 
 Panduan ini untuk kamu yang baru pertama kali memakai Rann Code. Semua langkah ditulis untuk pengguna, bukan pengembang. Kamu tidak perlu clone repository, tidak perlu pnpm, dan tidak perlu npx.
 
@@ -127,7 +127,7 @@ irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
 Untuk memasang versi tertentu:
 
 ```powershell
-$env:RANN_VERSION = "1.0.0"
+$env:RANN_VERSION = "1.1.0"
 irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
 ```
 
@@ -768,7 +768,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 Kalau yang gagal adalah `npm.ps1`, installer `install.ps1` sudah otomatis memakai `npm.cmd`. Sebagai alternatif manual, jalankan installer dengan versi yang sama:
 
 ```powershell
-$env:RANN_VERSION = "1.0.0"
+$env:RANN_VERSION = "1.1.0"
 irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
 ```
 
@@ -788,4 +788,4 @@ Repository dan issue: https://github.com/RannD101/rann-code
 
 Installer: https://github.com/RannD101/rann-code/blob/main/install.sh
 
-Tutorial ini: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.0.0.md
+Tutorial ini: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.1.0.md

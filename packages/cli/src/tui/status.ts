@@ -47,21 +47,23 @@ export function renderStatus(input: StatusInput): string {
   }
   if ((verbose || (!compact && width >= 52)) && input.branch) parts.push(ui.dim(input.branch));
   if ((verbose || (!compact && width >= 60)) && input.permission) parts.push(ui.dim(input.permission));
-  if ((verbose || (!compact && width >= 74)) && input.provider) {
-    const health = input.providerStatus && input.providerStatus !== "unknown" ? `:${input.providerStatus}` : "";
+  const providerIssue = input.providerStatus !== undefined && input.providerStatus !== "ok" && input.providerStatus !== "unknown";
+  if (input.provider && (verbose || providerIssue)) {
+    const health = input.providerStatus ? `:${input.providerStatus}` : "";
     parts.push(ui.dim(`${input.provider}${health}`));
   }
-  if ((verbose || (!compact && width >= 84)) && (input.inputTokens || input.outputTokens)) {
+  const hasUsage = (input.totalTokens ?? 0) > 0 || (input.inputTokens ?? 0) > 0 || (input.outputTokens ?? 0) > 0;
+  if ((verbose || (hasUsage && width >= 84)) && (input.inputTokens || input.outputTokens)) {
     parts.push(ui.dim(`in ${input.inputTokens ?? 0} out ${input.outputTokens ?? 0}`));
   }
-  if ((verbose || (!compact && width >= 90)) && input.totalTokens) parts.push(ui.dim(`${(input.totalTokens / 1000).toFixed(1)}k tok`));
-  if (verbose || (!compact && width >= 96)) parts.push(ui.dim(`turn $${cost(input.turnCost)}`));
-  if (verbose || (!compact && width >= 104)) parts.push(ui.dim(`hari $${input.dayCost === undefined ? "?" : input.dayCost.toFixed(3)}`));
-  if ((verbose || (!compact && width >= 112)) && input.session) parts.push(ui.dim(`sesi ${input.session}`));
-  if ((verbose || (!compact && width >= 120)) && input.agents !== undefined) parts.push(ui.dim(`agen ${input.agents}`));
-  if ((verbose || (!compact && width >= 134)) && input.project) parts.push(ui.dim(input.project));
-  if ((verbose || (!compact && width >= 126)) && input.task) parts.push(ui.dim(input.task));
-  const text = parts.join(ui.dim("  │  "));
+  if ((verbose || (hasUsage && width >= 90)) && input.totalTokens) parts.push(ui.dim(`${(input.totalTokens / 1000).toFixed(1)}k tok`));
+  if (verbose || (hasUsage && width >= 96)) parts.push(ui.dim(`turn $${cost(input.turnCost)}`));
+  if (verbose || (hasUsage && width >= 104)) parts.push(ui.dim(`hari $${input.dayCost === undefined ? "?" : input.dayCost.toFixed(3)}`));
+  if (verbose && input.session) parts.push(ui.dim(`sesi ${input.session}`));
+  if (input.agents !== undefined && input.agents > 0 && (verbose || width >= 120)) parts.push(ui.dim(`agen ${input.agents}`));
+  if (verbose && input.project) parts.push(ui.dim(input.project));
+  if (verbose && input.task) parts.push(ui.dim(input.task));
+  const text = parts.join(ui.dim("  ·  "));
   return truncateWidth(text, Math.max(10, width - 4));
 }
 

@@ -38,7 +38,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | M12 | Context, compaction, budget | berjalan |
 | M13 | Gateway REST/WS, dashboard, dan messaging | gateway dan Telegram selesai; Discord/Slack belum |
 | M14 | Keamanan, secret, audit, RBAC | berjalan |
-| M15 | Distribusi, operability, rilis 1.0.0 | belum |
+| M15 | Distribusi, operability, rilis 1.1.0 | siap |
 
 ## Yang sudah dikerjakan
 
@@ -236,8 +236,17 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 - `docs/design/terminal-ui.md` mencatat keputusan renderer, tema, ambang lebar, pintasan, tabel 20 kriteria beserta bukti, dan batas yang diketahui.
 - `pnpm check` lulus: 484 tes lulus, 2 dilewati, 100 berkas lulus, 1 berkas dilewati. `test_design` 22/22 lulus.
 
+## Progres terkini (2026-11-10, rilis 1.1.0)
+
+- Layar pembuka tidak lagi mencetak header lengkap dua kali. Sebelum daemon siap hanya ada satu baris `Rann Code  memuat sesi...`; header lengkap dicetak sekali setelah sesi tersambung.
+- Status prompt default diringkas menjadi model, context, branch, dan izin. Token serta biaya baru muncul setelah turn pertama; sesi, project, task, dan hitungan agen pindah ke mode `verbose` atau ambang lebar yang relevan.
+- Tagline header diganti dari `autonomous development agent` menjadi `coding agent`, dan pemisah status memakai `·` agar lebih tenang dibaca.
+- Versi paket, installer, tutorial, dan tautan rilis naik ke 1.1.0. Halaman pemilih tutorial lama tetap tersedia sebagai pengalihan.
+- `docs/design/terminal-ui.md` diperbarui untuk ambang status baru dan header sekali cetak.
+- `pnpm check` lulus: 484 tes lulus, 2 dilewati, 100 berkas lulus, 1 berkas dilewati. `acceptance-design` 22/22 lulus.
+
 ## Aturan
 
 - Setiap FR hanya boleh ditandai done bila ada kode dan tes yang membuktikan.
 - Berkas `docs/prd/` tidak boleh diubah. Konflik dicatat di `docs/konflik-prd.md`.
-- Versi publik `1.0.0` terbit setelah seluruh 151 FR dan 151 AC lulus.
+- Versi publik `1.1.0` terbit setelah seluruh 151 FR dan 151 AC lulus.

@@ -160,10 +160,19 @@ describe("acceptance desain terminal", () => {
     const narrow = stripAnsi(renderStatus({ ...input, width: 40 }));
     expect(narrow).toContain("42% ctx");
     expect(narrow).not.toContain("turn $");
-    const wide = stripAnsi(renderStatus({ ...input, width: 160 }));
+    const wide = stripAnsi(renderStatus({ ...input, width: 160, mode: "verbose" }));
     for (const needle of ["mock-1", "9Router", "in 120 out 80", "turn $", "sesi ses_01", "agen 2", "/proyek/a"]) {
       expect(wide).toContain(needle);
     }
+    const normal = stripAnsi(renderStatus({ ...input, width: 160 }));
+    expect(normal).toContain("mock-1");
+    expect(normal).toContain("42% ctx");
+    expect(normal).toContain("turn $");
+    expect(normal).not.toContain("sesi ses_01");
+    expect(normal).not.toContain("/proyek/a");
+    const fresh = stripAnsi(renderStatus({ width: 160, model: "mock-1", contextPercent: 0, branch: "main", permission: "ask" }));
+    expect(fresh).not.toContain("turn $");
+    expect(fresh).not.toContain("tok");
     everyLineWithin([renderStatus({ ...input, width: 40 }), renderStatus({ ...input, width: 160 })], 160);
   });
 

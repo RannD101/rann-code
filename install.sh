@@ -3,7 +3,7 @@
 #
 # Pakai:
 #   sh install.sh
-#   RANN_VERSION=1.0.0 sh install.sh
+#   RANN_VERSION=1.1.0 sh install.sh
 #   sh install.sh --uninstall
 #
 # Script ini tidak memakai sudo otomatis. Kalau npm menolak menulis ke folder
@@ -16,7 +16,7 @@ PACKAGE_NAME="rann-code"
 REPO="RannD101/rann-code"
 MIN_NODE_MAJOR=22
 MIN_NODE_MINOR=11
-TUTORIAL_URL="https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.0.0.md"
+TUTORIAL_URL="https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.1.0.md"
 
 say() {
   printf '%s\n' "$*"
@@ -33,7 +33,7 @@ Pasang Rann Code dari GitHub Releases.
 
 Pemakaian:
   sh install.sh                 pasang versi latest
-  RANN_VERSION=1.0.0 sh install.sh   pasang versi tertentu
+  RANN_VERSION=1.1.0 sh install.sh   pasang versi tertentu
   sh install.sh --uninstall     hapus aplikasi, data tetap disimpan
 
 Syarat: Node.js 22.11 atau lebih baru dan npm.
@@ -101,7 +101,7 @@ if [ "$VERSION" = "latest" ]; then
   [ -n "$VERSION" ] || fail "Tidak bisa membaca rilis terbaru dari GitHub. Set RANN_VERSION=x.y.z lalu ulangi."
 fi
 if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  fail "RANN_VERSION harus latest atau nomor versi x.y.z, misalnya 1.0.0."
+  fail "RANN_VERSION harus latest atau nomor versi x.y.z, misalnya 1.1.0."
 fi
 
 ARCHIVE_URL="https://github.com/$REPO/releases/download/v$VERSION/$PACKAGE_NAME-$VERSION.tgz"
