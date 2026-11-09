@@ -208,6 +208,14 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 - Perangkat gateway terikat ke `gateway_users.user_id`; role, scope, dan status nonaktif mengikuti pengguna.
 - Override config per sesi tersedia: model, permission mode, max steps, skill force/deny.
 
+## Verifikasi acceptance criteria (2026-11-09)
+
+- `docs/audit/acceptance.json` memuat 151 AC dengan status awal `unverified`, dipisah per domain.
+- Harness baru: `packages/cli/src/acceptance-pty.test.ts` menjalankan REPL di pty nyata lewat `script`, dan `acceptance-cli.test.ts` menjalankan CLI non-interaktif.
+- AC lulus: 001 (header < 1 detik), 002 (palette < 500 ms), 003 (Tab menampilkan /model dan /models tanpa eksekusi), 014 (JSON valid), 015 (stdin terbaca, stdout bersih).
+- AC-004: siklus Ctrl+C diperbaiki (dua kali membatalkan turn, berikutnya keluar 130), tes pty untuk kode keluar belum stabil.
+- Sisa 146 AC belum diverifikasi; domain berikutnya terminal 004-020, lalu agent 021-039.
+
 ## Aturan
 
 - Setiap FR hanya boleh ditandai done bila ada kode dan tes yang membuktikan.

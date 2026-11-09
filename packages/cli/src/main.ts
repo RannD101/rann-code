@@ -989,6 +989,19 @@ function extractAttachments(line: string): { text: string; attachments: Array<{ 
 }
 
 async function chatCommand(args: ParsedArgs): Promise<number> {
+  // Header dicetak sebelum daemon dinyalakan supaya REPL terlihat di bawah
+  // satu detik, lalu diulang dengan data sesi setelah tersambung (AC-001).
+  if (process.stdin.isTTY === true) {
+    for (const line of headerLines({
+      cwd: process.cwd(),
+      session: "baru",
+      model: flagString(args, "model") ?? "default",
+      permission: flagString(args, "permission") ?? "default",
+      profile: process.env.RANN_PROFILE ?? "default"
+    })) {
+      print(line);
+    }
+  }
   const client = await ensureDaemon();
   try {
     const requestedSession = flagString(args, "session");

@@ -664,12 +664,18 @@ export class LineEditor {
         return;
       }
       this.busyCtrlCount = 0;
-      this.ctrlCCount = 0;
-      this.ctrlCAt = 0;
       await this.withPrompt(async () => {
         const handled = await this.options.onCancel?.();
-        if (handled) process.stdout.write("\nTurn dibatalkan.\n");
-        else process.stdout.write("\nTidak ada turn aktif.\n");
+        if (handled) {
+          // Dua Ctrl+C membatalkan turn; Ctrl+C berikutnya keluar 130 (AC-004).
+          this.ctrlCCount = 2;
+          this.ctrlCAt = Date.now();
+          process.stdout.write("\nTurn dibatalkan.\n");
+        } else {
+          this.ctrlCCount = 0;
+          this.ctrlCAt = 0;
+          process.stdout.write("\nTidak ada turn aktif.\n");
+        }
       });
       this.render();
       return;
@@ -856,6 +862,12 @@ export class LineEditor {
   }
 
   private async complete(reverse = false): Promise<void> {
+    if (this.overlay?.kind === "palette" && this.overlay.items.length > 0) {
+      this.overlay.selected =
+        (this.overlay.selected + (reverse ? -1 : 1) + this.overlay.items.length) % this.overlay.items.length;
+      this.render();
+      return;
+    }
     if (this.overlay?.kind === "completion" && this.overlay.items.length > 0) {
       this.overlay.selected = (this.overlay.selected + (reverse ? -1 : 1) + this.overlay.items.length) % this.overlay.items.length;
       this.render();
