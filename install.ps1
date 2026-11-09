@@ -14,11 +14,13 @@ function Fail([string]$message) {
 }
 
 $node = Get-Command node -ErrorAction SilentlyContinue
-$npm = Get-Command npm -ErrorAction SilentlyContinue
+$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $npm) { $npm = Get-Command npm -ErrorAction SilentlyContinue }
 if (-not $node) { Fail "Node.js belum terpasang. Pasang Node.js 22 LTS minimal 22.11 dari https://nodejs.org lalu buka PowerShell baru." }
 if (-not $npm) { Fail "npm tidak ditemukan. Pasang ulang Node.js 22 LTS dan pastikan Add to PATH dicentang." }
 
-$nodeVersion = (& node -p "process.versions.node").Trim()
+$npmExe = $npm.Source
+$nodeVersion = (& $node.Source -p "process.versions.node").Trim()
 $parts = $nodeVersion.Split(".")
 if ([int]$parts[0] -lt 22 -or ([int]$parts[0] -eq 22 -and [int]$parts[1] -lt 11)) {
   Fail "Node.js $nodeVersion terlalu lama. Butuh 22.11 atau lebih baru."
@@ -48,7 +50,10 @@ try {
   Write-Host "Memasang paket secara global lewat npm..."
   & $npmExe install -g $archive
   if ($LASTEXITCODE -ne 0) { Fail "npm install gagal dengan kode $LASTEXITCODE. Jangan pakai Administrator kecuali folder npm kamu memang butuh." }
-  & rann --version
+  $globalPrefix = (& $npmExe prefix -g | Select-Object -First 1).Trim()
+  $rannCmd = Join-Path $globalPrefix "rann.cmd"
+  if (-not (Test-Path $rannCmd)) { Fail "Paket terpasang, tetapi rann.cmd tidak ditemukan di $globalPrefix. Tutup PowerShell, buka lagi, lalu cek rann --version." }
+  & $rannCmd --version
   if ($LASTEXITCODE -ne 0) { Fail "rann --version gagal. Tutup PowerShell, buka lagi, lalu cek rann --version." }
   Write-Host ""
   Write-Host "Langkah berikutnya:"
