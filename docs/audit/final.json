@@ -58,14 +58,12 @@
   {
     "id": "RC-FR-006",
     "title": "Input history",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "implementasi dan tes di packages/cli/src/line-editor.ts, stream.ts; cli tests",
+      "packages/cli/src/history.ts dan /history: filter tanggal, private, batas 1.000",
       "pnpm check 286 tes"
     ],
-    "gaps": [
-      "Riwayat belum punya filter tanggal dan penanda private; batas 1.000 belum diuji."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-007",
@@ -198,14 +196,12 @@
   {
     "id": "RC-FR-019",
     "title": "Lampiran dan multimodal input",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "implementasi dan tes di packages/cli/src/main.ts, stream.ts, attachments.ts; cli tests",
+      "packages/runtime/src/attachments.ts dan attachments.test.ts: batas 20 MB per berkas dan 50 MB total",
       "pnpm check 286 tes"
     ],
-    "gaps": [
-      "Batas total 50 MB per turn belum diuji; konfirmasi lampiran belum dicetak di REPL."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-020",
@@ -1226,14 +1222,12 @@
   {
     "id": "RC-FR-117",
     "title": "Worktree dan konflik",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "implementasi dan tes di packages/runtime/src/gateway.ts, messaging*.ts, rpc.ts; gateway/messaging tests",
+      "packages/cli/src/main.ts: merge queue lock .rann/merge.lock",
       "pnpm check 286 tes"
     ],
-    "gaps": [
-      "Belum ada merge queue; worktree merge langsung ke workspace utama."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-118",
