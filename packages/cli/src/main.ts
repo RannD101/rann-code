@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { RannError, exitCodeFor, loadConfig, providerFor, toRannError, type ErrorCode } from "@rann/shared";
@@ -2419,7 +2419,21 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             continue;
           }
           if (sub === "merge" && tokens[1]) {
-            try { print(execFileSync("git", ["merge", "--no-ff", "--no-edit", tokens[1]], { cwd: process.cwd(), encoding: "utf8" }).trim()); } catch (error) { printErr((error as { stderr?: string }).stderr ?? "merge gagal"); }
+            const lock = join(process.cwd(), ".rann", "merge.lock");
+            try {
+              mkdirSync(dirname(lock), { recursive: true });
+              writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
+            } catch {
+              printErr(ui.red("merge queue sedang dipakai proses lain; tunggu sampai selesai"));
+              continue;
+            }
+            try {
+              print(execFileSync("git", ["merge", "--no-ff", "--no-edit", tokens[1]], { cwd: process.cwd(), encoding: "utf8" }).trim());
+            } catch (error) {
+              printErr((error as { stderr?: string }).stderr ?? "merge gagal");
+            } finally {
+              try { unlinkSync(lock); } catch { /* lock sudah hilang */ }
+            }
             continue;
           }
           print("Pakai: /worktree list|create <nama>|remove <nama>|merge <branch>");

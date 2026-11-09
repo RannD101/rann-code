@@ -54,6 +54,8 @@ describe("lampiran", () => {
     const root = temp();
     const workspace = join(root, "project");
     mkdirSync(workspace);
+    for (const name of ["a.txt", "b.txt", "c.txt"]) writeFileSync(join(workspace, name), Buffer.alloc(18 * 1024 * 1024, 0x61));
+    expect(() => prepareAttachments([{ path: "a.txt" }, { path: "b.txt" }, { path: "c.txt" }], workspace, join(root, "artifacts"))).toThrow(/melebihi 50 MB/);
     writeFileSync(join(workspace, "huge.txt"), Buffer.alloc(20 * 1024 * 1024 + 1, 0x61));
     expect(() => prepareAttachments([{ path: "huge.txt" }], workspace, join(root, "artifacts"))).toThrow(/melebihi 20 MB/);
   });
