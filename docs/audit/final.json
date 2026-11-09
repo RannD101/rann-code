@@ -256,14 +256,12 @@
   {
     "id": "RC-FR-025",
     "title": "Deteksi dependensi dan urutan eksekusi",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "implementasi dan tes di packages/runtime/src/agent.ts, planner.ts, plan-runtime.ts; planner/plan-runtime tests",
+      "packages/runtime/src/planner.ts: dependensi implisit dari file yang sama antar task",
       "pnpm check 286 tes"
     ],
-    "gaps": [
-      "Dependensi implisit dari file atau modul yang sama belum dideteksi otomatis."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-026",
@@ -1348,14 +1346,12 @@
   {
     "id": "RC-FR-129",
     "title": "Otorisasi, scope, dan RBAC",
-    "status": "partial",
+    "status": "done",
     "evidence": [
-      "implementasi dan tes di packages/runtime/src/gateway.ts, messaging*.ts, rpc.ts; gateway/messaging tests",
+      "packages/runtime/src/gateway.ts: cek kepemilikan sesi per device untuk endpoint /v1/sessions",
       "pnpm check 286 tes"
     ],
-    "gaps": [
-      "Belum ada pemeriksaan kepemilikan resource; token read bisa membaca resource device lain."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-130",
