@@ -3,7 +3,7 @@
 #
 # Pakai:
 #   sh install.sh
-#   RANN_VERSION=0.1.1 sh install.sh
+#   RANN_VERSION=1.0.0 sh install.sh
 #   sh install.sh --uninstall
 #
 # Script ini tidak memakai sudo otomatis. Kalau npm menolak menulis ke folder
@@ -33,7 +33,7 @@ Pasang Rann Code dari GitHub Releases.
 
 Pemakaian:
   sh install.sh                 pasang versi latest
-  RANN_VERSION=0.1.1 sh install.sh   pasang versi tertentu
+  RANN_VERSION=1.0.0 sh install.sh   pasang versi tertentu
   sh install.sh --uninstall     hapus aplikasi, data tetap disimpan
 
 Syarat: Node.js 22.11 atau lebih baru dan npm.

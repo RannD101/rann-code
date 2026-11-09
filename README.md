@@ -2,11 +2,11 @@
 
 CLI agent coding lokal dengan daemon, sesi SQLite, memori jangka panjang, skill yang bisa tumbuh, subagent, MCP, dan alur izin eksplisit. Dibangun ulang dari PRD v1.
 
-Status: MVP plus fitur lokal. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
+Status: rilis 1.0.0. Semua state disimpan di mesin sendiri. Prompt hanya dikirim ke provider model yang kamu pasang sendiri.
 
-Panduan lengkap dari instalasi sampai update ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
+Pilih panduan sesuai CLI yang kamu pakai: [Rann Code CLI](docs/tutorial-rann-code.md) atau [Claude Code CLI](docs/tutorial-claude-code.md). Ringkasan keduanya ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
 
-Versi publik: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-v1.0.0.md
+Versi publik Rann Code: https://github.com/RannD101/rann-code/blob/main/docs/tutorial-rann-code.md
 
 ## Kebutuhan
 
@@ -33,7 +33,7 @@ irm https://raw.githubusercontent.com/RannD101/rann-code/main/install.ps1 | iex
 rann --version
 ```
 
-Installer `install.sh` dan `install.ps1` memasang arsip dari GitHub Releases, bukan registry npm. Keduanya menerima `RANN_VERSION` untuk memasang versi tertentu. `install.sh --uninstall` menghapus aplikasi. Langkah lengkap untuk Windows 10/11, macOS, dan Linux ada di [`docs/tutorial-v1.0.0.md`](docs/tutorial-v1.0.0.md).
+Installer `install.sh` dan `install.ps1` memasang arsip dari GitHub Releases, bukan registry npm. Keduanya menerima `RANN_VERSION` untuk memasang versi tertentu. `install.sh --uninstall` menghapus aplikasi. Langkah lengkap untuk Windows 10/11, macOS, dan Linux ada di [`docs/tutorial-rann-code.md`](docs/tutorial-rann-code.md).
 
 Tidak perlu npx, tidak perlu clone repository, dan tidak perlu build dari source. Data disimpan di `~/.rann` (Windows: `%USERPROFILE%\.rann`).
 

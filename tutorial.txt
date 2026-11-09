@@ -8,7 +8,7 @@ Tidak perlu pnpm.
 Tidak perlu Git.
 
 Versi tutorial: 1.3
-Versi Rann Code: 0.1.1
+Versi Rann Code: 1.0.0
 Diperbarui: 7 November 2026
 Sistem: Windows 10/11, macOS, dan Linux
 Syarat utama: Node.js 22 LTS
@@ -161,7 +161,7 @@ Jangan lanjut sebelum `node -v` menampilkan versi 22.11 atau lebih baru.
 
 Buka terminal, lalu jalankan:
 
-    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v1.0.0/rann-code-1.0.0.tgz
 
 Arti perintah:
 
@@ -182,7 +182,7 @@ Tunggu sampai muncul pesan seperti:
 
 Hasil yang benar:
 
-    rann-code 0.1.1
+    rann-code 1.0.0
 
 Coba juga:
 
@@ -215,7 +215,7 @@ Kalau memakai bash, ganti `.zshrc` dengan `.bashrc`.
 
 Ulangi:
 
-    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v1.0.0/rann-code-1.0.0.tgz
     rann --version
 
 3.5 Kalau `rann` tidak dikenali setelah install
@@ -1391,7 +1391,7 @@ macOS atau Linux:
 
 Ganti URL di bawah dengan URL versi baru yang diberikan:
 
-    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v1.0.0/rann-code-1.0.0.tgz
 
 Cek:
 
@@ -1654,7 +1654,7 @@ Install dari nol:
     2. Buka terminal baru.
     3. Jalankan:
 
-    npm install -g https://github.com/RannD101/rann-code/releases/download/v0.1.1/rann-code-0.1.1.tgz
+    npm install -g https://github.com/RannD101/rann-code/releases/download/v1.0.0/rann-code-1.0.0.tgz
 
     4. Cek:
 
