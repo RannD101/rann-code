@@ -1632,7 +1632,10 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           if (skills.length === 0) print("belum ada skill");
           else {
             for (const skill of skills) {
-              print(`${String(skill.name)}  [${String(skill.scope)}] ${String(skill.description).slice(0, 70)}`);
+              const triggers = (skill.triggers as string[] | undefined)?.join(", ") ?? "-";
+              print(
+                `${String(skill.name)}  v${String(skill.version ?? "?")}  [${String(skill.scope)}]  sumber ${String(skill.source ?? skill.scope)}  trigger ${triggers}  ${String(skill.description).slice(0, 60)}`
+              );
             }
             const conflicts = await client.request<Array<Record<string, unknown>>>("skill.conflicts", { projectPath: process.cwd() });
             for (const conflict of conflicts) print(ui.yellow(`bentrok ${String(conflict.name)}: ${(conflict.scopes as string[]).join(" + ")} (project menang)`));
@@ -2128,7 +2131,17 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
           continue;
         }
         if (line === "/tools") {
-          print("tool: repo_map, search_code, read_file, write_file, edit_file, delete_file, list_dir, stat_file, apply_patch, project_check, goal_status, goal_update, shell_run, git_read, git_write, checkpoint_create, checkpoint_list, checkpoint_restore, memory, skill, task, mcp__<server>__<tool>");
+          try {
+            const specs = await client.request<Array<Record<string, unknown>>>("tool.list", {});
+            for (const spec of specs) {
+              const parameters = (spec.parameters as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+              print(
+                `${String(spec.name).padEnd(18)} ${String(spec.permission).padEnd(6)} ${String(spec.timeout_ms)}ms  ${Object.keys(parameters).join(", ")}`
+              );
+            }
+          } catch {
+            print("tool: repo_map, search_code, read_file, write_file, edit_file, delete_file, apply_patch, shell_run, memory, skill, task, mcp__<server>__<tool>");
+          }
           continue;
         }
         if (line === "/usage") {

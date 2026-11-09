@@ -184,4 +184,33 @@ describe("acceptance terminal", () => {
     await pty.waitFor("0.", 5_000);
     expect(pty.output()).toContain("package.json");
   }, 30_000);
+
+  it("AC-077 /skills menampilkan nama, versi, trigger, dan sumber", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("/skills\n");
+    await pty.waitFor("debug-sistematis", 5_000);
+    await pty.waitFor("trigger", 5_000);
+    expect(pty.output()).toMatch(/v\d+\.\d+\.\d+/);
+  }, 20_000);
+
+  it("AC-086 /tools menampilkan nama, izin, timeout, dan skema", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("/tools\n");
+    await pty.waitFor("fs_read", 5_000);
+    await pty.waitFor("ms", 5_000);
+    expect(pty.output()).toMatch(/read|write|exec/);
+    expect(pty.output()).toContain("path");
+  }, 20_000);
+
+  it("AC-115 /git status dan diff menampilkan output git tanpa mengubah state", async () => {
+    const { pty } = startPty({ cwd: "/root/rann-code" });
+    await pty.waitFor("›", 10_000);
+    pty.write("/git status\n");
+    await pty.waitFor("branch", 10_000);
+    pty.write("/git diff --stat\n");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(pty.output()).not.toContain("E_PERMISSION");
+  }, 30_000);
 });

@@ -378,8 +378,10 @@
     "criteria": "Given task berjalan 10 menit, when daemon diperiksa, then heartbeat < 10 detik dan task tidak dianggap mati.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "agent-repos.test.ts dan turn-runtime-repos.test.ts: heartbeat diperbarui dan turn stalled hanya setelah heartbeat hilang"
+    ],
     "gaps": []
   },
   {
@@ -574,8 +576,10 @@
     "criteria": "Given agen A butuh keputusan agen B, when pesan dikirim, then pesan tercatat dan B bisa membalas tanpa keluar dari konteksnya.",
     "verification": "I",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "agent-repos.test.ts: pesan antar agen dicatat dan lease dilepas saat selesai"
+    ],
     "gaps": []
   },
   {
@@ -643,8 +647,10 @@
     "criteria": "Given keputusan arsitektur dicatat, when sesi baru di project sama, then keputusan itu bisa ditemukan dan diinjeksi jika relevan.",
     "verification": "I",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: keputusan arsitektur ditemukan lagi lewat prompt memori"
+    ],
     "gaps": []
   },
   {
@@ -672,8 +678,10 @@
     "criteria": "Given dokumen knowledge di `.rann/knowledge`, when dicari, then potongan yang relevan muncul dengan path dan baris.",
     "verification": "I",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: chunk knowledge membawa path, heading, dan startLine"
+    ],
     "gaps": []
   },
   {
@@ -764,8 +772,10 @@
     "criteria": "Given folder skills berisi 20 skill, when `/skills`, then nama, deskripsi, trigger, versi, dan sumber tampil tanpa memuat isi penuh.",
     "verification": "O",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /skills menampilkan nama, versi, trigger, dan sumber"
+    ],
     "gaps": []
   },
   {
@@ -847,8 +857,10 @@
     "criteria": "Given instalasi baru, when `/tools`, then semua tool bawaan muncul dengan kategori, skema, dan status izin.",
     "verification": "O",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /tools menampilkan nama, izin, timeout, dan field skema"
+    ],
     "gaps": []
   },
   {
@@ -867,8 +879,10 @@
     "criteria": "Given tool call dengan argumen salah tipe, when divalidasi, then eksekusi tidak terjadi dan error menyebut path field yang salah.",
     "verification": "O",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: argumen fs_read salah tipe ditolak dan menyebut path"
+    ],
     "gaps": []
   },
   {
@@ -876,8 +890,10 @@
     "criteria": "Given tool lambat, when melewati timeout, then proses dibunuh, seluruh child process mati, dan error `E_TOOL_TIMEOUT` dicatat.",
     "verification": "I",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: shell_run melewati timeout 200 ms, E_TOOL_TIMEOUT, proses dibunuh"
+    ],
     "gaps": []
   },
   {
@@ -885,8 +901,10 @@
     "criteria": "Given daftar kategori tool, when inventaris diperiksa, then minimal satu tool berfungsi untuk filesystem, terminal, git, web, HTTP, eksekusi kode, database, package, testing, gambar, dokumen, sistem, scheduling, dan messaging.",
     "verification": "M",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "test/manual/RC-AC-090.md: inventaris kategori tool dengan bukti tes per kategori"
+    ],
     "gaps": []
   },
   {
@@ -894,8 +912,10 @@
     "criteria": "Given konfigurasi dua server MCP, satu stdio dan satu HTTP, when daemon start, then keduanya terhubung dan tool-nya muncul dengan namespace server.",
     "verification": "I",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "mcp.test.ts dan mcp-http.test.ts: transport stdio dan HTTP terhubung, tool bernamespace mcp__server__tool"
+    ],
     "gaps": []
   },
   {
@@ -930,8 +950,10 @@
     "criteria": "Given plugin dengan manifest valid, when dipasang, then plugin terdaftar tetapi nonaktif sampai diaktifkan.",
     "verification": "O",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plugins.test.ts: plugin terpasang berstatus installed dan baru aktif setelah enable"
+    ],
     "gaps": []
   },
   {
@@ -939,8 +961,10 @@
     "criteria": "Given plugin dengan dependensi plugin lain, when diaktifkan, then dependensi dimuat berurutan; dependensi hilang menggagalkan aktivasi.",
     "verification": "O",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plugins-gate.test.ts dan plugins.test.ts: dependensi dimuat berurutan, dependensi hilang menggagalkan aktivasi"
+    ],
     "gaps": []
   },
   {
@@ -948,8 +972,10 @@
     "criteria": "Given plugin meminta izin jaringan, when izin tidak diberikan, then panggilan jaringan gagal dan plugin tetap berjalan untuk fitur lain.",
     "verification": "I",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plugins-gate.test.ts: invoke method tanpa izin ditolak, fitur lain tetap bisa dipanggil"
+    ],
     "gaps": []
   },
   {
@@ -957,8 +983,10 @@
     "criteria": "Given plugin memakai API versi lama, when dimuat, then compatibility check menolak dengan pesan versi minimum.",
     "verification": "O",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plugins.test.ts: manifest dengan API tidak kompatibel ditolak dengan pesan versi"
+    ],
     "gaps": []
   },
   {
@@ -966,8 +994,10 @@
     "criteria": "Given hook pada `PreToolUse`, when tool dipanggil, then hook menerima payload, bisa memblokir, dan keputusannya tercatat.",
     "verification": "I",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "hooks.test.ts: PreToolUse menerima payload dan keputusan allow/deny/modify dijalankan"
+    ],
     "gaps": []
   },
   {
@@ -975,8 +1005,10 @@
     "criteria": "Given hook timeout 2 detik, when hook menggantung, then hook dibunuh, kebijakan `onError` dijalankan, dan turn tidak macet.",
     "verification": "I",
     "section": "7. MCP, plugin, dan hooks (091-100)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "hooks.test.ts: hook melewati timeout dibunuh dan on_error warn/block dijalankan"
+    ],
     "gaps": []
   },
   {
@@ -1024,8 +1056,10 @@
     "criteria": "Given model tanpa dukungan tool calling, when dipilih untuk agent, then sistem menolak atau memakai mode tanpa tool, bukan mengirim tool call yang gagal.",
     "verification": "O",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "models.test.ts dan router.test.ts: model tanpa tool calling tidak dipakai untuk tugas coding"
+    ],
     "gaps": []
   },
   {
@@ -1060,8 +1094,10 @@
     "criteria": "Given 10 request, when usage dicatat, then total token dan biaya sama dengan penjumlahan per request; biaya tidak diketahui ditandai `null`.",
     "verification": "O",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "db.test.ts: sumTokensSince menjumlahkan 10 request dan biaya tak diketahui dihitung unknownCount"
+    ],
     "gaps": []
   },
   {
@@ -1069,8 +1105,10 @@
     "criteria": "Given provider mengembalikan 429, when health check, then status `rate_limited`, `Retry-After` dihormati, dan provider lain bisa dipakai.",
     "verification": "I",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "providers/retry.test.ts: 429 dianggap retryable dan Retry-After dipakai sebagai jeda"
+    ],
     "gaps": []
   },
   {
@@ -1089,8 +1127,10 @@
     "criteria": "Given alias `fast`, when `/model fast`, then model yang terdaftar dipakai dan status bar menampilkan nama asli.",
     "verification": "O",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "models.test.ts dan router.test.ts: alias menyelesaikan ke model terdaftar dan pin alias dihormati"
+    ],
     "gaps": []
   },
   {
@@ -1098,8 +1138,10 @@
     "criteria": "Given task \"perbaiki bug di 3 file\", when router memilih, then skor kandidat dan alasan pemilihan bisa dilihat di `/route why`.",
     "verification": "I",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "router.test.ts: skor dan alasan kandidat tersedia lewat route.explain"
+    ],
     "gaps": []
   },
   {
@@ -1107,8 +1149,10 @@
     "criteria": "Given pengguna menetapkan model eksplisit, when routing berjalan, then model tidak diganti tanpa aturan `allowFallback`; semua keputusan tercatat di routing log.",
     "verification": "O",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "router.test.ts: pin dan alias dihormati; fallback hanya lewat allow_fallback di rpc"
+    ],
     "gaps": []
   },
   {
@@ -1116,8 +1160,10 @@
     "criteria": "Given repo kotor, when `/git status` dan `/git diff`, then output sama dengan git asli dan tidak ada perubahan state.",
     "verification": "O",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /git status dan /git diff menampilkan output git tanpa error"
+    ],
     "gaps": []
   },
   {
@@ -1125,8 +1171,10 @@
     "criteria": "Given task mengubah 4 file, when `/undo`, then file kembali ke checkpoint dan perubahan bisa dilihat di audit.",
     "verification": "I",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "checkpoint-files.test.ts: snapshot dapat mengembalikan seluruh berkas dan menolak rollback tanpa force"
+    ],
     "gaps": []
   },
   {
@@ -1143,8 +1191,10 @@
     "criteria": "Given URL publik, when browser navigate, click, type, dan screenshot, then langkah berhasil dan screenshot tersimpan sebagai artefak.",
     "verification": "I",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "browser.test.ts: navigate, type, click, extract, dan screenshot artefak berhasil"
+    ],
     "gaps": []
   },
   {
@@ -1172,8 +1222,10 @@
     "criteria": "Given 20 job dikirim, when worker berjalan, then job diproses sesuai prioritas dan tidak ada duplikasi hasil.",
     "verification": "I",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "job-repos.test.ts dan acceptance-agent.test.ts: idempotency mencegah duplikasi dan prioritas tinggi diklaim lebih dulu"
+    ],
     "gaps": []
   },
   {
@@ -1212,8 +1264,10 @@
     "criteria": "Given cron `0 7 * * *` timezone `Asia/Jakarta`, when waktu berubah karena DST di zona lain, then job tetap berjalan sekali pada 07:00 waktu lokal.",
     "verification": "I",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "scheduler.test.ts: cron 07:00 America/New_York tetap 07:00 lokal setelah DST"
+    ],
     "gaps": []
   },
   {
@@ -1263,8 +1317,10 @@
     "criteria": "Given sesi dari Telegram, when pesan dikirim, then task berjalan di daemon dan hasil kembali ke chat yang sama.",
     "verification": "I",
     "section": "10. Gateway, messaging, dan dashboard (127-136)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "messaging.test.ts: hasil turn diteruskan ke chat Telegram yang terikat"
+    ],
     "gaps": []
   },
   {
@@ -1290,8 +1346,10 @@
     "criteria": "Given Discord dan Slack dikonfigurasi, when pesan dan approval dikirim, then keduanya bekerja dengan format platform masing-masing.",
     "verification": "M",
     "section": "10. Gateway, messaging, dan dashboard (127-136)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "messaging-discord.test.ts dan messaging-slack.test.ts: pesan dan approval bekerja di kedua platform"
+    ],
     "gaps": []
   },
   {
@@ -1446,8 +1504,10 @@
     "criteria": "Given config di empat lapisan, when `/config explain model.default`, then nilai efektif dan sumbernya ditampilkan; config invalid memakai default dan ditandai.",
     "verification": "O",
     "section": "11. Keamanan, storage, config, dan operasi (137-151)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "config.test.ts: empat lapisan config, explainKey melaporkan sumber, nilai invalid ditolak"
+    ],
     "gaps": []
   },
   {

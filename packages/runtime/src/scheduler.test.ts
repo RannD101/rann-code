@@ -206,5 +206,14 @@ describe("trigger event dan kondisi", () => {
     });
     expect(planSchedulerTick(event, Date.now())).toMatchObject({ shouldRun: false, nextRunAt: null });
   });
-});
 
+  it("AC-125 cron 07:00 tetap 07:00 lokal saat DST berubah", () => {
+    const before = nextRunFor("0 7 * * *", "America/New_York", Date.parse("2026-03-07T13:00:00Z"))!;
+    const after = nextRunFor("0 7 * * *", "America/New_York", Date.parse("2026-03-08T13:00:00Z"))!;
+    const hour = (value: number): string =>
+      new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false }).format(new Date(value));
+    expect(hour(before)).toBe("07");
+    expect(hour(after)).toBe("07");
+    expect(after).toBeGreaterThan(before);
+  });
+});
