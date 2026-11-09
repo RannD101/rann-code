@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { unlinkSync } from "node:fs";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RannError } from "@rann/shared";
@@ -251,7 +255,17 @@ export class SkillStore {
     ].join("\n");
   }
 
-  async runScript(name: string, script: string, args: string[] = [], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }> {
+  async runScript(
+    name: string,
+    script: string,
+    args: string[] = [],
+    options: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** Broker tool untuk skrip; menerima nama tool dan argumen, mengembalikan output. */
+      broker?: (tool: string, args: unknown) => Promise<unknown>;
+    } = {}
+  ): Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }> {
     const skill = this.view(name);
     if (!skill) throw new RannError("E_TOOL_NOT_FOUND", `Skill tidak ditemukan: ${name}`);
     if (!skill.path) throw new RannError("E_TOOL_FAILED", `Skill builtin ${name} tidak punya skrip`);
@@ -261,10 +275,65 @@ export class SkillStore {
     if (!file.startsWith(`${resolve(root, "scripts")}/`) || !existsSync(file)) throw new RannError("E_NOT_FOUND", `Skrip tidak ditemukan: ${script}`);
     const timeout = Math.min(Math.max(options.timeoutMs ?? 30_000, 1_000), 600_000);
     const started = Date.now();
-    return await new Promise((done, reject) => {
+    const socketPath = options.broker ? join(tmpdir(), `rann-skill-${randomBytes(6).toString("hex")}.sock`) : undefined;
+    const token = options.broker ? randomBytes(16).toString("hex") : undefined;
+    const brokerServer = options.broker
+      ? createServer((request, response) => {
+          const reply = (status: number, body: unknown): void => {
+            response.writeHead(status, { "content-type": "application/json" });
+            response.end(JSON.stringify(body));
+          };
+          if (request.url !== "/tool" || request.headers.authorization !== `Bearer ${token}`) {
+            reply(403, { error: "token broker tidak valid" });
+            return;
+          }
+          let raw = "";
+          request.on("data", (chunk) => {
+            raw += String(chunk);
+            if (raw.length > 1_000_000) request.destroy();
+          });
+          request.on("end", () => {
+            void (async () => {
+              try {
+                const parsed = JSON.parse(raw || "{}") as { tool?: string; args?: unknown };
+                if (!parsed.tool) {
+                  reply(400, { error: "tool wajib diisi" });
+                  return;
+                }
+                reply(200, { ok: true, output: await options.broker!(parsed.tool, parsed.args ?? {}) });
+              } catch (error) {
+                reply(200, { ok: false, error: (error as Error).message });
+              }
+            })();
+          });
+        })
+      : undefined;
+    if (brokerServer && socketPath) {
+      await new Promise<void>((resolve) => brokerServer.listen(socketPath, resolve));
+    }
+    const cleanup = (): void => {
+      brokerServer?.close();
+      if (socketPath) {
+        try {
+          unlinkSync(socketPath);
+        } catch {
+          // socket mungkin sudah hilang
+        }
+      }
+    };
+    try {
+      return await new Promise((done, reject) => {
       const child = spawn(file, args, {
         cwd: this.projectPath,
-        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "", RANN_SKILL: name, RANN_PROJECT: this.projectPath },
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          TMPDIR: process.env.TMPDIR ?? "",
+          RANN_SKILL: name,
+          RANN_PROJECT: this.projectPath,
+          ...(socketPath ? { RANN_TOOL_BROKER_SOCKET: socketPath } : {}),
+          ...(token ? { RANN_TOOL_BROKER_TOKEN: token } : {})
+        },
         stdio: ["ignore", "pipe", "pipe"],
         signal: options.signal
       });
@@ -291,7 +360,10 @@ export class SkillStore {
       });
       child.on("error", (error) => reject(new RannError("E_TOOL_FAILED", `Skrip gagal dijalankan: ${error.message}`)));
       child.on("close", (code) => finish({ ok: code === 0, exitCode: code ?? 1, stdout: stdout.slice(0, 200_000), stderr: stderr.slice(0, 200_000), durationMs: Date.now() - started }));
-    });
+      });
+    } finally {
+      cleanup();
+    }
   }
 
   view(name: string): SkillContent | undefined {

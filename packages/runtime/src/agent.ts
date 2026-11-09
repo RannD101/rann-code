@@ -153,6 +153,9 @@ export interface RunTurnOptions {
   capabilitiesUnknown?: boolean;
   /** JSON Schema yang harus dipenuhi balasan akhir (structured output). */
   responseSchema?: Record<string, unknown>;
+  /** Skill yang dipaksa aktif atau dilarang untuk turn ini (FR-079). */
+  skillsForce?: string[];
+  skillsDeny?: string[];
   modelId?: string;
   agentId?: string;
   contextWindow?: number;
@@ -458,6 +461,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let providerRequestId: string | undefined;
   let untrustedContent = false;
   let schemaAttempts = 0;
+  let changedFiles = 0;
+  let verificationRan = false;
+  let evidenceNudges = 0;
   let finalText = "";
   let steps = 0;
   let finished = false;
@@ -601,10 +607,14 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   let selectedSkills: string[] = [];
   if (options.skills) {
     try {
-      const loaded = options.skills.loadForTask(options.userText);
-      if (loaded) {
-        skillCatalog = `${loaded}\n\n${skillCatalog}`;
-        selectedSkills = options.skills.select(options.userText).skills.map((skill) => skill.name);
+      const skillOptions = {
+        ...(options.skillsForce && options.skillsForce.length > 0 ? { include: options.skillsForce } : {}),
+        ...(options.skillsDeny && options.skillsDeny.length > 0 ? { exclude: options.skillsDeny } : {})
+      };
+      const loaded = options.skills.loadForTask(options.userText, skillOptions);
+      if (loaded || (options.skillsForce?.length ?? 0) > 0) {
+        if (loaded) skillCatalog = `${loaded}\n\n${skillCatalog}`;
+        selectedSkills = options.skills.select(options.userText, skillOptions).skills.map((skill) => skill.name);
         for (const skillName of selectedSkills) await runHook("SkillLoad", { skill: skillName });
       }
     } catch {
@@ -1100,6 +1110,23 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           });
           continue;
         }
+        if (!activePlan && !options.planOnly && changedFiles > 0 && !verificationRan && evidenceNudges < 1) {
+          evidenceNudges += 1;
+          publish("phase", { phase: "verify", reason: "no_plan_evidence", files: changedFiles });
+          addMessage(db, {
+            sessionId: session.id,
+            turnId,
+            role: "system",
+            content: `Kamu mengubah ${changedFiles} berkas tetapi belum menjalankan verifikasi. Jalankan tes, build, lint, atau project_check lebih dulu, lalu laporkan hasil nyatanya.`
+          });
+          continue;
+        }
+        if (!activePlan && !options.planOnly && changedFiles > 0 && !verificationRan) {
+          publish("error", {
+            error_code: "E_VERIFICATION_FAILED",
+            message: `Turn tanpa plan mengubah ${changedFiles} berkas tanpa verifikasi`
+          });
+        }
         finalText = text;
         if (options.responseSchema !== undefined) {
           let mismatch: string[] = [];
@@ -1247,6 +1274,14 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         };
 
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
+          if (result.ok) {
+            if (["fs_write", "fs_edit", "code_rename", "fs_delete", "apply_patch"].includes(call.name)) changedFiles += 1;
+            if (call.name === "project_check") verificationRan = true;
+            const command = (call.args as { command?: unknown }).command;
+            if (call.name === "shell_run" && typeof command === "string" && /\b(test|build|lint|typecheck|check)\b/.test(command)) {
+              verificationRan = true;
+            }
+          }
           const observation = normalizeObservation(call.name, result);
           const evaluation = evaluateObservation(call.name, observation);
           if (["browser", "web_search", "http_request"].includes(call.name)) untrustedContent = true;

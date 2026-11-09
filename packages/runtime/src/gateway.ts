@@ -14,6 +14,7 @@ import type { Db, GatewayDeviceView, GatewayRole, GatewayScope } from "@rann/sto
 import {
   appendAudit,
   authenticate,
+  deviceOwnsSession,
   gatewayStats,
   getMappedSession,
   hasScope,
@@ -620,7 +621,7 @@ export class GatewayServer {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const action = sessionMatch[2];
         if (!hasScope(device.scopes, "admin")) {
-          const owned = this.db.prepare("SELECT 1 AS ok FROM gateway_sessions WHERE device_id = ? AND session_id = ? LIMIT 1").get(device.id, sessionId) as { ok?: number } | undefined;
+          const owned = deviceOwnsSession(this.db, device.id, sessionId) ? { ok: 1 } : undefined;
           if (!owned?.ok) throw new RannError("E_SCOPE", "Perangkat tidak berhak mengakses sesi ini", { data: { session_id: sessionId } });
         }
         if (!action && request.method === "GET") {
@@ -775,11 +776,13 @@ export class GatewayServer {
     const code = typeof body.code === "string" ? body.code.trim() : "";
     const name = typeof body.name === "string" ? body.name.trim() : "web";
     if (code.length !== 8) throw new RannError("E_INVALID_PARAMS", "Kode pairing harus 8 karakter");
+    const userId = typeof body.user_id === "string" && body.user_id.trim().length > 0 ? body.user_id.trim() : undefined;
     const result = redeemPairCode(this.db, {
       code,
       name: name || "web",
       profile: this.profile,
-      role: "operator"
+      role: "operator",
+      ...(userId ? { userId } : {})
     });
     if ("error" in result) {
       throw new RannError("E_GATEWAY_AUTH", `Kode pairing ${result.error === "expired" ? "kedaluwarsa" : "tidak valid atau sudah dipakai"}`);

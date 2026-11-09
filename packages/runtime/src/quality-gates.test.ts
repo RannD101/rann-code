@@ -25,6 +25,28 @@ function context(root: string, patch: Partial<ToolContext> = {}): ToolContext {
   return { workspaceRoot: root, workspaceOnly: true, permissionMode: "trusted", approved: false, ...patch };
 }
 
+class WriteThenTextProvider implements Provider {
+  readonly name = "tulis";
+  readonly kind = "mock";
+  readonly support = { embed: false, listModels: false, health: false, countTokens: true };
+  calls = 0;
+  stream(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    return this.chat(request);
+  }
+  async *chat(_request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: "tool_call", id: "call_1", name: "fs_write", args: { path: "hasil.txt", content: "jadi" } };
+      yield { type: "usage", inputTokens: 4, outputTokens: 2 };
+      yield { type: "done", finishReason: "tool_calls" };
+      return;
+    }
+    yield { type: "text", text: "selesai" };
+    yield { type: "usage", inputTokens: 4, outputTokens: 2 };
+    yield { type: "done", finishReason: "stop" };
+  }
+}
+
 class TextProvider implements Provider {
   readonly name = "teks";
   readonly kind = "mock";
@@ -160,6 +182,32 @@ describe("status subagent", () => {
     expect(ids).toContain(agent.id);
     const row = db.prepare("SELECT status FROM agents WHERE id = ?").get(agent.id) as { status: string };
     expect(row.status).toBe("orphaned");
+  });
+});
+
+describe("verifikasi turn tanpa plan", () => {
+  it("mendorong verifikasi setelah berkas berubah tanpa tes", async () => {
+    const root = workspace();
+    const { db } = openDatabase({ path: join(root, "rann.db") });
+    const session = createSession(db, { projectPath: root, model: "tulis", permissionMode: "trusted" });
+    const turn = createTurn(db, { sessionId: session.id });
+    const provider = new WriteThenTextProvider();
+    const result = await runTurn({
+      db,
+      session,
+      turnId: turn.id,
+      userText: "halo",
+      provider,
+      model: "tulis-1",
+      workspaceRoot: root,
+      config: { ...config, maxSteps: 5 }
+    });
+    expect(provider.calls).toBeGreaterThanOrEqual(3);
+    expect(result.steps).toBeGreaterThanOrEqual(3);
+    const phases = db
+      .prepare("SELECT payload_json FROM events WHERE type = 'phase' AND payload_json LIKE '%no_plan_evidence%'")
+      .all();
+    expect(phases.length).toBe(1);
   });
 });
 

@@ -15,6 +15,7 @@ export interface GatewayDeviceRow {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  user_id: string | null;
 }
 
 export interface GatewayDeviceView {
@@ -26,6 +27,7 @@ export interface GatewayDeviceView {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  user_id?: string | null;
 }
 
 const ROLE_SCOPES: Record<GatewayRole, GatewayScope[]> = {
@@ -75,7 +77,7 @@ export function issuePairCode(
 
 export function redeemPairCode(
   db: Db,
-  input: { code: string; name: string; profile?: string; role?: GatewayRole }
+  input: { code: string; name: string; profile?: string; role?: GatewayRole; userId?: string }
 ): { device: GatewayDeviceView; token: string } | { error: "invalid" | "expired" | "used" } {
   const codeHash = hashToken(input.code.trim().toUpperCase());
   const row = db.prepare("SELECT * FROM gateway_pair_codes WHERE code_hash = ?").get(codeHash) as
@@ -84,7 +86,13 @@ export function redeemPairCode(
   if (!row) return { error: "invalid" };
   if (row.used_at !== null) return { error: "used" };
   if (row.expires_at <= Date.now()) return { error: "expired" };
-  const role = input.role ?? "operator";
+  const user = input.userId
+    ? (db.prepare("SELECT id, role, disabled_at FROM gateway_users WHERE id = ?").get(input.userId) as
+        | { id: string; role: GatewayRole; disabled_at: number | null }
+        | undefined)
+    : undefined;
+  if (input.userId && (!user || user.disabled_at !== null)) return { error: "invalid" };
+  const role = user?.role ?? input.role ?? "operator";
   const token = `rann_${randomBytes(32).toString("base64url")}`;
   const at = Date.now();
   const id = newId("dev");
@@ -94,8 +102,8 @@ export function redeemPairCode(
       .run(at, row.id);
     if (marked.changes !== 1) throw new Error("pair code already used");
     db.prepare(
-      `INSERT INTO gateway_devices (id, name, profile, role, scopes, token_hash, created_at, last_seen_at, revoked_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+      `INSERT INTO gateway_devices (id, name, profile, role, scopes, token_hash, created_at, last_seen_at, revoked_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
     ).run(
       id,
       input.name.slice(0, 80) || "perangkat",
@@ -104,7 +112,8 @@ export function redeemPairCode(
       scopesForRole(role).join(","),
       hashToken(token),
       at,
-      at
+      at,
+      user?.id ?? null
     );
   });
   try {
@@ -126,7 +135,8 @@ function toView(row: GatewayDeviceRow): GatewayDeviceView {
     scopes: row.scopes.split(",").filter(Boolean) as GatewayScope[],
     created_at: row.created_at,
     last_seen_at: row.last_seen_at,
-    revoked_at: row.revoked_at
+    revoked_at: row.revoked_at,
+    user_id: row.user_id ?? null
   };
 }
 
@@ -145,8 +155,23 @@ export function authenticate(
     | GatewayDeviceRow
     | undefined;
   if (!row || row.revoked_at !== null || row.profile !== profile) return undefined;
-  db.prepare("UPDATE gateway_devices SET last_seen_at = ? WHERE id = ?").run(Date.now(), row.id);
-  return toView(row);
+  let effective = row;
+  if (row.user_id) {
+    const user = db.prepare("SELECT role, disabled_at FROM gateway_users WHERE id = ?").get(row.user_id) as
+      | { role: GatewayRole; disabled_at: number | null }
+      | undefined;
+    if (!user || user.disabled_at !== null) return undefined;
+    if (user.role !== row.role) {
+      db.prepare("UPDATE gateway_devices SET role = ?, scopes = ? WHERE id = ?").run(
+        user.role,
+        scopesForRole(user.role).join(","),
+        row.id
+      );
+      effective = { ...row, role: user.role, scopes: scopesForRole(user.role).join(",") };
+    }
+  }
+  db.prepare("UPDATE gateway_devices SET last_seen_at = ? WHERE id = ?").run(Date.now(), effective.id);
+  return toView(effective);
 }
 
 export function listDevices(db: Db): GatewayDeviceView[] {
@@ -167,6 +192,13 @@ export function updateDeviceRole(db: Db, id: string, role: GatewayRole): Gateway
     id
   );
   return getDevice(db, id);
+}
+
+export function deviceOwnsSession(db: Db, deviceId: string, sessionId: string): boolean {
+  return (
+    db.prepare("SELECT 1 AS ok FROM gateway_sessions WHERE device_id = ? AND session_id = ? LIMIT 1").get(deviceId, sessionId) !==
+    undefined
+  );
 }
 
 export function getMappedSession(

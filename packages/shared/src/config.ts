@@ -141,8 +141,9 @@ export const configSchema = z.object({
             oauth: z.object({
               token_url: z.string().url(),
               client_id: z.string().min(1),
-              client_secret_env: z.string().min(1),
-              scope: z.string().optional()
+              client_secret_env: z.string().min(1).optional(),
+              scope: z.string().optional(),
+              device_authorization_url: z.string().url().optional()
             }).optional(),
             permission: z.enum(["read", "write", "exec"]).default("exec"),
             enabled: z.boolean().default(true),

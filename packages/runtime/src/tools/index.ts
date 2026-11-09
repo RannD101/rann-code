@@ -1802,7 +1802,8 @@ export const tools: ToolDefinition[] = [
         if (!input.script) throw new RannError("E_TOOL_INVALID_ARGS", "skill run butuh script");
         const result = await ctx.skills.runScript(input.name, input.script, input.args ?? [], {
           ...(input.timeout_ms ? { timeoutMs: input.timeout_ms } : {}),
-          ...(ctx.signal ? { signal: ctx.signal } : {})
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+          broker: async (tool, toolArgs) => (await executeTool(tool, toolArgs, ctx)).output
         });
         return { ok: result.ok, output: result, ...(result.ok ? {} : { code: "E_TOOL_FAILED", exitCode: result.exitCode }) };
       }

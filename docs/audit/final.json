@@ -14,14 +14,13 @@
   {
     "id": "RC-FR-002",
     "title": "Slash command registry",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/main.ts, line-editor.ts, stream.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "loader .rann/commands/*.md mendaftarkan command proyek dan menimpa command bawaan; tes project-commands.test.ts"
     ],
-    "gaps": [
-      "Command project belum bisa menimpa command bawaan; loader masih menolak nama inti."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-003",
@@ -121,14 +120,13 @@
   {
     "id": "RC-FR-012",
     "title": "Interrupt, cancel, dan resume",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/main.ts, stream.ts, attachments.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "/resume menampilkan replay 10 event terakhir dari turn sebelum prompt lanjutan; memakai RPC turn.events"
     ],
-    "gaps": [
-      "/resume mengirim prompt lanjutan dari checkpoint, belum replay event dari langkah terakhir."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-013",
@@ -378,14 +376,13 @@
   {
     "id": "RC-FR-037",
     "title": "Dukungan task panjang",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/agent.ts, plan-runtime.ts, checkpoint-files.ts; plan-runtime tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "recoverInterruptedTurns menyertakan checkpoint terakhir dan menandai resume; tes recovery.test.ts"
     ],
-    "gaps": [
-      "Turn stalled hanya ditandai; belum ada pemulihan otomatis setelah restart."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-038",
@@ -400,14 +397,13 @@
   {
     "id": "RC-FR-039",
     "title": "Analisis kegagalan dan verifikasi",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/agent.ts, tools/index.ts, code-tools.ts, project-map.ts; tools tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "agent mendorong verifikasi sekali saat turn tanpa plan mengubah berkas dan memancarkan E_VERIFICATION_FAILED; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Verifikasi hanya berjalan untuk plan aktif; turn tanpa plan belum punya verifier eksplisit."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-040",
@@ -804,26 +800,24 @@
   {
     "id": "RC-FR-079",
     "title": "Aktivasi dan pemilihan skill",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "/skill <nama> --force|--deny menyimpan skills_force/skills_deny per sesi dan agent memakainya saat memilih skill; RPC session.configure"
     ],
-    "gaps": [
-      "Pengguna belum bisa memaksa atau melarang skill tertentu lewat /skill."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-080",
     "title": "Eksekusi skill",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "skrip skill memanggil tool lewat broker Unix socket bertoken; tes skills-broker.test.ts"
     ],
-    "gaps": [
-      "Skrip skill belum memanggil tool lewat broker; hanya dibatasi env, cwd, dan timeout."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-081",
@@ -951,14 +945,13 @@
   {
     "id": "RC-FR-093",
     "title": "Autentikasi dan lifecycle MCP",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "fetchOAuthToken mendukung device authorization grant RFC 8628 dengan polling dan slow_down; tes mcp-oauth.test.ts"
     ],
-    "gaps": [
-      "OAuth MCP baru client credentials; alur browser atau device flow belum ada."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-094",
@@ -1016,14 +1009,13 @@
   {
     "id": "RC-FR-099",
     "title": "Event hooks",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "hook SessionEnd lewat RPC session.end dan Notification saat approval diminta; tes rpc-hooks.test.ts"
     ],
-    "gaps": [
-      "Belum semua 16 event hook dipancarkan runtime; beberapa event masih hanya dipanggil internal."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-100",
@@ -1306,14 +1298,13 @@
   {
     "id": "RC-FR-127",
     "title": "Gateway server dan transport",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/gateway.ts, messaging*.ts, rpc.ts; gateway/messaging tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "gateway memakai deviceOwnsSession dari repo, bukan query SQL langsung; tes gateway-repos.test.ts"
     ],
-    "gaps": [
-      "Gateway masih membuka database langsung untuk pairing, device, audit, dan autentikasi."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-128",
@@ -1451,14 +1442,13 @@
   {
     "id": "RC-FR-141",
     "title": "Autentikasi pengguna dan RBAC",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "gateway_devices.user_id mengikat perangkat ke pengguna; role dan scope mengikuti pengguna dan user nonaktif ditolak; tes gateway-repos.test.ts"
     ],
-    "gaps": [
-      "Pengguna lokal gateway baru registry; belum terhubung ke identitas dan role autentikasi."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-142",
@@ -1535,14 +1525,13 @@
   {
     "id": "RC-FR-149",
     "title": "Hierarki dan struktur konfigurasi",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "override per sesi (model, permission_mode, max_steps, skills_force, skills_deny) disimpan di metadata sesi dan dipakai saat session.send; tes rpc-session.test.ts"
     ],
-    "gaps": [
-      "Override config per sesi belum ada; model dan permission saja yang tersimpan di sesi."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-150",

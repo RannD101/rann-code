@@ -189,7 +189,17 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - `system-tools.ts`: metadata gambar dibaca dari header PNG/GIF/JPEG saat ImageMagick tidak tersedia.
 - `pnpm check` lulus: 330 tes di 64 berkas, lint dan depcruise bersih.
 
-Sisa 17 partial: 001, 002, 005, 007, 012, 018, 034, 037, 039, 079, 080, 093, 099, 127, 135, 141, 149.
+Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149. Audit kini 145 `done`, 6 `partial`: 001, 005, 007, 018, 034, 135.
+
+- `.rann/commands/*.md` dimuat sebagai command proyek dan boleh menimpa command bawaan.
+- `/resume` menampilkan replay event terakhir sebelum prompt lanjutan.
+- Recovery turn menyertakan checkpoint terakhir; agent tanpa plan didorong verifikasi setelah mengubah berkas.
+- `/skill --force|--deny` menyimpan kebijakan skill per sesi lewat `session.configure`.
+- Skrip skill memakai broker tool lewat Unix socket bertoken.
+- MCP mendukung OAuth device flow (RFC 8628).
+- Hook `SessionEnd` dan `Notification` terpasang; gateway memakai repo untuk kepemilikan sesi.
+- Perangkat gateway terikat ke `gateway_users.user_id`; role, scope, dan status nonaktif mengikuti pengguna.
+- Override config per sesi tersedia: model, permission mode, max steps, skill force/deny.
 
 ## Aturan
 

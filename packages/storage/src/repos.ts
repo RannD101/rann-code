@@ -19,6 +19,42 @@ export interface SessionRow {
   closed_at: number | null;
 }
 
+export interface SessionOverrides {
+  model?: string;
+  permission_mode?: PermissionMode;
+  max_steps?: number;
+  skills_force?: string[];
+  skills_deny?: string[];
+}
+
+export function sessionOverrides(row: SessionRow): SessionOverrides {
+  try {
+    const metadata = JSON.parse(row.metadata_json) as { overrides?: SessionOverrides };
+    return metadata.overrides ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export function setSessionOverrides(db: Db, id: string, patch: SessionOverrides): SessionOverrides {
+  const row = getSession(db, id);
+  if (!row) throw new Error(`Sesi tidak ditemukan: ${id}`);
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+  const current = (metadata.overrides as SessionOverrides | undefined) ?? {};
+  const next: SessionOverrides = { ...current, ...patch };
+  for (const key of Object.keys(next) as Array<keyof SessionOverrides>) {
+    if (next[key] === undefined) delete next[key];
+  }
+  metadata.overrides = next;
+  db.prepare("UPDATE sessions SET metadata_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(metadata), Date.now(), id);
+  return next;
+}
+
 export interface TurnRow {
   id: string;
   session_id: string;
@@ -270,14 +306,24 @@ export function recoverInterruptedTurns(db: Db): RecoveredTurn[] {
         message: "Turn terputus karena proses berhenti sebelum selesai"
       }
     });
+    const checkpoint = db
+      .prepare("SELECT id, label FROM checkpoints WHERE session_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(row.session_id) as { id: string; label: string } | undefined;
     addMessage(db, {
       sessionId: row.session_id,
       turnId: row.id,
       role: "assistant",
       content:
         "[pemulihan] Turn sebelumnya terputus karena proses berhenti. " +
-        "Periksa kondisi workspace dan checkpoint sebelum melanjutkan.",
-      contentJson: { kind: "recovery", previous_status: row.status }
+        (checkpoint
+          ? `Checkpoint terakhir ${checkpoint.id} (${checkpoint.label}). Ketik /resume untuk melanjutkan dari kondisi itu.`
+          : "Belum ada checkpoint; periksa kondisi workspace sebelum melanjutkan."),
+      contentJson: {
+        kind: "recovery",
+        previous_status: row.status,
+        checkpoint_id: checkpoint?.id ?? null,
+        resume: checkpoint !== undefined
+      }
     });
     recovered.push({ id: row.id, sessionId: row.session_id, status: row.status });
   }

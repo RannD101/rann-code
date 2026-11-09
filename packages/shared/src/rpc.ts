@@ -83,6 +83,15 @@ export const sessionSetModelParams = z.object({
   sessionId: z.string().min(1),
   model: z.string().min(1)
 });
+export const sessionConfigureParams = z.object({
+  sessionId: z.string().min(1),
+  model: z.string().min(1).optional(),
+  permission_mode: z.enum(["read-only", "ask", "accept-edits", "trusted", "custom"]).optional(),
+  max_steps: z.number().int().positive().max(200).optional(),
+  skills_force: z.array(z.string().min(1)).optional(),
+  skills_deny: z.array(z.string().min(1)).optional()
+});
+
 export const sessionCancelParams = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1).optional()
@@ -414,6 +423,8 @@ export const methodParams = {
   "session.fork": sessionForkParams,
   "session.send": sessionSendParams,
   "session.cancel": sessionCancelParams,
+  "session.end": sessionCancelParams,
+  "session.configure": sessionConfigureParams,
   "session.setModel": sessionSetModelParams,
   "turn.get": turnGetParams,
   "turn.runtime": turnGetParams,

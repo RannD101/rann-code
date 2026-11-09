@@ -11,7 +11,13 @@ export interface McpServerConfig {
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
-  oauth?: { token_url: string; client_id: string; client_secret_env: string; scope?: string };
+  oauth?: {
+    token_url: string;
+    client_id: string;
+    client_secret_env?: string;
+    scope?: string;
+    device_authorization_url?: string;
+  };
   permission?: "read" | "write" | "exec";
   enabled: boolean;
   timeout_ms: number;
@@ -73,6 +79,78 @@ function textFromContent(content: unknown): string {
     } else if (entry.type === "image") parts.push("[gambar MCP tidak ditampilkan]");
   }
   return parts.join("\n");
+}
+
+
+/**
+ * OAuth 2.0 untuk MCP: device authorization grant (RFC 8628) bila
+ * `device_authorization_url` diisi, jika tidak client credentials.
+ */
+export async function fetchOAuthToken(
+  name: string,
+  config: NonNullable<McpServerConfig["oauth"]>,
+  options: {
+    signal?: AbortSignal;
+    sleep?: (ms: number) => Promise<void>;
+    onDeviceCode?: (input: { userCode: string; verificationUri: string; expiresIn: number }) => void;
+  } = {}
+): Promise<string> {
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const post = async (url: string, body: URLSearchParams): Promise<Record<string, unknown>> => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+      ...(options.signal ? { signal: options.signal } : {})
+    });
+    const parsed = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok && parsed.error === undefined) throw new Error(`MCP ${name}: OAuth gagal ${response.status}`);
+    return parsed;
+  };
+
+  if (config.device_authorization_url) {
+    const device = await post(
+      config.device_authorization_url,
+      new URLSearchParams({ client_id: config.client_id, ...(config.scope ? { scope: config.scope } : {}) })
+    );
+    const deviceCode = typeof device.device_code === "string" ? device.device_code : "";
+    if (!deviceCode) throw new Error(`MCP ${name}: device authorization tidak mengembalikan device_code`);
+    const expiresIn = typeof device.expires_in === "number" ? device.expires_in : 600;
+    let interval = Math.max(1, typeof device.interval === "number" ? device.interval : 5);
+    options.onDeviceCode?.({
+      userCode: String(device.user_code ?? ""),
+      verificationUri: String(device.verification_uri ?? device.verification_url ?? ""),
+      expiresIn
+    });
+    const deadline = Date.now() + expiresIn * 1000;
+    while (Date.now() < deadline) {
+      await sleep(interval * 1000);
+      const token = await post(
+        config.token_url,
+        new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: deviceCode,
+          client_id: config.client_id
+        })
+      );
+      if (typeof token.access_token === "string") return token.access_token;
+      if (token.error === "authorization_pending") continue;
+      if (token.error === "slow_down") {
+        interval += 5;
+        continue;
+      }
+      throw new Error(`MCP ${name}: device flow gagal: ${String(token.error ?? "tanpa access_token")}`);
+    }
+    throw new Error(`MCP ${name}: device flow melewati batas waktu`);
+  }
+
+  const secret = config.client_secret_env ? process.env[config.client_secret_env] : undefined;
+  if (!secret) throw new Error(`MCP ${name}: env ${config.client_secret_env ?? "<kosong>"} kosong untuk OAuth`);
+  const body = new URLSearchParams({ grant_type: "client_credentials", client_id: config.client_id, client_secret: secret });
+  if (config.scope) body.set("scope", config.scope);
+  const token = await post(config.token_url, body);
+  if (typeof token.access_token !== "string") throw new Error(`MCP ${name}: OAuth tidak mengembalikan access_token`);
+  return token.access_token;
 }
 
 export class McpManager {
@@ -205,15 +283,8 @@ export class McpManager {
     };
     this.states.set(name, state);
     if (config.oauth) {
-      const secret = process.env[config.oauth.client_secret_env];
-      if (!secret) throw new Error(`MCP ${name}: env ${config.oauth.client_secret_env} kosong untuk OAuth`);
-      const body = new URLSearchParams({ grant_type: "client_credentials", client_id: config.oauth.client_id, client_secret: secret });
-      if (config.oauth.scope) body.set("scope", config.oauth.scope);
-      const response = await fetch(config.oauth.token_url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
-      if (!response.ok) throw new Error(`MCP ${name}: OAuth token gagal ${response.status}`);
-      const token = (await response.json()) as { access_token?: string };
-      if (!token.access_token) throw new Error(`MCP ${name}: OAuth tidak mengembalikan access_token`);
-      state.config.headers = { ...(state.config.headers ?? {}), authorization: `Bearer ${token.access_token}` };
+      const accessToken = await fetchOAuthToken(name, config.oauth);
+      state.config.headers = { ...(state.config.headers ?? {}), authorization: `Bearer ${accessToken}` };
     }
     await this.initializeHttp(state);
     return state;

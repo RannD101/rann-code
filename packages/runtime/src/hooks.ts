@@ -159,6 +159,9 @@ async function runProcess(
       options.signal?.removeEventListener("abort", abort);
       resolvePromise({ stdout: clip(stdout), stderr: clip(stderr), code: code ?? 1 });
     });
+    child.stdin.on("error", () => {
+      // Hook boleh menutup stdin tanpa membacanya; EPIPE bukan kegagalan.
+    });
     child.stdin.end(payload);
   });
 }

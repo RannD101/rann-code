@@ -12,6 +12,7 @@ import { setConfigValue, unsetConfigValue } from "./config-store.js";
 import { choose, chooseWith, clearScreen, colorEnabled, colorsEnabled, loadCustomThemeIfPresent, print, printErr, relativeTime, setTheme, table, themeTokens, truncateWidth, ui } from "./ui.js";
 import { runStreaming, type ApprovalDecision, type ApprovalRequest, type OutputFormat, type StreamResult } from "./stream.js";
 import { commandName, completeReplLine, findReplCommand, isAvailable, matchReplCommands, nearestCommands, renderCommandCatalog, REPL_COMMANDS, type ReplCommand } from "./repl-commands.js";
+import { registerProjectCommands } from "./project-commands.js";
 import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
@@ -1298,6 +1299,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       return result.error ? (exitCodeFor(result.error.code as ErrorCode) ?? 1) : 1;
     }
 
+    registerProjectCommands(process.cwd());
     header();
     const bootHealth = await client.request<Record<string, unknown>>("health");
     const recoveredTurns = Array.isArray(bootHealth.recovered_turns) ? bootHealth.recovered_turns : [];
@@ -1308,7 +1310,14 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       for (;;) {
         const line = (await editor.readLine()).trim();
         if (line.length === 0) continue;
-        if (line === "/exit" || line === "/quit" || line === "/q") break;
+        if (line === "/exit" || line === "/quit" || line === "/q") {
+          try {
+            await client.request("session.end", { sessionId });
+          } catch {
+            // Sesi mungkin sudah berakhir; keluar tetap dilanjutkan.
+          }
+          break;
+        }
         if (line === "/review" || line.startsWith("/review ")) {
           const target = line.slice(7).trim();
           try {
@@ -1472,6 +1481,22 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(ui.yellow(`/${registered.name} belum tersedia: ${registered.unavailableReason ?? "backend belum ada"}`));
             continue;
           }
+          if (registered?.source === "project") {
+            const argument = line.trim().slice(registered.name.length + 1).trim();
+            busy = true;
+            try {
+              const result = await runStreaming(client, sessionId, argument ? `${registered.handler}\n\nArgumen: ${argument}` : registered.handler, {
+                ...(model ? { model } : {}),
+                ...(permissionMode ? { permissionMode } : {}),
+                ...(onApproval ? { onApproval } : {})
+              });
+              await recordResult(result);
+              if (!result.ok) print(ui.red("[command proyek gagal]"));
+            } finally {
+              busy = false;
+            }
+            continue;
+          }
         }
         if (line === "/memory" || line.startsWith("/memory ")) {
           const query = line.slice(7).trim();
@@ -1619,10 +1644,37 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             print(`riwayat: ${((info.versions as unknown[] | undefined) ?? []).length} versi`);
             continue;
           }
-          const name = sub;
-          if (name.length === 0) {
-            print("Pakai: /skill <nama> atau /skill info <nama>");
+          const force = parts.includes("--force");
+          const deny = parts.includes("--deny");
+          const name = parts.find((part) => !part.startsWith("--") && part !== "info");
+          if (name === undefined || name.length === 0) {
+            print("Pakai: /skill <nama> [--force|--deny] atau /skill info <nama>");
             continue;
+          }
+          if (force || deny) {
+            const current = await client.request<Record<string, unknown>>("session.get", { sessionId });
+            let overrides: Record<string, unknown> = {};
+            try {
+              overrides = (JSON.parse(String(current.metadata_json ?? "{}")) as { overrides?: Record<string, unknown> }).overrides ?? {};
+            } catch {
+              overrides = {};
+            }
+            const forceList = new Set<string>((overrides.skills_force as string[] | undefined) ?? []);
+            const denyList = new Set<string>((overrides.skills_deny as string[] | undefined) ?? []);
+            if (force) {
+              forceList.add(name);
+              denyList.delete(name);
+            } else {
+              denyList.add(name);
+              forceList.delete(name);
+            }
+            await client.request("session.configure", {
+              sessionId,
+              skills_force: [...forceList],
+              skills_deny: [...denyList]
+            });
+            print(`${force ? "memaksa" : "melarang"} skill ${name} untuk sesi ini`);
+            if (deny) continue;
           }
           const skill = await client.request<Record<string, unknown>>("skill.view", { projectPath: process.cwd(), name });
           print(String(skill.body ?? ""));
@@ -2494,6 +2546,26 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
               }
             } catch {
               // checkpoint opsional; turn tetap dilanjutkan dari riwayat
+            }
+            try {
+              const events = await client.request<Array<Record<string, unknown>>>("turn.events", {
+                turnId: lastTurnId,
+                afterSeq: 0
+              });
+              for (const event of events.slice(-10)) {
+                const payload = (event.payload ?? event.data ?? {}) as Record<string, unknown>;
+                const detail =
+                  typeof payload.text === "string"
+                    ? payload.text.slice(0, 120)
+                    : typeof payload.tool === "string"
+                      ? payload.tool
+                      : typeof payload.phase === "string"
+                        ? payload.phase
+                        : "";
+                print(ui.dim(`replay ${String(event.type)}${detail ? `: ${detail}` : ""}`));
+              }
+            } catch {
+              // Replay bersifat bantuan; lanjutan tetap dikirim.
             }
             const continuation = `Lanjutkan turn ${lastTurnId} dari ${resumeDetail}. Jangan ulangi tool yang sudah berhasil; periksa riwayat tool di konteks, selesaikan sisa pekerjaan, lalu laporkan hasil dan bukti verifikasi.`;
             busy = true;

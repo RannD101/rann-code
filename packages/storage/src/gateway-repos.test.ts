@@ -7,6 +7,7 @@ import {
   createSession,
   gatewayStats,
   getMappedSession,
+  deviceOwnsSession,
   hasScope,
   hashToken,
   issuePairCode,
@@ -18,6 +19,8 @@ import {
   revokeDevice,
   scopesForRole,
   updateDeviceRole,
+  createGatewayUser,
+  disableGatewayUser,
   type Db
 } from "./index.js";
 
@@ -104,3 +107,34 @@ describe("gateway storage", () => {
     expect(gatewayStats(db)).toMatchObject({ devices: 1, active_devices: 1, sessions: 1, messages: 2 });
   });
 });
+
+describe("identitas pengguna gateway", () => {
+  it("mengambil role dan scope dari pengguna, bukan dari pairing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-gw-user-"));
+    const { db } = openDatabase({ path: join(dir, "rann.db") });
+    const user = createGatewayUser(db, { name: "Randi", role: "viewer" });
+    const code = issuePairCode(db, { createdBy: "uji" });
+    const redeemed = redeemPairCode(db, { code: code.code, name: "web", userId: user.id });
+    expect("device" in redeemed).toBe(true);
+    if (!("device" in redeemed)) return;
+    expect(redeemed.device.role).toBe("viewer");
+    expect(redeemed.device.scopes).toEqual(["read"]);
+    expect(redeemed.device.user_id).toBe(user.id);
+    expect(authenticate(db, redeemed.token)?.role).toBe("viewer");
+    expect(disableGatewayUser(db, user.id)).toBe(true);
+    expect(authenticate(db, redeemed.token)).toBeUndefined();
+  });
+
+  it("memeriksa kepemilikan sesi lewat repo, bukan query langsung", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-gw-own-"));
+    const { db } = openDatabase({ path: join(dir, "rann.db") });
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "trusted" });
+    const code = issuePairCode(db, { createdBy: "uji" });
+    const redeemed = redeemPairCode(db, { code: code.code, name: "web" });
+    if (!("device" in redeemed)) throw new Error("pairing gagal");
+    expect(deviceOwnsSession(db, redeemed.device.id, session.id)).toBe(false);
+    mapSession(db, { deviceId: redeemed.device.id, sessionId: session.id, channel: "web", channelKey: "utama" });
+    expect(deviceOwnsSession(db, redeemed.device.id, session.id)).toBe(true);
+  });
+});
+

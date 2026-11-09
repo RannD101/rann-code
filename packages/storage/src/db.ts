@@ -14,6 +14,7 @@ import { SCHEMA_V11 } from "./schema-v11.js";
 import { SCHEMA_V12 } from "./schema-v12.js";
 import { SCHEMA_V13 } from "./schema-v13.js";
 import { SCHEMA_V14 } from "./schema-v14.js";
+import { SCHEMA_V15 } from "./schema-v15.js";
 
 export type Db = Database.Database;
 
@@ -288,6 +289,11 @@ END;
     version: 14,
     name: "subagent-status",
     sql: SCHEMA_V14
+  },
+  {
+    version: 15,
+    name: "gateway-identity",
+    sql: SCHEMA_V15
   }
 ];
 

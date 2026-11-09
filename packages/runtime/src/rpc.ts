@@ -37,6 +37,8 @@ import {
   markStalledTurns,
   getActiveGoal,
   getSession,
+  sessionOverrides,
+  setSessionOverrides,
   getTurn,
   getTurnRuntime,
   listGoals,
@@ -511,6 +513,43 @@ export class RpcServer {
         });
         this.broadcast(event);
         return { session_id: session.id, model: modelName };
+      }
+      case "session.configure": {
+        const patch: Record<string, unknown> = {};
+        for (const key of ["model", "permission_mode", "max_steps", "skills_force", "skills_deny"] as const) {
+          if (input[key] !== undefined) patch[key] = input[key];
+        }
+        const overrides = setSessionOverrides(this.db, input.sessionId as string, patch);
+        const event = appendEvent(this.db, {
+          type: "session.updated",
+          sessionId: input.sessionId as string,
+          data: { overrides }
+        });
+        this.broadcast(event);
+        return { overrides };
+      }
+      case "session.end": {
+        const session = getSession(this.db, input.sessionId as string);
+        if (!session) throw new RannError("E_SESSION_NOT_FOUND", "Sesi tidak ditemukan");
+        if (this.options.config.config.hooks) {
+          await new HookRunner(this.options.config.config.hooks, { projectRoot: process.cwd() }).run(
+            "SessionEnd",
+            { session_id: session.id },
+            { cwd: process.cwd() }
+          );
+        }
+        this.db.prepare("UPDATE sessions SET status = 'closed', closed_at = ?, updated_at = ? WHERE id = ?").run(
+          Date.now(),
+          Date.now(),
+          session.id
+        );
+        const ended = appendEvent(this.db, {
+          type: "session.updated",
+          sessionId: session.id,
+          data: { title: session.title, model: session.model, ended: true }
+        });
+        this.broadcast(ended);
+        return { ended: true };
       }
       case "session.cancel": {
         const sessionId = input.sessionId as string;
@@ -1512,6 +1551,12 @@ export class RpcServer {
       data: { request_id: requestId, tool, args: redactSecrets(args), ...(reason ? { reason } : {}), ...(risk ? { risk } : {}) }
     });
     this.broadcast(event);
+    if (this.options.config.config.hooks) {
+      const projectPath = this.options.config.projectPath ?? process.cwd();
+      void new HookRunner(this.options.config.config.hooks, { projectRoot: projectPath })
+        .run("Notification", { kind: "approval", request_id: requestId, tool }, { cwd: projectPath })
+        .catch(() => undefined);
+    }
 
     return new Promise<ApprovalDecision>((resolve) => {
       const settle = (approved: boolean, remember = false, reason = "user", taskIds?: string[], note?: string): void => {
@@ -1624,7 +1669,8 @@ export class RpcServer {
       workspaceRoot,
       this.options.layout.artifactsDir
     );
-    const requested = ((input.model as string | undefined) ?? session.model ?? "").trim();
+    const overrides = sessionOverrides(session);
+    const requested = ((input.model as string | undefined) ?? overrides.model ?? session.model ?? "").trim();
     const target = this.resolveTarget(config, requested);
     let providerName = target.providerName;
     let providerConfig = providerFor(config, providerName);
@@ -1716,11 +1762,14 @@ export class RpcServer {
     this.sessionApprovalPatterns.set(sessionId, approvalPatterns);
 
     const agentConfig: AgentConfig = {
-      permissionMode: (input.permissionMode as AgentConfig["permissionMode"] | undefined) ?? session.permission_mode,
+      permissionMode:
+        (input.permissionMode as AgentConfig["permissionMode"] | undefined) ??
+        overrides.permission_mode ??
+        session.permission_mode,
       workspaceOnly: config.permissions.workspace_only,
       allow: config.permissions.allow,
       deny: config.permissions.deny,
-      maxSteps: config.agent.max_steps,
+      maxSteps: overrides.max_steps ?? config.agent.max_steps,
       maxRuntimeMs: config.agent.max_runtime_ms,
       systemExtra: config.agent.system_extra,
       preApprovedTools: approvals,
@@ -1859,6 +1908,8 @@ export class RpcServer {
       modelCapabilities: descriptor.capabilities,
       capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
       modelId: descriptor.id,
+      ...(overrides.skills_force ? { skillsForce: overrides.skills_force } : {}),
+      ...(overrides.skills_deny ? { skillsDeny: overrides.skills_deny } : {}),
       ...(() => {
         const schema = (config.models as Record<string, { response_schema?: unknown }> | undefined)?.[`${descriptor.provider}/${descriptor.model}`]?.response_schema;
         return schema === undefined || schema === null ? {} : { responseSchema: schema as Record<string, unknown> };
