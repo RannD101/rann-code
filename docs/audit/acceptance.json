@@ -239,8 +239,10 @@
     "criteria": "Given plan dengan 6 task, when divalidasi, then setiap task punya agen, file, dependensi, dan kriteria selesai; task tanpa itu ditolak.",
     "verification": "O",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: validatePlan menolak task tanpa agen, file area, dan acceptance"
+    ],
     "gaps": []
   },
   {
@@ -248,8 +250,10 @@
     "criteria": "Given plan dengan dependensi A -> B -> C, when dieksekusi, then B tidak mulai sebelum A selesai, dan C tidak mulai sebelum B selesai.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: order topologis a -> b -> c"
+    ],
     "gaps": []
   },
   {
@@ -257,8 +261,10 @@
     "criteria": "Given task menyentuh migrasi database, when plan dinilai, then risiko ditandai `high` dan approval diminta.",
     "verification": "O",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: detectRisk menandai migrasi/drop tabel sebagai high"
+    ],
     "gaps": []
   },
   {
@@ -266,8 +272,10 @@
     "criteria": "Given plan 5 task, when estimasi diminta, then output berisi rentang menit dan biaya, bukan angka tunggal.",
     "verification": "O",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: estimate berisi rentang menit dan biaya serta source heuristic"
+    ],
     "gaps": []
   },
   {
@@ -338,8 +346,10 @@
     "criteria": "Given 5 task antre, when prioritas diubah, then task berprioritas tinggi dijalankan lebih dulu tanpa membatalkan yang sedang berjalan.",
     "verification": "O",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: job prioritas 10 diklaim sebelum prioritas 200"
+    ],
     "gaps": []
   },
   {
@@ -401,8 +411,10 @@
     "criteria": "Given file teks, when `write_file` membuat file baru, then isi persis sama dengan yang diminta dan file lama tidak tersentuh.",
     "verification": "O",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: fs_write menulis isi persis dan berkas lain tidak berubah"
+    ],
     "gaps": []
   },
   {
@@ -410,8 +422,10 @@
     "criteria": "Given file 200 baris, when `edit_file` mengganti satu fungsi, then hanya blok itu berubah, diff minimal, dan hash file diverifikasi setelah tulis.",
     "verification": "O",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: fs_edit hanya mengubah baris target dan sha256 cocok"
+    ],
     "gaps": []
   },
   {
@@ -419,8 +433,10 @@
     "criteria": "Given 3 file diubah dalam satu transaksi, when file kedua gagal ditulis, then file pertama dan ketiga dikembalikan ke isi awal.",
     "verification": "O",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: transaksi gagal di berkas kedua tidak meninggalkan berkas pertama"
+    ],
     "gaps": []
   },
   {
@@ -563,8 +579,10 @@
     "criteria": "Given dua agen menulis `src/app.ts`, when agen kedua meminta lease, then permintaan ditolak sampai lease pertama dilepas atau kedaluwarsa.",
     "verification": "I",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "work-repos.test.ts: lease kedua ditolak, setelah release lease berikutnya diterima"
+    ],
     "gaps": []
   },
   {
@@ -590,8 +608,10 @@
     "criteria": "Given pengguna menyebut preferensi \"selalu pakai pnpm\", when turn selesai, then kandidat memory user dibuat dengan sumber pesan.",
     "verification": "I",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent.test.ts: rememberFromTurn menyimpan source pesan"
+    ],
     "gaps": []
   },
   {
@@ -617,8 +637,10 @@
     "criteria": "Given agen spesialis, when agen selesai, then memory agent hanya berlaku untuk profil itu dan tidak bocor ke agen lain.",
     "verification": "O",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "memory-skills.test.ts: memori agen lain tersembunyi sampai grant diberikan"
+    ],
     "gaps": []
   },
   {
@@ -644,8 +666,10 @@
     "criteria": "Given memory otomatis aktif, when kandidat keyakinan rendah, then kandidat masuk antrean dan tidak langsung diinjeksi.",
     "verification": "O",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "memory-skills.test.ts: kandidat konfidensi rendah masuk pending dan tidak langsung aktif"
+    ],
     "gaps": []
   },
   {
