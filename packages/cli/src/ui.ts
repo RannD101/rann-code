@@ -298,13 +298,18 @@ export async function chooseWith<T extends string>(
   ask: (question: string) => Promise<string>,
   prompt: string,
   choices: Array<Choice<T>>,
-  fallback: T
+  fallback: T,
+  inspect?: () => void
 ): Promise<T> {
   for (;;) {
     process.stderr.write(`${prompt}\n`);
     choices.forEach((choice, index) => process.stderr.write(`  [${choice.shortcut ?? index + 1}] ${choice.label}\n`));
-    const answer = (await ask(`Pilih ${choices.map((choice, index) => choice.shortcut ?? index + 1).join("/")} (Enter = ${fallback}): `)).trim().toLowerCase();
+    const answer = (await ask(`Pilih ${choices.map((choice, index) => choice.shortcut ?? index + 1).join("/")}${inspect ? "/V" : ""} (Enter = ${fallback}): `)).trim().toLowerCase();
     if (answer.length === 0) return fallback;
+    if (answer === "v" && inspect) {
+      inspect();
+      continue;
+    }
     const numeric = Number.parseInt(answer, 10);
     if (Number.isInteger(numeric) && numeric >= 1 && numeric <= choices.length) return choices[numeric - 1]!.key;
     const direct = choices.find((choice) => choice.key === answer || choice.shortcut?.toLowerCase() === answer);

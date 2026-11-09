@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,27 @@ import { describe, expect, it } from "vitest";
 import { idleCtrlCStep } from "./line-editor.js";
 
 const main = fileURLToPath(new URL("../dist/main.js", import.meta.url));
+
+function stopDaemons(home: string): void {
+  const pidPath = join(home, "run", "daemon.pid");
+  if (existsSync(pidPath)) {
+    try {
+      process.kill(Number(readFileSync(pidPath, "utf8").trim()), "SIGKILL");
+    } catch {
+      // daemon sudah berhenti
+    }
+  }
+  if (!existsSync("/proc")) return;
+  for (const pid of readdirSync("/proc")) {
+    if (!/^\d+$/.test(pid)) continue;
+    try {
+      const env = readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
+      if (env.includes(`RANN_HOME=${home}`)) process.kill(Number(pid), "SIGKILL");
+    } catch {
+      // proses sudah berhenti
+    }
+  }
+}
 
 function run(args: string[], input?: string): { stdout: string; stderr: string; code: number | null } {
   const home = mkdtempSync(join(tmpdir(), "rann-ac-cli-"));
@@ -16,6 +37,7 @@ function run(args: string[], input?: string): { stdout: string; stderr: string; 
     encoding: "utf8",
     timeout: 30_000
   });
+  stopDaemons(home);
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", code: result.status };
 }
 

@@ -226,6 +226,16 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 - `MemoryService.search` mencatat `last_used_at` dan event `retrieved` dalam satu transaksi, bukan dua pernyataan per entri; AC-070 p95 tetap di bawah 80 ms.
 - `pnpm check` lulus: 462 tes di 99 berkas, 2 dilewati, lint dan depcruise bersih.
 
+## Progres terkini (2026-11-10, putaran kedua)
+
+- `packages/cli/src/acceptance-design.test.ts` menambah 22 tes untuk 20 kriteria acceptance desain: header 40 sampai 160 kolom, status bar bertingkat, panel 40 kolom, markdown dan tabel, highlighter, streaming tanpa clear screen, enam status tool, plan, multi-agent, diff, izin `V`, palette dan navigasi panah, mode UI, kontras tiga tema, katalog command, mode non-interaktif, no-color, pemindaian emoji, dan label command yang belum tersedia.
+- Hint dialog izin dipendekkan menjadi `A/S/D/V · Esc tolak` di bawah 100 kolom; detail argumen dipotong 600 karakter dan `V` menampilkan isi penuh.
+- Header menyembunyikan profil pada mode medium dan menghitung lebar provider dari sisa kolom; status bar menampilkan project, task, dan agen pada ambang 134, 126, dan 120 kolom.
+- Plan memotong judul dengan memperhitungkan label `@agent`, sehingga nama agen tidak terpotong.
+- Palette menyembunyikan command yang belum punya backend secara bawaan; `ui.hide_unavailable: false` menampilkannya kembali dengan label alasan.
+- `docs/design/terminal-ui.md` mencatat keputusan renderer, tema, ambang lebar, pintasan, tabel 20 kriteria beserta bukti, dan batas yang diketahui.
+- `pnpm check` lulus: 484 tes lulus, 2 dilewati, 100 berkas lulus, 1 berkas dilewati. `test_design` 22/22 lulus.
+
 ## Aturan
 
 - Setiap FR hanya boleh ditandai done bila ada kode dan tes yang membuktikan.

@@ -926,7 +926,8 @@ function makeApprovalHandler(
   if (process.stdin.isTTY !== true) return undefined;
   return async (request) => {
     const args = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
-    const detail = formatApprovalArgs(args);
+    const detail = formatApprovalArgs(args, 600);
+    const fullDetail = (): string => formatApprovalArgs(args);
     const dangerous = request.risk === "high" ? "task rencana berisiko tinggi" : request.reason ?? (request.tool === "shell_run" && typeof args.command === "string" ? destructiveReason(args.command) : undefined);
     const impact = dangerous
       ? `DESTRUKTIF: ${dangerous}. Operasi ini bisa menghilangkan data dan tidak selalu bisa dibatalkan.`
@@ -951,10 +952,10 @@ function makeApprovalHandler(
       `  ${ui.dim("dampak")}  ${impact}${target}`,
       ...(preview ? ["", ...renderEditPreview(preview)] : []),
       ui.border("─".repeat(Math.max(20, width))),
-      ui.dim("A izinkan sekali   S izinkan sesi ini   D tolak   Esc tolak")
+      ui.dim(width >= 100 ? "A izinkan sekali   S izinkan sesi ini   D tolak   V detail   Esc tolak" : "A/S/D/V · Esc tolak")
     ].join("\n");
     if (request.tool === "plan" && ask) {
-      const planText = typeof args.text === "string" ? args.text : detail;
+      const planText = typeof args.text === "string" ? args.text : fullDetail();
       print(planText);
       const reply = (await ask("Setujui rencana? semua / sebagian / tolak [a/s/t]: ")).trim().toLowerCase();
       if (reply === "s" || reply === "sebagian") {
@@ -972,11 +973,18 @@ function makeApprovalHandler(
       { key: "always", shortcut: "S", label: "Selalu izinkan pola ini (tool + target) di sesi ini" },
       { key: "deny", shortcut: "D", label: "Tolak" }
     ] as const;
+    const showDetails = (): void => {
+      print("");
+      print(ui.border("─".repeat(Math.max(20, width))));
+      print(`${ui.label("detail")} ${ui.accent(request.tool)}${request.risk ? ui.dim(`  risiko ${request.risk}`) : ""}`);
+      print(fullDetail());
+      print(ui.border("─".repeat(Math.max(20, width))));
+    };
     const answer = ask
       ? await chooseWith(async (question) => {
           const reply = (await ask(question)).trim();
           return /^(n|no|tidak)$/i.test(reply) ? "deny" : reply;
-        }, prompt, [...choices], "deny")
+        }, prompt, [...choices], "deny", showDetails)
       : await choose(prompt, [...choices], "deny");
     return {
       approved: answer !== "deny",
@@ -1100,7 +1108,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
     process.on("SIGINT", sigintListener);
 
     let showStatusBar = true;
-    let hideUnavailable = false;
+    let hideUnavailable = true;
     const sessionLabel = (): string => (sessionId.length > 8 ? sessionId.slice(0, 8) : sessionId);
     const statusPrompt = (): string => {
       const width = process.stdout.columns ?? 80;
@@ -1134,7 +1142,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
       if (typeof configValue.provider === "string") providerName = configValue.provider;
       const uiConfig = (configValue.ui as Record<string, unknown> | undefined) ?? {};
       if (uiConfig.status_bar === false || uiConfig.statusBar === false) showStatusBar = false;
-      hideUnavailable = uiConfig.hide_unavailable === true || uiConfig.hideUnavailable === true;
+      hideUnavailable = uiConfig.hide_unavailable !== false && uiConfig.hideUnavailable !== false;
       try {
         const listed = await client.request<Array<Record<string, unknown>>>("provider.list");
         const active = listed.find((item) => item.name === providerName) ?? listed[0];

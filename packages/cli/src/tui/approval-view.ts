@@ -29,6 +29,9 @@ export function renderApproval(view: ApprovalView): string[] {
   const args = formatApprovalArgs(view.args, 600);
   if (args.length > 0) lines.push(`${ui.label("args")} ${truncateWidth(args.replace(/\n/g, " "), Math.max(12, width - 7))}`);
   if (view.reason) lines.push(`${ui.label("alasan")} ${truncateWidth(view.reason, Math.max(12, width - 8))}`);
-  lines.push(ui.dim("A izinkan sekali  ·  S izinkan sesi ini  ·  D tolak  ·  Esc tolak"));
+  const hint = width >= 100
+    ? "A izinkan sekali  ·  S izinkan sesi ini  ·  D tolak  ·  V detail  ·  Esc tolak"
+    : "A/S/D/V · Esc tolak";
+  lines.push(ui.dim(hint));
   return lines;
 }

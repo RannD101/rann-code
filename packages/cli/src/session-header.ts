@@ -48,13 +48,16 @@ export function renderHeader(input: HeaderInput, width = terminalWidth()): strin
     ];
   }
   const model = `${ui.label("model")} ${fitted(input.model, mode === "medium" ? 28 : 38)}`;
-  const provider = input.provider ? `  ${ui.label("provider")} ${fitted(input.provider, 20)}` : "";
+  const provider = input.provider
+    ? `  ${ui.label("provider")} ${fitted(input.provider, mode === "medium" ? Math.max(8, width - 45) : 20)}`
+    : "";
   const place = `${ui.label("workspace")} ${fitted(`${workspace}${branch}`, mode === "medium" ? 42 : 60)}`;
-  const meta = [
+  const metaParts = [
     `${ui.label("session")} ${fitted(input.session, 14)}`,
     `${ui.label("permission")} ${fitted(input.permission, 14)}`,
-    `${ui.label("profile")} ${fitted(input.profile, 14)}`
-  ].join("  ");
+    ...(mode === "medium" ? [] : [`${ui.label("profile")} ${fitted(input.profile, 14)}`])
+  ];
+  const meta = metaParts.join("  ");
   return [
     fitted(title, width),
     `${model}${provider}`,

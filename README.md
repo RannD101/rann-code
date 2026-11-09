@@ -230,6 +230,8 @@ rann chat --ui compact
 
 Warna mengikuti `RANN_COLOR`: `truecolor`, `256`, `16`, atau `none`. Header, status bar, dan panel menyesuaikan lebar terminal, dan informasi sekunder disembunyikan di terminal sempit.
 
+Command palette menyembunyikan perintah yang belum punya backend. Set `ui.hide_unavailable = false` di konfigurasi untuk menampilkannya kembali dengan label alasan.
+
 ## Penyimpanan
 
 Default di `~/.rann`, bisa dipindah lewat `RANN_HOME`:

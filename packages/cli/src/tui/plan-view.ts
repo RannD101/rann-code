@@ -24,7 +24,8 @@ export function renderPlan(tasks: PlanTask[], width = process.stdout.columns ?? 
   const lines = [`${ui.label("plan")} ${bar} ${done}/${total}`];
   for (const task of tasks.slice(0, 20)) {
     const agent = task.agent ? ui.dim(`  @${task.agent}`) : "";
-    lines.push(`${mark(task.status)} ${truncateWidth(task.title, Math.max(10, width - 8))}${agent}`);
+    const titleWidth = Math.max(10, width - 8 - (task.agent ? task.agent.length + 3 : 0));
+    lines.push(`${mark(task.status)} ${truncateWidth(task.title, titleWidth)}${agent}`);
   }
   if (tasks.length > 20) lines.push(ui.dim(`  ${tasks.length - 20} langkah lagi`));
   return lines;

@@ -68,7 +68,10 @@ describe("tampilan premium", () => {
     const approval = stripAnsi(renderApproval({ tool: "shell_run", args: { command: "npm test" }, risk: "medium" }).join("\n"));
     expect(approval).toContain("PERLU IZIN");
     expect(approval).toContain("DAMPAK");
-    expect(approval).toContain("A izinkan sekali");
+    expect(approval).toContain("A/S/D/V");
+    const wide = stripAnsi(renderApproval({ tool: "shell_run", args: { command: "npm test" }, risk: "medium", width: 110 }).join("\n"));
+    expect(wide).toContain("A izinkan sekali");
+    expect(wide).toContain("V detail");
   });
 
   it("syntax highlighting tidak mengubah teks asli", () => {

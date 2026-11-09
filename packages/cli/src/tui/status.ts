@@ -59,6 +59,7 @@ export function renderStatus(input: StatusInput): string {
   if (verbose || (!compact && width >= 104)) parts.push(ui.dim(`hari $${input.dayCost === undefined ? "?" : input.dayCost.toFixed(3)}`));
   if ((verbose || (!compact && width >= 112)) && input.session) parts.push(ui.dim(`sesi ${input.session}`));
   if ((verbose || (!compact && width >= 120)) && input.agents !== undefined) parts.push(ui.dim(`agen ${input.agents}`));
+  if ((verbose || (!compact && width >= 134)) && input.project) parts.push(ui.dim(input.project));
   if ((verbose || (!compact && width >= 126)) && input.task) parts.push(ui.dim(input.task));
   const text = parts.join(ui.dim("  │  "));
   return truncateWidth(text, Math.max(10, width - 4));
