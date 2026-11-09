@@ -405,8 +405,10 @@
     "criteria": "Given repo 5.000 file, when `/init`, then peta direktori, bahasa, entry point, dan perintah build terdeteksi dalam ≤ 30 detik.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-coding.test.ts: peta repo 5.000 berkas selesai < 30 detik, mendeteksi pnpm, TypeScript, build, entry point"
+    ],
     "gaps": []
   },
   {
@@ -483,8 +485,10 @@
     "criteria": "Given diff 200 baris, when `/review`, then temuan berisi path, baris, severity, dan saran; tidak ada temuan tanpa lokasi.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-coding.test.ts: reviewUnifiedDiff mengembalikan path, line, severity, dan suggestion"
+    ],
     "gaps": []
   },
   {
@@ -501,8 +505,10 @@
     "criteria": "Given project Node, when build dijalankan, then perintah terdeteksi dari lockfile, exit code asli dilaporkan, dan kegagalan tidak ditelan.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-coding.test.ts: build terdeteksi dari lockfile dan exit code 3 dilaporkan sebagai gagal"
+    ],
     "gaps": []
   },
   {
@@ -510,8 +516,10 @@
     "criteria": "Given working tree kotor, when task dimulai, then diff awal dicatat dan tidak ada commit otomatis tanpa izin.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-coding.test.ts: baseline git mencatat dirty_files dan tidak menambah commit"
+    ],
     "gaps": []
   },
   {
@@ -519,8 +527,10 @@
     "criteria": "Given project kosong, when `/init`, then `RANN.md` dan `.rann/config.json` dibuat dengan isi yang bisa diedit, bukan placeholder kosong.",
     "verification": "O",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-init.test.ts: rann init membuat RANN.md berisi dan .rann/config.json"
+    ],
     "gaps": []
   },
   {

@@ -2079,7 +2079,9 @@ export const tools: ToolDefinition[] = [
       const cwd = resolveInsideWorkspace(input.cwd ?? ".", ctx);
       const manager = input.manager ?? detectPackageManager(cwd);
       assertAllowed({ mode: ctx.permissionMode, tool: "package_run", risk: "exec", command: `${manager} ${input.args.join(" ")}`, approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
-      return textResult(packageCommand(manager, input.args, cwd));
+      const result = packageCommand(manager, input.args, cwd);
+      const exitCode = typeof result.exit_code === "number" ? result.exit_code : 1;
+      return { ok: exitCode === 0, output: result, exitCode };
     }
   },
   {

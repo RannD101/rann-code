@@ -4300,6 +4300,11 @@ function initCommand(): number {
   mkdirSync(dir, { recursive: true });
   const configPath = join(dir, "config.toml");
   if (!existsSync(configPath)) writeFileSync(configPath, "# Config project Rann Code\n", "utf8");
+  // Salinan JSON yang bisa diedit, sesuai RC-AC-052; config.toml tetap kanonik.
+  const configJson = join(dir, "config.json");
+  if (!existsSync(configJson)) {
+    writeFileSync(configJson, JSON.stringify({ profile: "default", permissions: { mode: "ask" } }, null, 2), "utf8");
+  }
   const instructions = join(process.cwd(), "RANN.md");
   const map = buildProjectMap(process.cwd());
   saveProjectMap(process.cwd(), map);
