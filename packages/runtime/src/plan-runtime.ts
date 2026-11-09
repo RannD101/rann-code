@@ -328,13 +328,29 @@ export function revisePlan(
       { version, at: Date.now(), reason: revision.reason, draft }
     ]
   };
-  updatePlan(db, plan.id, { goal, version, metadata });
+  const newRow = createPlan(db, {
+    sessionId: row.session_id,
+    ...(row.turn_id ? { turnId: row.turn_id } : {}),
+    goal,
+    metadata: {}
+  });
+  updatePlan(db, newRow.id, { version, metadata });
+  updatePlanStatus(db, plan.id, "cancelled");
+  updatePlan(db, plan.id, {
+    metadata: {
+      ...previous,
+      superseded: true,
+      superseded_by: newRow.id,
+      superseded_at: Date.now(),
+      reason: revision.reason
+    }
+  });
   cancelOpenTasks(db, plan.id);
   const taskIds = new Map<string, string>();
   for (const planTask of tasks) {
     const task = createTask(db, {
       sessionId: row.session_id,
-      planId: plan.id,
+      planId: newRow.id,
       title: planTask.title,
       description: planTask.description ?? "",
       priority: planTask.risk === "high" ? 3 : planTask.risk === "medium" ? 2 : 1,
@@ -351,7 +367,7 @@ export function revisePlan(
       }
     });
     addPlanNode(db, {
-      planId: plan.id,
+      planId: newRow.id,
       taskId: task.id,
       title: planTask.title,
       kind: "task",
@@ -367,9 +383,10 @@ export function revisePlan(
       revision: version
     });
   }
-  updatePlanStatus(db, plan.id, "active");
+  updatePlanStatus(db, newRow.id, "active");
   publish("plan.update", {
-    plan_id: plan.id,
+    plan_id: newRow.id,
+    previous_plan_id: plan.id,
     status: "active",
     version,
     reason: revision.reason,
@@ -377,7 +394,7 @@ export function revisePlan(
     carried: [...completed],
     high_risk: validation.highRisk
   });
-  return { id: plan.id, version, draft, validation, taskIds, text: plan.text };
+  return { id: newRow.id, version, draft, validation, taskIds, text: plan.text };
 }
 
 function evaluatePlan(db: Db, plan: ActivePlan): Record<string, unknown> {

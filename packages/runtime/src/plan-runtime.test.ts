@@ -106,8 +106,8 @@ describe("plan runtime", () => {
     const plan = persistPlan(db, session.id, turn.id, draft, validation, "awal", () => {});
     let metadata = JSON.parse((db.prepare("SELECT metadata_json FROM plans WHERE id = ?").get(plan.id) as { metadata_json: string }).metadata_json) as { snapshots: Array<{ version: number }> };
     expect(metadata.snapshots.map((item) => item.version)).toEqual([1]);
-    revisePlan(db, plan, { reason: "uji revisi", tasks: draft.tasks }, () => {});
-    metadata = JSON.parse((db.prepare("SELECT metadata_json FROM plans WHERE id = ?").get(plan.id) as { metadata_json: string }).metadata_json) as { snapshots: Array<{ version: number }> };
+    const revised = revisePlan(db, plan, { reason: "uji revisi", tasks: draft.tasks }, () => {});
+    metadata = JSON.parse((db.prepare("SELECT metadata_json FROM plans WHERE id = ?").get(revised.id) as { metadata_json: string }).metadata_json) as { snapshots: Array<{ version: number }> };
     expect(metadata.snapshots.map((item) => item.version)).toEqual([1, 2]);
   });
 
@@ -235,13 +235,18 @@ describe("plan runtime", () => {
     );
 
     expect(next.version).toBe(2);
-    expect(getPlan(db, plan.id)?.version).toBe(2);
-    const tasks = db
+    expect(getPlan(db, plan.id)?.status).toBe("cancelled");
+    expect(getPlan(db, plan.id)?.version).toBe(1);
+    expect(getPlan(db, next.id)?.version).toBe(2);
+    const oldTasks = db
       .prepare("SELECT title, status FROM tasks WHERE plan_id = ? ORDER BY created_at")
       .all(plan.id) as { title: string; status: string }[];
-    expect(tasks.find((task) => task.title === "Buat endpoint")?.status).toBe("done");
-    expect(tasks.find((task) => task.title === "Tambah tes endpoint")?.status).toBe("queued");
-    const metadata = JSON.parse(getPlan(db, plan.id)?.metadata_json ?? "{}") as {
+    const newTasks = db
+      .prepare("SELECT title, status FROM tasks WHERE plan_id = ? ORDER BY created_at")
+      .all(next.id) as { title: string; status: string }[];
+    expect(oldTasks.find((task) => task.title === "Buat endpoint")?.status).toBe("done");
+    expect(newTasks.find((task) => task.title === "Tambah tes endpoint")?.status).toBe("queued");
+    const metadata = JSON.parse(getPlan(db, next.id)?.metadata_json ?? "{}") as {
       revisions?: { reason: string }[];
     };
     expect(metadata.revisions?.at(-1)?.reason).toBe("file target berubah");
