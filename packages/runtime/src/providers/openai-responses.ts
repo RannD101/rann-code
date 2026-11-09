@@ -1,6 +1,16 @@
 import { RannError } from "@rann/shared";
 import { readSse, providerError, safeArgs } from "./sse.js";
-import type { ChatMessage, ChatRequest, Provider, ProviderChunk, ToolSpec } from "./types.js";
+import {
+  estimateTokens,
+  type ChatMessage,
+  type ChatRequest,
+  type Provider,
+  type ProviderChunk,
+  type ProviderHealthProbe,
+  type ProviderModelInfo,
+  type ToolSpec
+} from "./types.js";
+import { normalizeModelInfo, probeHealth, requestJson } from "./adapter-helpers.js";
 
 export interface ResponsesOptions {
   name: string;
@@ -63,6 +73,7 @@ function toTools(tools: ToolSpec[] | undefined): unknown[] | undefined {
 export class OpenAiResponsesProvider implements Provider {
   readonly name: string;
   readonly kind = "openai-responses";
+  readonly support = { embed: false, listModels: true, health: true, countTokens: true };
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly headers: Record<string, string>;
@@ -74,6 +85,34 @@ export class OpenAiResponsesProvider implements Provider {
     this.apiKey = options.apiKey;
     this.headers = options.headers ?? {};
     this.timeoutMs = options.timeoutMs ?? 120_000;
+  }
+
+  stream(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    return this.chat(request);
+  }
+
+  private authHeaders(): Record<string, string> {
+    return { authorization: `Bearer ${this.apiKey}`, ...this.headers };
+  }
+
+  async listModels(): Promise<ProviderModelInfo[]> {
+    const { data } = await requestJson<{ data?: Array<{ id?: string; context_window?: number }> }>({
+      url: `${this.baseUrl}/models`,
+      headers: this.authHeaders(),
+      label: `Provider ${this.name}`,
+      timeoutMs: Math.min(this.timeoutMs, 30_000)
+    });
+    return (data.data ?? [])
+      .map((entry) => normalizeModelInfo(entry))
+      .filter((entry): entry is ProviderModelInfo => entry !== undefined);
+  }
+
+  async health(): Promise<ProviderHealthProbe> {
+    return probeHealth(`${this.baseUrl}/models`, this.authHeaders(), `Provider ${this.name}`, 10_000);
+  }
+
+  countTokens(request: ChatRequest): number {
+    return request.messages.reduce((total, message) => total + estimateTokens(message.content), 0);
   }
 
   async *chat(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
@@ -88,6 +127,19 @@ export class OpenAiResponsesProvider implements Provider {
       const tools = toTools(request.tools);
       if (tools) body.tools = tools;
       if (request.maxTokens) body.max_output_tokens = request.maxTokens;
+      if (request.responseFormat) {
+        body.text = {
+          format:
+            request.responseFormat.type === "json_schema"
+              ? {
+                  type: "json_schema",
+                  name: request.responseFormat.name ?? "output",
+                  schema: request.responseFormat.schema ?? { type: "object" },
+                  strict: request.responseFormat.strict ?? true
+                }
+              : { type: "json_object" }
+        };
+      }
       if (request.temperature !== undefined) body.temperature = request.temperature;
 
       let response: Response;
@@ -126,6 +178,8 @@ export class OpenAiResponsesProvider implements Provider {
       let completed = false;
       const calls = new Map<string, { id: string; name: string; args: string }>();
 
+      const requestId = response.headers.get("x-request-id") ?? undefined;
+      if (requestId) yield { type: "request_id", id: requestId };
       for await (const event of readSse(response.body)) {
         let payload: Record<string, unknown>;
         try {

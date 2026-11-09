@@ -1,6 +1,6 @@
 # Status implementasi PRD V1
 
-Diperbarui: 2026-11-07
+Diperbarui: 2026-11-09
 
 Sumber kebenaran: `docs/prd/`. Audit bukti per FR ada di `docs/audit/`.
 
@@ -25,7 +25,7 @@ Tidak ada FR yang dihitung done karena audit memakai syarat bukti kode dan tes, 
 | Milestone | Isi | Status |
 | --- | --- | --- |
 | M1 | Storage, backup, restore, migrasi | selesai |
-| M2 | Provider, router, kapabilitas model | berjalan |
+| M2 | Provider, router, kapabilitas model | selesai, sisa keychain OS |
 | M3 | CLI, command registry, streaming | hampir selesai |
 | M4 | Agent core, planner, verifier, checkpoint | selesai |
 | M5 | Coding tools, Git, project map | sebagian besar |
@@ -159,6 +159,21 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - Gateway punya pemantauan node multi-node, proxy HTTP dan WebSocket lewat header `x-rann-node`.
 - Discord mendaftarkan slash command dan menerima interaksi bertanda tangan Ed25519 lewat `/v1/discord/interactions`.
 - Audit lama di `docs/audit/parts/` masih memuat gap usang; audit ulang belum selesai.
+
+## Progres terkini (2026-11-09)
+
+- Audit `docs/audit/final.json` turun dari 38 menjadi 32 entri `partial`; RC-FR-033, RC-FR-101, RC-FR-104, RC-FR-105, RC-FR-109, dan RC-FR-111 kini `done` dengan bukti kode dan tes.
+- `packages/storage/src/schema-v13.ts`: migrasi 13 `model-discovery` menambah kolom `available`, `discovered_at`, `capability_source` pada `models` dan tabel `model_capability_log`.
+- `packages/runtime/src/model-discovery.ts`: discovery dari provider dengan cache 6 jam, model yang hilang ditandai `available = 0` tanpa dihapus, dan perubahan capability dicatat dengan sumber `provider`.
+- `packages/runtime/src/models.ts`: model di luar katalog tidak lagi dianggap mendukung tool calling; hanya `streaming` yang diasumsikan, dan `capabilitiesUnknown` menandai asumsi itu. Capability hasil discovery tidak ditimpa katalog saat daemon start.
+- `packages/runtime/src/providers/`: setiap adapter punya flag `support` dan method `listModels`, `embed`, `health`, `countTokens` sesuai dukungan; `adapter-helpers.ts` memusatkan timeout 30 detik, pemetaan status error, dan probe health.
+- `packages/runtime/src/retry-matrix.ts`: satu tabel retry untuk `provider.chat` (3 percobaan, backoff 1/2/4 detik, jitter 250 ms), `provider.stream` (2), `tool.http` (hanya GET/HEAD), `tool.shell` (tidak diulang), `mcp.request`, `db.busy`, dan `gateway.request`.
+- `packages/runtime/src/providers/retry.ts` memakai matriks itu dan sekarang selalu melempar error terakhir bila jatah percobaan habis; sebelumnya stream bisa berakhir tanpa teks.
+- Fallback hanya dipakai bila `model.allow_fallback` aktif dan model tidak dipatok; kandidat wajib punya seluruh capability model utama; kegagalan total membawa rantai percobaan beserta jumlah percobaan per kandidat.
+- `provider_request_id` dari header provider dipancarkan sebagai chunk `request_id` dan disimpan ke `usage_events` serta event `usage.update`.
+- `http_request` mengulang GET/HEAD pada 429 dan 5xx lewat matriks yang sama, dan tidak pernah mengulang POST.
+- RPC baru: `model.discover` dan `model.capabilities`; `model.list` menyertakan `unavailable` serta `capabilitySource`. CLI: `rann models --discover [--force]`.
+- `pnpm build`, `pnpm -r run typecheck`, `pnpm test` (306 tes di 60 berkas), `pnpm lint`, dan `pnpm depcruise` lulus.
 
 ## Aturan
 

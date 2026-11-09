@@ -1,6 +1,16 @@
 import { RannError } from "@rann/shared";
 import { readSse, providerError } from "./sse.js";
-import type { ChatMessage, ChatRequest, Provider, ProviderChunk, ToolSpec } from "./types.js";
+import {
+  estimateTokens,
+  type ChatMessage,
+  type ChatRequest,
+  type Provider,
+  type ProviderChunk,
+  type ProviderHealthProbe,
+  type ProviderModelInfo,
+  type ToolSpec
+} from "./types.js";
+import { normalizeModelInfo, probeHealth, requestJson } from "./adapter-helpers.js";
 
 export interface GeminiOptions {
   name: string;
@@ -73,6 +83,7 @@ function toTools(tools: ToolSpec[] | undefined): unknown[] | undefined {
 export class GeminiProvider implements Provider {
   readonly name: string;
   readonly kind = "gemini";
+  readonly support = { embed: false, listModels: true, health: true, countTokens: true };
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly headers: Record<string, string>;
@@ -84,6 +95,46 @@ export class GeminiProvider implements Provider {
     this.apiKey = options.apiKey;
     this.headers = options.headers ?? {};
     this.timeoutMs = options.timeoutMs ?? 120_000;
+  }
+
+  stream(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    return this.chat(request);
+  }
+
+  private apiBase(): string {
+    return this.baseUrl.endsWith("/v1beta") ? this.baseUrl : `${this.baseUrl}/v1beta`;
+  }
+
+  async listModels(): Promise<ProviderModelInfo[]> {
+    const { data } = await requestJson<{
+      models?: Array<{ name?: string; displayName?: string; inputTokenLimit?: number; outputTokenLimit?: number }>;
+    }>({
+      url: `${this.apiBase()}/models?pageSize=1000`,
+      headers: { "x-goog-api-key": this.apiKey, ...this.headers },
+      label: `Provider ${this.name}`,
+      timeoutMs: Math.min(this.timeoutMs, 30_000)
+    });
+    return (data.models ?? [])
+      .map((entry) =>
+        normalizeModelInfo({
+          ...entry,
+          ...(entry.name ? { name: entry.name.replace(/^models\//, "") } : {})
+        })
+      )
+      .filter((entry): entry is ProviderModelInfo => entry !== undefined);
+  }
+
+  async health(): Promise<ProviderHealthProbe> {
+    return probeHealth(
+      `${this.apiBase()}/models`,
+      { "x-goog-api-key": this.apiKey, ...this.headers },
+      `Provider ${this.name}`,
+      10_000
+    );
+  }
+
+  countTokens(request: ChatRequest): number {
+    return request.messages.reduce((total, message) => total + estimateTokens(message.content), 0);
   }
 
   async *chat(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
@@ -99,6 +150,15 @@ export class GeminiProvider implements Provider {
       const tools = toTools(request.tools);
       if (tools) body.tools = tools;
       if (request.maxTokens) body.generationConfig = { maxOutputTokens: request.maxTokens };
+      if (request.responseFormat) {
+        body.generationConfig = {
+          ...((body.generationConfig as Record<string, unknown> | undefined) ?? {}),
+          responseMimeType: "application/json",
+          ...(request.responseFormat.type === "json_schema" && request.responseFormat.schema
+            ? { responseSchema: request.responseFormat.schema }
+            : {})
+        };
+      }
       if (request.temperature !== undefined) {
         body.generationConfig = { ...(body.generationConfig as object), temperature: request.temperature };
       }
@@ -138,6 +198,8 @@ export class GeminiProvider implements Provider {
       let sawFinish = false;
       let textChars = 0;
 
+      const requestId = response.headers.get("x-request-id") ?? undefined;
+      if (requestId) yield { type: "request_id", id: requestId };
       for await (const event of readSse(response.body)) {
         let payload: Record<string, unknown>;
         try {

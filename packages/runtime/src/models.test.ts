@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "@rann/shared";
-import { getModel, listModels, openDatabase, type Db } from "@rann/storage";
+import { getModel, listCapabilityChanges, listModels, openDatabase, type Db } from "@rann/storage";
 import { builtinDescriptor, costFor, mergeCapabilities, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
 
 function fresh(): Db {
@@ -100,5 +100,31 @@ describe("model registry", () => {
       capabilities: { toolCalling: false }
     });
     expect(descriptor.capabilities.toolCalling).toBe(false);
+  });
+});
+
+describe("capability yang belum diketahui", () => {
+  it("hanya mengasumsikan streaming untuk model di luar katalog", () => {
+    const descriptor = builtinDescriptor("rann", "model-misterius-9");
+    expect(descriptor.capabilities.streaming).toBe(true);
+    expect(descriptor.capabilities.toolCalling).toBe(false);
+    expect(descriptor.capabilities.structuredOutput).toBe(false);
+    expect(descriptor.capabilitiesUnknown).toBe(true);
+    expect(descriptor.capabilitySource).toBe("assumed");
+  });
+
+  it("mencatat sumber capability dari config dan log perubahannya", () => {
+    const db = fresh();
+    seedRegistry(db, config);
+    const descriptor = resolveDescriptor(db, config, "rann", "rann/gpt-6-astra");
+    expect(descriptor.capabilitySource).toBe("config");
+    expect(descriptor.capabilitiesUnknown).toBe(false);
+    const changes = listCapabilityChanges(db, "rann", "rann/gpt-6-astra");
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.capability).toBe("vision");
+    expect(changes[0]?.new_value).toBe(0);
+    expect(changes[0]?.source).toBe("config");
+    seedRegistry(db, config);
+    expect(listCapabilityChanges(db, "rann", "rann/gpt-6-astra")).toHaveLength(1);
   });
 });

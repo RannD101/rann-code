@@ -29,6 +29,9 @@ export interface ModelRow {
   cache_read_price: number | null;
   cache_write_price: number | null;
   capabilities_json: string;
+  available: number;
+  discovered_at: number | null;
+  capability_source: string;
   created_at: number;
   updated_at: number;
 }
@@ -57,6 +60,9 @@ export interface AddModelInput {
   cacheReadPrice?: number;
   cacheWritePrice?: number;
   capabilities?: Record<string, boolean>;
+  available?: boolean;
+  discoveredAt?: number;
+  capabilitySource?: string;
 }
 
 export function upsertProvider(db: Db, input: AddProviderInput): ProviderRow {
@@ -106,8 +112,8 @@ export function upsertModel(db: Db, input: AddModelInput): ModelRow {
   if (!provider) throw new Error(`Provider belum terdaftar: ${input.provider}`);
   const now = Date.now();
   db.prepare(
-    `INSERT INTO models (id, provider_id, name, display_name, context_window, max_output_tokens, input_price, output_price, cache_read_price, cache_write_price, capabilities_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO models (id, provider_id, name, display_name, context_window, max_output_tokens, input_price, output_price, cache_read_price, cache_write_price, capabilities_json, available, discovered_at, capability_source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(provider_id, name) DO UPDATE SET
        display_name = excluded.display_name,
        context_window = excluded.context_window,
@@ -117,6 +123,9 @@ export function upsertModel(db: Db, input: AddModelInput): ModelRow {
        cache_read_price = excluded.cache_read_price,
        cache_write_price = excluded.cache_write_price,
        capabilities_json = excluded.capabilities_json,
+       available = COALESCE(?, models.available),
+       discovered_at = COALESCE(excluded.discovered_at, models.discovered_at),
+       capability_source = excluded.capability_source,
        updated_at = excluded.updated_at`
   ).run(
     newId("mdl"),
@@ -130,17 +139,93 @@ export function upsertModel(db: Db, input: AddModelInput): ModelRow {
     input.cacheReadPrice ?? null,
     input.cacheWritePrice ?? null,
     JSON.stringify(input.capabilities ?? {}),
+    input.available === undefined ? 1 : input.available ? 1 : 0,
+    input.discoveredAt ?? null,
+    input.capabilitySource ?? "catalog",
     now,
-    now
+    now,
+    input.available === undefined ? null : input.available ? 1 : 0
   );
   return db.prepare("SELECT * FROM models WHERE provider_id = ? AND name = ?").get(provider.id, input.name) as ModelRow;
 }
 
-export function listModels(db: Db, providerName?: string): ModelRow[] {
-  if (!providerName) return db.prepare("SELECT * FROM models ORDER BY name").all() as ModelRow[];
+export function listModels(db: Db, providerName?: string, options: { includeUnavailable?: boolean } = {}): ModelRow[] {
+  const filter = options.includeUnavailable ? "" : " AND available = 1";
+  if (!providerName) return db.prepare(`SELECT * FROM models WHERE 1 = 1${filter} ORDER BY name`).all() as ModelRow[];
   const provider = getProvider(db, providerName);
   if (!provider) return [];
-  return db.prepare("SELECT * FROM models WHERE provider_id = ? ORDER BY name").all(provider.id) as ModelRow[];
+  return db.prepare(`SELECT * FROM models WHERE provider_id = ?${filter} ORDER BY name`).all(provider.id) as ModelRow[];
+}
+
+/**
+ * Menandai model tersedia atau tidak tanpa menghapus barisnya. Model yang
+ * hilang dari daftar provider tetap dikenali supaya sesi lama yang menunjuk
+ * model itu bisa memberi pesan jelas, bukan "model tidak dikenal".
+ */
+export function setModelAvailability(
+  db: Db,
+  providerName: string,
+  modelName: string,
+  available: boolean,
+  discoveredAt?: number
+): boolean {
+  const provider = getProvider(db, providerName);
+  if (!provider) return false;
+  const result = db
+    .prepare("UPDATE models SET available = ?, discovered_at = COALESCE(?, discovered_at), updated_at = ? WHERE provider_id = ? AND name = ?")
+    .run(available ? 1 : 0, discoveredAt ?? null, Date.now(), provider.id, modelName);
+  return result.changes > 0;
+}
+
+export interface CapabilityChangeInput {
+  provider: string;
+  model: string;
+  capability: string;
+  oldValue?: boolean;
+  newValue: boolean;
+  source: string;
+}
+
+export interface CapabilityChangeRow {
+  id: string;
+  provider: string;
+  model: string;
+  capability: string;
+  old_value: number | null;
+  new_value: number;
+  source: string;
+  changed_at: number;
+}
+
+export function recordCapabilityChange(db: Db, input: CapabilityChangeInput): CapabilityChangeRow {
+  const id = newId("cap");
+  db.prepare(
+    "INSERT INTO model_capability_log (id, provider, model, capability, old_value, new_value, source, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    id,
+    input.provider,
+    input.model,
+    input.capability,
+    input.oldValue === undefined ? null : input.oldValue ? 1 : 0,
+    input.newValue ? 1 : 0,
+    input.source,
+    Date.now()
+  );
+  return db.prepare("SELECT * FROM model_capability_log WHERE id = ?").get(id) as CapabilityChangeRow;
+}
+
+export function listCapabilityChanges(db: Db, providerName?: string, modelName?: string): CapabilityChangeRow[] {
+  if (providerName && modelName) {
+    return db
+      .prepare("SELECT * FROM model_capability_log WHERE provider = ? AND model = ? ORDER BY changed_at DESC, rowid DESC")
+      .all(providerName, modelName) as CapabilityChangeRow[];
+  }
+  if (providerName) {
+    return db
+      .prepare("SELECT * FROM model_capability_log WHERE provider = ? ORDER BY changed_at DESC, rowid DESC")
+      .all(providerName) as CapabilityChangeRow[];
+  }
+  return db.prepare("SELECT * FROM model_capability_log ORDER BY changed_at DESC, rowid DESC").all() as CapabilityChangeRow[];
 }
 
 export function getModel(db: Db, providerName: string, modelName: string): ModelRow | undefined {

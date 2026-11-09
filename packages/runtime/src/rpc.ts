@@ -95,6 +95,8 @@ import { prepareAttachments, type RawAttachment } from "./attachments.js";
 import { listFileCheckpoints, restoreFileCheckpoint } from "./checkpoint-files.js";
 import { createProvider, resolveModel } from "./providers/index.js";
 import { costFor, registrySnapshot, resolveDescriptor, seedRegistry } from "./models.js";
+import { discoverAllProviders, discoverModels } from "./model-discovery.js";
+import { listCapabilityChanges, listModels as listModelRows } from "@rann/storage";
 import { providerHealth } from "./providers/retry.js";
 import { MemoryService } from "./memory.js";
 import { HookRunner, type HookEvent } from "./hooks.js";
@@ -532,6 +534,29 @@ export class RpcServer {
         );
       case "model.list":
         return this.modelList();
+      case "model.discover": {
+        const config = this.options.config.config;
+        if (typeof input.provider === "string") {
+          return await discoverModels(this.db, config, input.provider, this.secrets, {
+            force: input.force === true,
+            ...(input.persist === undefined ? {} : { persist: input.persist === true })
+          });
+        }
+        return {
+          results: await discoverAllProviders(this.db, config, this.secrets, {
+            force: input.force === true,
+            ...(input.persist === undefined ? {} : { persist: input.persist === true })
+          })
+        };
+      }
+      case "model.capabilities":
+        return {
+          changes: listCapabilityChanges(
+            this.db,
+            input.provider as string | undefined,
+            input.model as string | undefined
+          )
+        };
       case "provider.list":
         return this.providerList();
       case "provider.test":
@@ -1639,7 +1664,11 @@ export class RpcServer {
     const provider = createProvider(providerName, providerConfig, process.env, this.secrets);
     const model = descriptor.model;
     const fallbacks: NonNullable<RunTurnOptions["fallbacks"]> = [];
-    for (const id of config.model.fallback) {
+    // Fallback hanya bila model tidak dipatok, atau user mengizinkannya lewat
+    // model.allow_fallback (PRD FR-111 butir 2).
+    const pinned = !asksAuto || config.routing.pinned !== undefined;
+    const allowFallback = config.model.allow_fallback !== false && (!pinned || config.model.allow_fallback === true);
+    for (const id of allowFallback ? config.model.fallback : []) {
       if (id === descriptor.id) continue;
       const slash = id.indexOf("/");
       const providerName = slash > 0 ? id.slice(0, slash) : config.provider;
@@ -1648,6 +1677,12 @@ export class RpcServer {
       try {
         const modelId = slash > 0 ? id.slice(slash + 1) : id;
         const candidate = resolveDescriptor(this.db, config, providerName, modelId);
+        // Fallback tidak boleh menurunkan capability: semua yang dibutuhkan
+        // model utama harus tersedia di kandidat (PRD FR-111 butir 3).
+        const capable = (Object.keys(descriptor.capabilities) as Array<keyof typeof candidate.capabilities>).every(
+          (capability) => !descriptor.capabilities[capability] || candidate.capabilities[capability]
+        );
+        if (!capable) continue;
         fallbacks.push({
           provider: createProvider(providerName, providerEntry, process.env, this.secrets),
           model: candidate.model,
@@ -1822,6 +1857,8 @@ export class RpcServer {
       planOnly: input.planOnly === true,
       forcePlan: input.forcePlan === true,
       modelCapabilities: descriptor.capabilities,
+      capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
+      modelId: descriptor.id,
       contextWindow: descriptor.contextWindow,
       maxOutputTokens: descriptor.maxOutputTokens,
       fallbacks,
@@ -2222,6 +2259,8 @@ export class RpcServer {
         skills,
         mcp,
         modelCapabilities: descriptor.capabilities,
+        capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
+        modelId: descriptor.id,
         contextWindow: descriptor.contextWindow,
         maxOutputTokens: descriptor.maxOutputTokens,
         costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>
@@ -2329,11 +2368,17 @@ export class RpcServer {
     const descriptors = registrySnapshot(this.db, config);
     const models = new Set<string>(current?.models ?? []);
     if (defaultModel) models.add(defaultModel);
+    const unavailable = Object.keys(config.providers).flatMap((provider) =>
+      listModelRows(this.db, provider, { includeUnavailable: true })
+        .filter((row) => row.available !== 1)
+        .map((row) => `${provider}/${row.name}`)
+    );
     return {
       provider: config.provider,
       default: defaultModel,
       models: [...models],
-      descriptors
+      descriptors,
+      unavailable
     };
   }
 

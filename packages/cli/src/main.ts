@@ -3144,7 +3144,30 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
 }
 
 async function modelsCommand(args: ParsedArgs): Promise<number> {
-  const data = await withClient((client) => client.request<Record<string, unknown>>("model.list"));
+  const discover = flagBool(args, "discover");
+  const data = await withClient(async (client) => {
+    if (!discover) return client.request<Record<string, unknown>>("model.list");
+    const discovered = await client.request<Record<string, unknown>>("model.discover", {
+      force: flagBool(args, "force")
+    });
+    if (!flagBool(args, "json")) {
+      const results = (discovered.results as Array<Record<string, unknown>> | undefined) ?? [discovered];
+      for (const result of results) {
+        const name = String(result.provider ?? "?");
+        if (result.supported === false) {
+          print(`${name}: discovery tidak didukung (${String(result.reason ?? "-")})`);
+          continue;
+        }
+        const added = (result.added as string[] | undefined) ?? [];
+        const dropped = (result.unavailable as string[] | undefined) ?? [];
+        print(
+          `${name}: ${(result.discovered as string[] | undefined)?.length ?? 0} model${result.cached === true ? " (cache)" : ""}` +
+            `${added.length > 0 ? `, baru ${added.length}` : ""}${dropped.length > 0 ? `, tidak tersedia ${dropped.length}` : ""}`
+        );
+      }
+    }
+    return client.request<Record<string, unknown>>("model.list");
+  });
   if (flagBool(args, "json")) {
     print(JSON.stringify(data, null, 2));
     return 0;
@@ -3160,8 +3183,15 @@ async function modelsCommand(args: ParsedArgs): Promise<number> {
         .join(",");
       const pricing = descriptor.pricing as Record<string, number> | undefined;
       const price = pricing ? ` $${pricing.inputPerMTok}/${pricing.outputPerMTok} per Mtok` : " harga belum diketahui";
+      const source = String(descriptor.capabilitySource ?? "catalog");
+      const assumed = descriptor.capabilitiesUnknown === true ? "  capability: asumsi aman" : "";
       print(`- ${descriptor.id}  ctx ${descriptor.contextWindow}  out ${descriptor.maxOutputTokens}${price}`);
-      print(`  ${capabilities}`);
+      print(`  ${capabilities || "hanya streaming"}  sumber: ${source}${assumed}`);
+    }
+    const unavailable = (data.unavailable as string[] | undefined) ?? [];
+    if (unavailable.length > 0) {
+      print("");
+      print(`tidak tersedia (${unavailable.length}): ${unavailable.join(", ")}`);
     }
     return 0;
   }

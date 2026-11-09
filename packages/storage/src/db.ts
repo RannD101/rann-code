@@ -12,6 +12,7 @@ import { SCHEMA_V9 } from "./schema-v9.js";
 import { SCHEMA_V10 } from "./schema-v10.js";
 import { SCHEMA_V11 } from "./schema-v11.js";
 import { SCHEMA_V12 } from "./schema-v12.js";
+import { SCHEMA_V13 } from "./schema-v13.js";
 
 export type Db = Database.Database;
 
@@ -276,6 +277,11 @@ END;
     version: 12,
     name: "procedural-memory",
     sql: SCHEMA_V12
+  },
+  {
+    version: 13,
+    name: "model-discovery",
+    sql: SCHEMA_V13
   }
 ];
 

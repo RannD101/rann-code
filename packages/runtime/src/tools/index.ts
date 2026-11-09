@@ -30,6 +30,7 @@ import { ensureProjectMap, projectMapSummary } from "../project-map.js";
 import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
 import type { BrowserActionInput } from "../browser.js";
+import { canRetry, retryDelay, type RetryTarget } from "../retry-matrix.js";
 import { httpFetch, webSearch } from "../web.js";
 import { detectPackageManager, documentExtract, imageInfo, imageTransform, packageCommand, sqliteQuery, systemInfo } from "../system-tools.js";
 import type { SkillStore } from "../skills.js";
@@ -1905,7 +1906,7 @@ export const tools: ToolDefinition[] = [
         deny: ctx.deny
       });
       if (method === "POST" && !ctx.approved) throw new RannError("E_APPROVAL_REQUIRED", "HTTP POST butuh izin");
-      return textResult(await httpFetch(input));
+      return textResult(await withRetry("tool.http", method, () => httpFetch(input)));
     }
   },
   {
@@ -2272,6 +2273,24 @@ const aliasTools: ToolDefinition[] = [
   aliasTool("list_dir", "fs_list", "Daftar isi direktori."),
   aliasTool("stat_file", "fs_stat", "Metadata dan hash berkas.")
 ];
+
+/**
+ * Retry mengikuti matriks terpusat: hanya kode yang boleh diulang, dan POST
+ * tidak pernah diulang karena dampaknya tidak idempoten.
+ */
+async function withRetry<T>(target: RetryTarget, method: string | undefined, run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const err = toRannError(error);
+      if (!canRetry(target, { attempt, error: err, ...(method ? { method } : {}) })) throw err;
+      const data = (err.data ?? {}) as Record<string, unknown>;
+      const delay = retryDelay(target, attempt, typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
 
 export function toolSpecs(custom: CustomTool[] = []): ToolSpec[] {
   const entries = [...tools, ...aliasTools];

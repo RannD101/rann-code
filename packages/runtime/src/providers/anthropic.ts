@@ -1,6 +1,16 @@
 import { RannError } from "@rann/shared";
 import { readSse, providerError, safeArgs } from "./sse.js";
-import type { ChatMessage, ChatRequest, Provider, ProviderChunk, ToolSpec } from "./types.js";
+import {
+  estimateTokens,
+  type ChatMessage,
+  type ChatRequest,
+  type Provider,
+  type ProviderChunk,
+  type ProviderHealthProbe,
+  type ProviderModelInfo,
+  type ToolSpec
+} from "./types.js";
+import { normalizeModelInfo, probeHealth, requestJson } from "./adapter-helpers.js";
 
 export interface AnthropicOptions {
   name: string;
@@ -67,6 +77,7 @@ function toTools(tools: ToolSpec[] | undefined): unknown[] | undefined {
 export class AnthropicProvider implements Provider {
   readonly name: string;
   readonly kind = "anthropic";
+  readonly support = { embed: false, listModels: true, health: true, countTokens: true };
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly headers: Record<string, string>;
@@ -80,6 +91,36 @@ export class AnthropicProvider implements Provider {
     this.headers = options.headers ?? {};
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.version = options.version ?? "2023-06-01";
+  }
+
+  stream(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    return this.chat(request);
+  }
+
+  private authHeaders(): Record<string, string> {
+    return { "x-api-key": this.apiKey, "anthropic-version": this.version, ...this.headers };
+  }
+
+  async listModels(): Promise<ProviderModelInfo[]> {
+    const { data } = await requestJson<{
+      data?: Array<{ id?: string; display_name?: string; context_window?: number; max_output_tokens?: number }>;
+    }>({
+      url: `${this.baseUrl}/v1/models?limit=1000`,
+      headers: this.authHeaders(),
+      label: `Provider ${this.name}`,
+      timeoutMs: Math.min(this.timeoutMs, 30_000)
+    });
+    return (data.data ?? [])
+      .map((entry) => normalizeModelInfo(entry))
+      .filter((entry): entry is ProviderModelInfo => entry !== undefined);
+  }
+
+  async health(): Promise<ProviderHealthProbe> {
+    return probeHealth(`${this.baseUrl}/v1/models`, this.authHeaders(), `Provider ${this.name}`, 10_000);
+  }
+
+  countTokens(request: ChatRequest): number {
+    return request.messages.reduce((total, message) => total + estimateTokens(message.content), 0);
   }
 
   async *chat(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
@@ -99,6 +140,13 @@ export class AnthropicProvider implements Provider {
       const tools = toTools(request.tools);
       if (tools) body.tools = tools;
       if (request.temperature !== undefined) body.temperature = request.temperature;
+      if (request.responseFormat) {
+        const instruction =
+          request.responseFormat.type === "json_schema"
+            ? "Balas hanya dengan satu objek JSON yang valid sesuai skema yang diminta, tanpa penjelasan atau pagar kode."
+            : "Balas hanya dengan JSON yang valid, tanpa penjelasan atau pagar kode.";
+        body.system = body.system ? `${String(body.system)}\n\n${instruction}` : instruction;
+      }
 
       let response: Response;
       try {
@@ -138,6 +186,8 @@ export class AnthropicProvider implements Provider {
       const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
       let sawStop = false;
 
+      const requestId = response.headers.get("request-id") ?? undefined;
+      if (requestId) yield { type: "request_id", id: requestId };
       for await (const event of readSse(response.body)) {
         let payload: Record<string, unknown>;
         try {

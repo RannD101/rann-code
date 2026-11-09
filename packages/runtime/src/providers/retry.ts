@@ -1,4 +1,5 @@
 import { RannError } from "@rann/shared";
+import { canRetry, retryDelay, type RetryTarget } from "../retry-matrix.js";
 
 export type HealthStatus = "healthy" | "degraded" | "rate_limited" | "auth_error" | "down" | "unknown";
 
@@ -93,15 +94,11 @@ export const providerHealth = new HealthRegistry();
 
 export function isRetryable(error: unknown): boolean {
   if (!(error instanceof RannError)) return false;
-  if (error.code === "E_PROVIDER_RATE_LIMIT" || error.code === "E_PROVIDER_UNAVAILABLE") return true;
-  if (error.code === "E_TIMEOUT") return true;
-  return false;
+  return canRetry("provider.chat", { attempt: 1, error });
 }
 
 export function retryDelayMs(attempt: number, retryAfterMs?: number): number {
-  if (retryAfterMs !== undefined && retryAfterMs > 0) return Math.min(retryAfterMs, 60_000);
-  const base = [1_000, 2_000, 4_000][attempt - 1] ?? 4_000;
-  return base + Math.floor(Math.random() * 251);
+  return retryDelay("provider.chat", attempt, retryAfterMs);
 }
 
 export async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -123,14 +120,18 @@ export interface RetryOptions {
   attempts?: number;
   signal?: AbortSignal;
   onRetry?: (attempt: number, error: RannError, delayMs: number) => void;
+  /** Default `provider.chat`; jalur streaming memakai `provider.stream`. */
+  target?: RetryTarget;
 }
 
 export async function* retryStream<T>(
   factory: () => AsyncIterable<T>,
   options: RetryOptions = {}
 ): AsyncGenerator<T, void, unknown> {
-  const attempts = options.attempts ?? 3;
+  const target = options.target ?? "provider.chat";
+  const attempts = options.attempts ?? (target === "provider.stream" ? 2 : 3);
   let emitted = false;
+  let lastError: RannError | undefined;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       for await (const item of factory()) {
@@ -140,11 +141,17 @@ export async function* retryStream<T>(
       return;
     } catch (error) {
       const err = error instanceof RannError ? error : new RannError("E_PROVIDER_UNAVAILABLE", (error as Error).message);
-      if (emitted || !isRetryable(err) || attempt === attempts) throw err;
+      if (emitted) throw err;
+      if (!canRetry(target, { attempt, error: err, ...(options.signal ? { signal: options.signal } : {}) })) throw err;
+      lastError = err;
       const data = (err.data ?? {}) as Record<string, unknown>;
-      const delay = retryDelayMs(attempt, typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined);
+      const delay = retryDelay(target, attempt, typeof data.retryAfterMs === "number" ? data.retryAfterMs : undefined);
       options.onRetry?.(attempt, err, delay);
       await sleep(delay, options.signal);
     }
   }
+  // `attempts` bisa lebih kecil dari jatah kebijakan target (misalnya kandidat
+  // fallback hanya boleh satu percobaan). Tanpa throw di sini, stream yang gagal
+  // akan terlihat selesai tanpa teks.
+  if (lastError) throw lastError;
 }

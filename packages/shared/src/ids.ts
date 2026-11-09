@@ -57,7 +57,8 @@ export type IdPrefix =
   | "prc"
   | "usr"
   | "mev"
-  | "pacc";
+  | "pacc"
+  | "cap";
 
 /**
  * ID berurutan waktu, 26 karakter setelah prefiks, aman untuk diurutkan

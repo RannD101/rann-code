@@ -29,7 +29,8 @@ export const configSchema = z.object({
   model: z
     .object({
       default: z.string().min(1).default("auto"),
-      fallback: z.array(z.string().min(1)).default([])
+      fallback: z.array(z.string().min(1)).default([]),
+      allow_fallback: z.boolean().default(true)
     })
     .default({}),
   provider: z.string().min(1).default("mock"),

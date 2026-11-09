@@ -111,6 +111,17 @@ export async function httpFetch(input: { url: string; method?: string; headers?:
     redirect: "follow",
     signal: AbortSignal.timeout(30_000)
   });
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get("retry-after") ?? "");
+    throw new RannError("E_PROVIDER_RATE_LIMIT", `HTTP 429 dari ${url.hostname}`, {
+      data: { status: 429, ...(Number.isFinite(retryAfter) && retryAfter > 0 ? { retryAfterMs: retryAfter * 1000 } : {}) }
+    });
+  }
+  if (response.status >= 500) {
+    throw new RannError("E_PROVIDER_UNAVAILABLE", `HTTP ${response.status} dari ${url.hostname}`, {
+      data: { status: response.status }
+    });
+  }
   const contentType = response.headers.get("content-type") ?? "";
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > MAX_BODY) throw new RannError("E_INPUT_TOO_LARGE", `Respons melebihi ${MAX_BODY} byte`);

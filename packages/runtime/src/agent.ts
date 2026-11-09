@@ -148,6 +148,9 @@ export interface RunTurnOptions {
   forcePlan?: boolean;
   approvePlan?: (plan: { goal: string; highRisk: boolean; text: string; tasks: string[] }) => Promise<boolean | ApprovalDecision>;
   modelCapabilities?: ModelCapabilities;
+  /** True bila capability model memakai asumsi aman karena belum diketahui. */
+  capabilitiesUnknown?: boolean;
+  modelId?: string;
   agentId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
@@ -449,6 +452,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const contextOptions: ContextOptions = options.context ?? { maxTokens: 24_000, keepRecent: 20, summaryChars: 6_000 };
   const budget: BudgetOptions = options.budget ?? { maxTokensPerTurn: 0, maxTokensPerDay: 0, maxUsdPerDay: 0 };
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  let providerRequestId: string | undefined;
   let finalText = "";
   let steps = 0;
   let finished = false;
@@ -672,7 +676,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           sessionId: session.id,
           turnId,
           inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens
+          outputTokens: usage.outputTokens,
+          ...(providerRequestId ? { providerRequestId } : {})
         });
         publish("turn.end", { status: "done", steps: 0, usage, plan_only: true });
         finalize("done");
@@ -707,6 +712,15 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   ) + (options.modelCapabilities?.toolCalling === false
     ? "\n\nCatatan: model ini tidak mendukung tool calling. Jangan mengaku sudah menjalankan tool; jawab dengan pengetahuan dan minta user menjalankan perintah manual bila perlu."
     : "");
+
+  if (options.capabilitiesUnknown) {
+    publish("log", {
+      level: "warn",
+      event: "model.capability_assumed",
+      model: options.modelId ?? null,
+      message: "Capability model belum diketahui; sistem memakai asumsi aman (hanya streaming)"
+    });
+  }
 
   const delegate = options.delegate
     ? async (input: DelegateInput): Promise<unknown> => {
@@ -753,6 +767,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         if (spec.name === "memory") return options.memory !== undefined;
         if (spec.name === "skill") return options.skills !== undefined;
         if (spec.name === "task") return delegate !== undefined;
+        if (spec.name === "parallel_read" && options.modelCapabilities?.parallelToolCalls === false) return false;
         return true;
       });
   const availableSpecs: ToolSpec[] = [...specs, ...mcpSpecs];
@@ -818,6 +833,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
       ];
       let lastProviderError: unknown;
       let completed = false;
+      const attemptChain: Array<{ provider: string; model: string; code: string; message: string; attempts: number }> = [];
       for (const [index, candidate] of candidates.entries()) {
         if (providerHealth.isCoolingDown(candidate.provider.name)) {
           publish("log", {
@@ -840,17 +856,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             { data: { prompt_tokens: promptTokens, context_window: candidate.contextWindow } }
           );
         }
+        let candidateAttempts = 0;
         try {
           for await (const chunk of retryStream(
-            () =>
-              candidate.provider.chat({
+            () => {
+              candidateAttempts += 1;
+              return candidate.provider.chat({
                 model: candidate.model,
                 messages,
                 tools: availableSpecs,
                 signal
-              }),
+              });
+            },
             {
-              attempts: index === 0 ? 3 : 1,
+              attempts: index === 0 ? 2 : 1,
+              target: "provider.stream",
               signal,
               onRetry: (attempt, error, delayMs) => {
                 publish("error", {
@@ -869,7 +889,11 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               publish("reasoning.delta", { text: chunk.text });
             } else if (chunk.type === "tool_call") {
               calls.push({ id: chunk.id, name: chunk.name, args: chunk.args });
+            } else if (chunk.type === "request_id") {
+              providerRequestId = chunk.id;
+              publish("log", { level: "debug", event: "provider.request_id", request_id: chunk.id });
             } else if (chunk.type === "usage") {
+              if (chunk.providerRequestId) providerRequestId = chunk.providerRequestId;
               usage.inputTokens += chunk.inputTokens;
               usage.outputTokens += chunk.outputTokens;
               usage.cacheReadTokens += chunk.cacheReadTokens ?? 0;
@@ -895,13 +919,21 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
               from: provider.name,
               to: candidate.provider.name,
               model: candidate.model,
-              reason: "primary_unavailable"
+              reason: "primary_unavailable",
+              fallback: true
             });
           }
           break;
         } catch (error) {
           lastProviderError = error;
           const err = toRannError(error);
+          attemptChain.push({
+            provider: candidate.provider.name,
+            model: candidate.model,
+            code: err.code,
+            message: String(redactSecrets(err.message)),
+            attempts: candidateAttempts
+          });
           providerHealth.recordFailure(candidate.provider.name, err);
           if (text.length > 0) {
             addMessage(db, {
@@ -916,7 +948,17 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           if (text.length > 0 || err.code === "E_CANCELLED" || err.code === "E_BUDGET_EXHAUSTED") throw err;
         }
       }
-      if (!completed) throw lastProviderError ?? new RannError("E_PROVIDER_UNAVAILABLE", "Semua provider gagal");
+      if (!completed) {
+        const chain = attemptChain.map(
+          (entry) => `${entry.provider}/${entry.model}:${entry.code}${entry.attempts > 1 ? ` x${entry.attempts}` : ""}`
+        );
+        const base = lastProviderError ?? new RannError("E_PROVIDER_UNAVAILABLE", "Semua provider gagal");
+        const code = toRannError(base).code;
+        throw new RannError(code, `${toRannError(base).message} (rantai: ${chain.join(" -> ") || "kosong"})`, {
+          cause: base,
+          data: { attempts: attemptChain }
+        });
+      }
 
       if (text.length > 0) {
         addMessage(db, {
@@ -1071,11 +1113,13 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,
           cacheWriteTokens: usage.cacheWriteTokens,
+          ...(providerRequestId ? { providerRequestId } : {}),
           costUsd:
             options.costUsd?.(usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens) ?? null
         });
         publish("usage.update", {
           ...usage,
+          ...(providerRequestId ? { provider_request_id: providerRequestId } : {}),
           cost_usd: options.costUsd?.(usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens) ?? null
         });
         if (activePlan) finishPlan(db, activePlan, "done", (type, data) => publish(type, data));

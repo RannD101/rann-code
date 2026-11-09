@@ -336,14 +336,13 @@
   {
     "id": "RC-FR-033",
     "title": "Self-correction dan strategi retry",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/agent.ts, plan-runtime.ts, checkpoint-files.ts; plan-runtime tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "retry-matrix.ts jadi satu sumber kebijakan; retryStream dan withRetry di tools/index.ts membaca matriks yang sama, dengan tes retry-matrix.test.ts"
     ],
-    "gaps": [
-      "Matriks retry belum sepenuhnya mengikuti ARCHITECTURE 13.3 untuk semua jenis error."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-034",
@@ -1048,14 +1047,13 @@
   {
     "id": "RC-FR-101",
     "title": "Arsitektur adapter provider",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "Provider punya dukungan deklaratif `support` dan method embed, listModels, health, countTokens; adapter-helpers.ts memusatkan timeout dan error; tes adapter-support.test.ts"
     ],
-    "gaps": [
-      "Provider belum punya method embed dan listModels pada kontraknya."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-102",
@@ -1080,26 +1078,24 @@
   {
     "id": "RC-FR-104",
     "title": "Discovery dan registrasi model",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "model-discovery.ts: discoverModels/discoverAllProviders, cache 6 jam, simpan available/discovered_at/capability_source, model hilang ditandai tidak tersedia; RPC model.discover; tes model-discovery.test.ts dan rpc-model.test.ts"
     ],
-    "gaps": [
-      "Discovery model dari provider belum ada; registry hanya dari config dan katalog."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-105",
     "title": "Capability registry",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "Model di luar katalog hanya mengasumsikan streaming (capabilitiesUnknown), capability dari provider/config dicatat ke model_capability_log dengan sumbernya; tes models.test.ts"
     ],
-    "gaps": [
-      "Kapabilitas model yang tidak diketahui masih dianggap mendukung tool calling."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-106",
@@ -1130,20 +1126,19 @@
       "pnpm check 286 tes"
     ],
     "gaps": [
-      "Structured output dan validasi JSON schema belum diterapkan ke provider."
+      "response_format json_object/json_schema sudah dikirim ke provider yang mendukung; validasi balasan terhadap schema dan jalur multimodal (audio, pdf) belum diterapkan."
     ]
   },
   {
     "id": "RC-FR-109",
     "title": "Usage dan biaya",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "Adapter memancarkan chunk request_id dari header provider; agent menyimpan provider_request_id ke usage_events dan event usage.update; tes agent-usage.test.ts"
     ],
-    "gaps": [
-      "provider_request_id belum dibawa di chunk dan belum disimpan di usage atau audit."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-110",
@@ -1158,14 +1153,13 @@
   {
     "id": "RC-FR-111",
     "title": "Retry dan fallback",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "Fallback dihormati hanya bila model.allow_fallback dan model tidak dipatok, kandidat wajib punya capability yang sama, kegagalan total membawa rantai percobaan; tes agent-usage.test.ts dan retry-matrix.test.ts"
     ],
-    "gaps": [
-      "Retry provider dan tool belum sepenuhnya mengikuti matriks per kode error."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-112",

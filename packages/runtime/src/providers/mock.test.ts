@@ -40,6 +40,6 @@ describe("MockProvider", () => {
         chunks.push(chunk);
       }
     }).rejects.toMatchObject({ code: "E_STREAM_TRUNCATED" });
-    expect(chunks[0]).toMatchObject({ type: "text", text: "sebagian" });
+    expect(chunks.find((chunk) => chunk.type === "text")).toMatchObject({ type: "text", text: "sebagian" });
   });
 });

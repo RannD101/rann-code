@@ -107,6 +107,15 @@ export const providerTestParams = z.object({
   name: z.string().min(1).optional(),
   model: z.string().min(1).optional()
 });
+export const modelDiscoverParams = z.object({
+  provider: z.string().min(1).optional(),
+  force: z.boolean().optional(),
+  persist: z.boolean().optional()
+});
+export const modelCapabilitiesParams = z.object({
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional()
+});
 export const usageSummaryParams = z.object({
   sessionId: z.string().min(1).optional()
 });
@@ -410,6 +419,8 @@ export const methodParams = {
   "turn.runtime": turnGetParams,
   "turn.events": turnEventsParams,
   "model.list": empty,
+  "model.discover": modelDiscoverParams,
+  "model.capabilities": modelCapabilitiesParams,
   "provider.list": empty,
   "config.explain": configExplainParams,
   "config.get": empty,

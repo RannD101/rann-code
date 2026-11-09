@@ -1,5 +1,16 @@
 import { RannError } from "@rann/shared";
-import { estimateTokens, type ChatMessage, type ChatRequest, type Provider, type ProviderChunk } from "./types.js";
+import {
+  estimateTokens,
+  type ChatMessage,
+  type ChatRequest,
+  type EmbedRequest,
+  type EmbedResult,
+  type Provider,
+  type ProviderChunk,
+  type ProviderHealthProbe,
+  type ProviderModelInfo
+} from "./types.js";
+import { normalizeModelInfo, probeHealth, requestJson } from "./adapter-helpers.js";
 
 export interface OpenAiCompatibleOptions {
   name: string;
@@ -65,6 +76,7 @@ function statusToCode(status: number): "E_PROVIDER_AUTH" | "E_PROVIDER_RATE_LIMI
 export class OpenAiCompatibleProvider implements Provider {
   readonly name: string;
   readonly kind = "openai-compatible";
+  readonly support = { embed: true, listModels: true, health: true, countTokens: true };
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly headers: Record<string, string>;
@@ -101,6 +113,7 @@ export class OpenAiCompatibleProvider implements Provider {
       }
       if (request.maxTokens) body.max_tokens = request.maxTokens;
       if (request.temperature !== undefined) body.temperature = request.temperature;
+      if (request.responseFormat) body.response_format = responseFormatBody(request.responseFormat);
 
       let response: Response;
       try {
@@ -138,6 +151,10 @@ export class OpenAiCompatibleProvider implements Provider {
         });
       }
 
+      const requestId =
+        response.headers.get("x-request-id") ?? response.headers.get("request-id") ?? undefined;
+      if (requestId) yield { type: "request_id", id: requestId };
+
       if (!this.useStream) {
         const json = (await response.json()) as {
           choices?: Array<{ message?: { content?: string; reasoning?: string; reasoning_content?: string; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }; finish_reason?: string }>;
@@ -161,7 +178,8 @@ export class OpenAiCompatibleProvider implements Provider {
             type: "usage",
             inputTokens: json.usage.prompt_tokens ?? 0,
             outputTokens: json.usage.completion_tokens ?? 0,
-            ...(cached !== undefined ? { cacheReadTokens: cached } : {})
+            ...(cached !== undefined ? { cacheReadTokens: cached } : {}),
+            ...(requestId ? { providerRequestId: requestId } : {})
           };
         }
         yield { type: "done", finishReason: choice?.finish_reason ?? "stop" };
@@ -238,9 +256,15 @@ export class OpenAiCompatibleProvider implements Provider {
         yield { type: "tool_call", id: call.id, name: call.name || "unknown", args: safeJson(call.args) };
       }
       if (usage) {
-        yield { type: "usage", inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+        yield {
+          type: "usage",
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}),
+          ...(requestId ? { providerRequestId: requestId } : {})
+        };
       } else {
-        yield { type: "usage", inputTokens: 0, outputTokens: 0 };
+        yield { type: "usage", inputTokens: 0, outputTokens: 0, ...(requestId ? { providerRequestId: requestId } : {}) };
       }
       yield { type: "done", finishReason };
     } finally {
@@ -248,6 +272,65 @@ export class OpenAiCompatibleProvider implements Provider {
       request.signal?.removeEventListener("abort", onAbort);
     }
   }
+
+  stream(request: ChatRequest): AsyncGenerator<ProviderChunk, void, unknown> {
+    return this.chat(request);
+  }
+
+  async listModels(): Promise<ProviderModelInfo[]> {
+    const { data } = await requestJson<{ data?: Array<{ id?: string; name?: string; context_window?: number }> }>({
+      url: `${this.baseUrl}/models`,
+      headers: { authorization: `Bearer ${this.apiKey}`, ...this.headers },
+      label: `Provider ${this.name}`,
+      timeoutMs: Math.min(this.timeoutMs, 30_000)
+    });
+    const entries = data.data ?? [];
+    return entries
+      .map((entry) => normalizeModelInfo(entry))
+      .filter((entry): entry is ProviderModelInfo => entry !== undefined);
+  }
+
+  async embed(request: EmbedRequest): Promise<EmbedResult> {
+    const { data } = await requestJson<{ data?: Array<{ embedding?: number[] }>; usage?: { prompt_tokens?: number } }>({
+      url: `${this.baseUrl}/embeddings`,
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}`, ...this.headers },
+      body: { model: request.model, input: request.input },
+      label: `Provider ${this.name}`,
+      timeoutMs: Math.min(this.timeoutMs, 60_000),
+      ...(request.signal ? { signal: request.signal } : {})
+    });
+    return {
+      model: request.model,
+      vectors: (data.data ?? []).map((entry) => entry.embedding ?? []),
+      ...(data.usage?.prompt_tokens !== undefined ? { inputTokens: data.usage.prompt_tokens } : {})
+    };
+  }
+
+  async health(): Promise<ProviderHealthProbe> {
+    return probeHealth(
+      `${this.baseUrl}/models`,
+      { authorization: `Bearer ${this.apiKey}`, ...this.headers },
+      `Provider ${this.name}`,
+      10_000
+    );
+  }
+
+  countTokens(request: ChatRequest): number {
+    return request.messages.reduce((total, message) => total + estimateTokens(message.content), 0);
+  }
+}
+
+export function responseFormatBody(format: NonNullable<ChatRequest["responseFormat"]>): Record<string, unknown> {
+  if (format.type === "json_object") return { type: "json_object" };
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: format.name ?? "output",
+      schema: format.schema ?? { type: "object" },
+      strict: format.strict ?? true
+    }
+  };
 }
 
 function parseRetryAfter(value: string | null): number | undefined {

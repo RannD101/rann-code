@@ -1,5 +1,5 @@
 import { RannError, type RannConfig } from "@rann/shared";
-import { getModel, getProvider, listModels, upsertModel, upsertProvider } from "@rann/storage";
+import { getModel, getProvider, listModels, recordCapabilityChange, upsertModel, upsertProvider } from "@rann/storage";
 import type { Db } from "@rann/storage";
 
 export const CAPABILITIES = [
@@ -44,6 +44,10 @@ export interface ModelDescriptor {
   latencyClass?: "fast" | "standard" | "slow";
   deprecated?: boolean;
   source?: "catalog" | "config" | "user";
+  /** Asal capability: katalog bawaan, provider, config manual, atau asumsi aman. */
+  capabilitySource?: "catalog" | "provider" | "config" | "manual" | "assumed";
+  /** True bila capability belum diketahui dan memakai asumsi aman. */
+  capabilitiesUnknown?: boolean;
 }
 
 const ALL_FALSE: ModelCapabilities = Object.fromEntries(CAPABILITIES.map((name) => [name, false])) as ModelCapabilities;
@@ -138,11 +142,12 @@ const CATALOG: CatalogEntry[] = [
 
 export function builtinDescriptor(provider: string, model: string, kind = "openai-compatible"): ModelDescriptor {
   const entry = CATALOG.find((candidate) => candidate.match.test(model));
+  // Model yang tidak ada di katalog hanya diasumsikan streaming. Tool calling,
+  // schema, dan vision tidak boleh dianggap ada sebelum dibuktikan provider,
+  // dokumentasi, atau override manual (PRD FR-105 butir 4).
   const baseCaps =
     entry?.capabilities ??
-    (kind === "mock"
-      ? caps({ toolCalling: true, parallelToolCalls: true, structuredOutput: true, reasoning: true })
-      : caps({ toolCalling: true, parallelToolCalls: true, structuredOutput: true }));
+    (kind === "mock" ? caps({ toolCalling: true, parallelToolCalls: true, structuredOutput: true, reasoning: true }) : caps({}));
   return {
     id: `${provider}/${model}`,
     provider,
@@ -158,15 +163,21 @@ export function builtinDescriptor(provider: string, model: string, kind = "opena
     tokenizer: { type: "heuristic" },
     ...(entry?.quality ? { quality: entry.quality } : {}),
     latencyClass: entry?.latencyClass ?? "standard",
-    source: entry ? "catalog" : "user"
+    source: entry ? "catalog" : "user",
+    capabilitySource: entry ? "catalog" : "assumed",
+    capabilitiesUnknown: entry === undefined
   };
 }
 
 export function mergeCapabilities(
-  base: ModelCapabilities,
+  base: Partial<ModelCapabilities>,
   override?: Record<string, unknown>
 ): ModelCapabilities {
-  const merged = { ...base };
+  const merged = {} as ModelCapabilities;
+  for (const name of CAPABILITIES) {
+    const value = base[name];
+    merged[name] = typeof value === "boolean" ? value : name === "streaming";
+  }
   if (!override) return merged;
   for (const name of CAPABILITIES) {
     const value = override[name];
@@ -230,13 +241,23 @@ export function resolveDescriptor(
   const cacheReadPrice = overrides?.cacheReadPrice ?? row?.cache_read_price ?? base.pricing?.cacheReadPerMTok;
   const cacheWritePrice = overrides?.cacheWritePrice ?? row?.cache_write_price ?? base.pricing?.cacheWritePerMTok;
   const isConfigured = config.models?.[`${providerName}/${modelName}`] !== undefined;
+  const mergedCapabilities = mergeCapabilities(mergeCapabilities(base.capabilities, rowCaps), overrides?.capabilities);
+  const rowSource = row?.capability_source as ModelDescriptor["capabilitySource"] | undefined;
+  const capabilitySource: NonNullable<ModelDescriptor["capabilitySource"]> =
+    overrides?.capabilities && Object.keys(overrides.capabilities).length > 0
+      ? "manual"
+      : rowCaps && Object.keys(rowCaps).length > 0
+        ? (rowSource ?? "manual")
+        : (base.capabilitySource ?? "assumed");
   const merged: ModelDescriptor = {
     ...base,
     source: isConfigured ? "config" : base.source,
     displayName: row?.display_name ?? base.displayName,
     contextWindow: overrides?.contextWindow ?? row?.context_window ?? base.contextWindow,
     maxOutputTokens: overrides?.maxOutputTokens ?? row?.max_output_tokens ?? base.maxOutputTokens,
-    capabilities: mergeCapabilities(mergeCapabilities(base.capabilities, rowCaps), overrides?.capabilities),
+    capabilities: mergedCapabilities,
+    capabilitySource,
+    capabilitiesUnknown: capabilitySource === "assumed",
     ...(hasPriceOverride || rowHasPrice
       ? {
           pricing: {
@@ -270,13 +291,27 @@ export function seedRegistry(db: Db, config: RannConfig): void {
     for (const model of provider.models) {
       const descriptor = builtinDescriptor(name, model, provider.kind);
       const override = config.models?.[`${name}/${model}`];
+      const previous = getModel(db, name, model);
+      // Capability hasil discovery tidak boleh ditimpa katalog setiap kali
+      // daemon start; config hanya menambah override di atasnya.
+      const baseCaps =
+        previous?.capability_source === "provider"
+          ? (JSON.parse(previous.capabilities_json) as Partial<ModelCapabilities>)
+          : descriptor.capabilities;
+      logCapabilityChanges(db, name, model, override?.capabilities, "config", baseCaps);
       upsertModel(db, {
         provider: name,
         name: model,
         displayName: descriptor.displayName,
         contextWindow: override?.context_window ?? descriptor.contextWindow,
         maxOutputTokens: override?.max_output_tokens ?? descriptor.maxOutputTokens,
-        capabilities: override?.capabilities ?? descriptor.capabilities,
+        capabilities: mergeCapabilities(baseCaps, override?.capabilities),
+        capabilitySource: override?.capabilities
+          ? "config"
+          : previous?.capability_source === "provider"
+            ? "provider"
+            : "catalog",
+        ...(previous ? { available: previous.available === 1 } : {}),
         ...(override?.input_price !== undefined ? { inputPrice: override.input_price } : {}),
         ...(override?.output_price !== undefined ? { outputPrice: override.output_price } : {}),
         ...(override?.cache_read_price !== undefined ? { cacheReadPrice: override.cache_read_price } : {}),
@@ -294,6 +329,39 @@ export function seedRegistry(db: Db, config: RannConfig): void {
         capabilities: descriptor.capabilities
       });
     }
+  }
+}
+
+/**
+ * Config manual yang mengubah capability dicatat dengan sumber `config` supaya
+ * perbedaan antara katalog dan keadaan nyata bisa ditelusuri (FR-105 butir 5).
+ */
+function logCapabilityChanges(
+  db: Db,
+  provider: string,
+  model: string,
+  override: Record<string, boolean> | undefined,
+  source: string,
+  baseCaps: Partial<ModelCapabilities>
+): void {
+  if (!override || Object.keys(override).length === 0) return;
+  const row = getModel(db, provider, model);
+  const before = row ? (JSON.parse(row.capabilities_json) as Record<string, unknown>) : {};
+  const merged = mergeCapabilities(baseCaps, override);
+  for (const capability of CAPABILITIES) {
+    // Saat model pertama kali terdaftar, capability bawaan bukan "perubahan":
+    // yang dicatat hanya kunci yang memang diatur di config.
+    if (!row && capability in override === false) continue;
+    const previous = typeof before[capability] === "boolean" ? (before[capability] as boolean) : undefined;
+    if (previous === merged[capability]) continue;
+    recordCapabilityChange(db, {
+      provider,
+      model,
+      capability,
+      ...(previous === undefined ? {} : { oldValue: previous }),
+      newValue: merged[capability],
+      source
+    });
   }
 }
 
