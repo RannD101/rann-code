@@ -134,4 +134,13 @@ describe("acceptance memori dan tool", () => {
     expect(other.prompt("rahasia sesi").text).toBe("");
   });
 
+
+  it("AC-075 impor melaporkan konflik duplikat", () => {
+    const { service } = setup();
+    service.add({ text: "Selalu pakai pnpm untuk proyek ini", kind: "preference", scope: "project" });
+    const payload = service.exportAll();
+    const result = service.importAll(payload, { strategy: "skip" });
+    expect(result.conflicts.length).toBeGreaterThan(0);
+    expect(result.imported).toBe(0);
+  });
 });

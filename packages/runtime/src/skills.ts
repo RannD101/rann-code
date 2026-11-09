@@ -759,6 +759,16 @@ export class SkillStore {
       rmSync(temp, { recursive: true, force: true });
       return skill;
     }
+    const parse = (value: string): number[] => value.split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const nextVersion = parse(fresh.version);
+    const currentVersion = parse(skill.version);
+    for (let index = 0; index < 3; index += 1) {
+      if ((nextVersion[index] ?? 0) < (currentVersion[index] ?? 0)) {
+        rmSync(temp, { recursive: true, force: true });
+        throw new RannError("E_APPROVAL_REQUIRED", `Sumber ${fresh.version} lebih lama dari versi lokal ${skill.version}`);
+      }
+      if ((nextVersion[index] ?? 0) > (currentVersion[index] ?? 0)) break;
+    }
     const freshBody = fresh.body;
     const freshDescription = fresh.description;
     const freshTriggers = fresh.triggers;

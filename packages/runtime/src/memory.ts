@@ -395,7 +395,7 @@ export class MemoryService {
     return { imported: result.imported, skipped: result.skipped + skipped, merged: 0 };
   }
 
-  importAll(payload: MemoryExport, options: { replace?: boolean; strategy?: "skip" | "overwrite" | "merge" } = {}): { imported: number; skipped: number } {
+  importAll(payload: MemoryExport, options: { replace?: boolean; strategy?: "skip" | "overwrite" | "merge" } = {}): { imported: number; skipped: number; conflicts: string[] } {
     if (payload.version !== 1 || !Array.isArray(payload.entries)) {
       throw new Error("Format ekspor memori tidak dikenal");
     }
@@ -404,6 +404,7 @@ export class MemoryService {
     }
     let imported = 0;
     let skipped = 0;
+    const conflicts: string[] = [];
     for (const entry of payload.entries.slice(0, 2_000)) {
       if (typeof entry.text !== "string" || entry.text.trim().length < 3) {
         skipped += 1;
@@ -412,6 +413,7 @@ export class MemoryService {
       const duplicate = this.list("all", 2_000).find((item) => item.text === entry.text.trim());
       if (duplicate && (options.strategy ?? "merge") === "skip") {
         skipped += 1;
+        conflicts.push(`duplikat: ${entry.text.trim().slice(0, 80)}`);
         continue;
       }
       if (duplicate && options.strategy === "overwrite") {
@@ -428,7 +430,7 @@ export class MemoryService {
       });
       imported += 1;
     }
-    return { imported, skipped };
+    return { imported, skipped, conflicts };
   }
 
   /** Pecah dokumen knowledge jadi bagian kecil per heading. */

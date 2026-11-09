@@ -192,8 +192,10 @@
     "criteria": "Given file gambar 2 MB, when dilampirkan dengan `@file`, then gambar dikirim ke model vision dan ditampilkan sebagai lampiran, bukan teks base64.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-multimodal.test.ts: gambar 2 MB dikirim sebagai attachment, teks tidak memuat base64"
+    ],
     "gaps": []
   },
   {
@@ -768,8 +770,10 @@
     "criteria": "Given export JSONL, when diimpor ke profil lain, then konflik dilaporkan dan pengguna memilih menang atau lewati.",
     "verification": "I",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: impor strategi skip melaporkan konflik duplikat"
+    ],
     "gaps": []
   },
   {
@@ -874,8 +878,10 @@
     "criteria": "Given skill terpasang, when `/skill remove`, then file dihapus dan audit mencatat; update menolak menimpa versi lokal yang lebih baru tanpa izin.",
     "verification": "O",
     "section": "6. Skills dan tools (077-090)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-skills.test.ts dan rpc skill.remove: update menolak sumber lebih lama, hapus tercatat di audit"
+    ],
     "gaps": []
   },
   {
@@ -1119,8 +1125,10 @@
     "criteria": "Given model multimodal, when gambar dikirim, then gambar sampai ke provider dalam format yang benar; model non-multimodal menolak dengan pesan jelas.",
     "verification": "I",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-multimodal.test.ts: model vision menerima attachment, model non-vision menolak dengan pesan jelas"
+    ],
     "gaps": []
   },
   {

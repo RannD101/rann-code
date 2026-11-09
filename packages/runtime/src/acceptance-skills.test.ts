@@ -72,4 +72,17 @@ describe("acceptance skill", () => {
     expect(s.readAsset("ref", "detail.md")).toContain("ISI_REFERENSI_RAHASIA");
     expect(s.view("ref")?.tokens).toBeGreaterThan(0);
   });
+
+  it("AC-085 update menolak sumber lebih lama dari versi lokal", () => {
+    const s = store();
+    s.create({ name: "lokal", description: "Gunakan saat menguji versi lokal", body: "Isi lokal versi satu yang cukup panjang.", scope: "project" });
+    s.create({ name: "lokal", description: "Gunakan saat menguji versi lokal", body: "Isi lokal versi dua yang cukup panjang.", scope: "project", overwrite: true });
+    const source = join(mkdtempSync(join(tmpdir(), "rann-skill-old-")), "lokal");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: lokal\ndescription: Sumber lama\nversion: 1.0.0\n---\nIsi lama yang cukup panjang untuk validasi.\n"
+    );
+    expect(() => s.update("lokal", source)).toThrow(/lebih lama/);
+  });
 });
