@@ -271,3 +271,16 @@ describe("database", () => {
     expect(recoverInterruptedTurns(db)).toHaveLength(0);
   });
 });
+
+describe("integritas database", () => {
+  it("PRAGMA integrity_check dan foreign_key_check lulus tanpa baris yatim", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-integrity-"));
+    const { db } = openDatabase({ path: join(dir, "rann.db") });
+    const integrity = db.prepare("PRAGMA integrity_check").all() as Array<{ integrity_check: string }>;
+    expect(integrity[0]?.integrity_check).toBe("ok");
+    const orphans = db.prepare("PRAGMA foreign_key_check").all();
+    expect(orphans).toEqual([]);
+    db.close();
+  });
+});
+

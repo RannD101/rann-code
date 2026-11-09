@@ -69,7 +69,9 @@ afterEach(async () => {
 describe("gateway HTTP", () => {
   it("melayani health publik dan dashboard tanpa token", async () => {
     const { base } = await boot();
+    const started = Date.now();
     const health = await fetch(`${base}/health`);
+    expect(Date.now() - started).toBeLessThan(200);
     expect(health.status).toBe(200);
     expect(await health.json()).toMatchObject({ ok: true, gateway: "ok" });
 
