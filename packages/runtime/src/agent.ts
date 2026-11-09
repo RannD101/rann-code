@@ -790,6 +790,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   try {
     const deadline = Date.now() + (config.maxRuntimeMs ?? 7_200_000);
     for (steps = 1; steps <= config.maxSteps; steps += 1) {
+      if (noProgress) {
+        throw new RannError("E_NO_PROGRESS", "Turn dihentikan karena tool gagal berulang dengan argumen sama");
+      }
       publish("phase", { phase: "act", step: steps });
       if (signal?.aborted) throw new RannError("E_CANCELLED", "Turn dibatalkan");
       if (Date.now() > deadline) {
@@ -1488,7 +1491,10 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           });
           noProgress = true;
           finishError("E_NO_PROGRESS", `Tidak ada kemajuan: ${call.name} gagal berulang dengan argumen sama`);
-          continue;
+          throw new RannError(
+            "E_NO_PROGRESS",
+            `Tool ${call.name} gagal ${priorFailures} kali dengan argumen sama; turn dihentikan`
+          );
         }
         if (lastFailureSignature.length > 0 && signature !== lastFailureSignature) {
           publish("log", { level: "info", event: "strategy.change", from: lastFailureSignature.slice(0, 200), to: signature.slice(0, 200), step: steps });

@@ -212,10 +212,10 @@ Putaran ketiga menutup 002, 012, 037, 039, 079, 080, 093, 099, 127, 141, dan 149
 
 - `docs/audit/acceptance.json` memuat 151 AC dengan status awal `unverified`, dipisah per domain.
 - Harness baru: `packages/cli/src/acceptance-pty.test.ts` menjalankan REPL di pty nyata lewat `script`, dan `acceptance-cli.test.ts` menjalankan CLI non-interaktif.
-- AC lulus (25): 001 header < 1 detik, 002 palette < 500 ms, 003 Tab menampilkan /model dan /models tanpa eksekusi, 006 panah atas mengulang prompt terakhir, 014 JSON valid, 015 stdin terbaca dan stdout bersih, 016 NO_COLOR tanpa escape, 017 `!` menjalankan shell tanpa model, 020 command tak dikenal memberi saran, 005 Shift+Enter dan Ctrl+E, 010 status bar lengkap, 018 daftar dan pindah project, 008 blok tool dan Ctrl+O, 024/025/026/027 validasi dan estimasi plan, 035 prioritas job, 042/043/044 tulis-edit-transaksi, 060 lease, 063 sumber memori, 066 isolasi memori agen, 069 kandidat pending.
+- AC lulus (32): 001 header < 1 detik, 002 palette < 500 ms, 003 Tab menampilkan /model dan /models tanpa eksekusi, 006 panah atas mengulang prompt terakhir, 014 JSON valid, 015 stdin terbaca dan stdout bersih, 016 NO_COLOR tanpa escape, 017 `!` menjalankan shell tanpa model, 020 command tak dikenal memberi saran, 005 Shift+Enter dan Ctrl+E, 010 status bar lengkap, 018 daftar dan pindah project, 008 blok tool dan Ctrl+O, 024/025/026/027 validasi dan estimasi plan, 035 prioritas job, 042/043/044 tulis-edit-transaksi, 060 lease, 063 sumber memori, 066 isolasi memori agen, 069 kandidat pending, 021 fase agent, 025 DAG, 029 persistensi plan, 030 revisi versi, 032/033 guard no-progress, 036 gap verifikasi.
 - Perbaikan UX: Enter pada palette hanya menerima command yang cocok, fuzzy lemah dikembalikan ke buffer agar E_UNKNOWN_COMMAND muncul.
 - AC-004: siklus Ctrl+C diperbaiki (dua kali membatalkan turn, berikutnya keluar 130), tes pty untuk kode keluar belum stabil.
-- Sisa 126 AC belum diverifikasi; domain agent 021-039 sudah sebagian, berikutnya 028-034, 036-039, lalu coding 040-052.
+- Sisa 119 AC belum diverifikasi; berikutnya 022/023/028/031/034/037/038/039, lalu coding 040-052.
 
 ## Aturan
 

@@ -212,8 +212,10 @@
     "criteria": "Given goal sederhana, when turn dijalankan, then agent melewati fase plan, act, observe, evaluate dan berhenti hanya setelah kriteria selesai atau error dianalisis.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: fase understand, act, observe, evaluate muncul pada turn dengan tool"
+    ],
     "gaps": []
   },
   {
@@ -252,7 +254,7 @@
     "section": "2. Agent dan planning (021-039)",
     "status": "pass",
     "evidence": [
-      "acceptance-agent.test.ts: order topologis a -> b -> c"
+      "plan-runtime.test.ts: task mengikuti dependensi DAG dan blocked bila dependensi tidak selesai"
     ],
     "gaps": []
   },
@@ -292,8 +294,10 @@
     "criteria": "Given plan disetujui, when sesi dilanjutkan besok, then plan dan status task masih sama dan versi plan tercatat.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: plan dan snapshot versi bertahan setelah database dibuka ulang"
+    ],
     "gaps": []
   },
   {
@@ -301,8 +305,10 @@
     "criteria": "Given asumsi plan terbukti salah saat eksekusi, when agent menemukan kondisi berbeda, then plan baru dibuat dengan versi +1 dan alasan perubahan.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plan-runtime.test.ts: revisePlan menaikkan versi dan mempertahankan task selesai"
+    ],
     "gaps": []
   },
   {
@@ -319,8 +325,10 @@
     "criteria": "Given tool mengembalikan error, when observasi diterima, then agent mengevaluasi error dan memilih retry, alternatif, atau replan, bukan mengulang identik 3 kali.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: kegagalan tool berulang memicu E_NO_PROGRESS sebelum percobaan ketiga dijalankan"
+    ],
     "gaps": []
   },
   {
@@ -328,8 +336,10 @@
     "criteria": "Given kegagalan yang sama dua kali, when percobaan ketiga, then strategi harus berbeda; jika identik, turn dihentikan dengan `E_NO_PROGRESS`.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-agent2.test.ts: guard menghentikan turn saat argumen identik gagal berulang"
+    ],
     "gaps": []
   },
   {
@@ -357,8 +367,10 @@
     "criteria": "Given goal dan 3 kriteria, when satu kriteria gagal, then status task bukan `done` dan laporan menyebut kriteria yang gagal.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "plan-runtime.test.ts: verifikasi melaporkan gap kriteria dan goal menolak bukti kosong"
+    ],
     "gaps": []
   },
   {
