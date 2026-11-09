@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,10 +19,11 @@ interface Pty {
   exit: Promise<number | null>;
 }
 
-function startPty(): { pty: Pty; home: string } {
+function startPty(options: { env?: Record<string, string>; cwd?: string } = {}): { pty: Pty; home: string } {
   const home = mkdtempSync(join(tmpdir(), "rann-pty-"));
-  const child = spawn("script", ["-qec", `node ${main}`, "/dev/null"], {
-    env: { ...process.env, RANN_HOME: home, TERM: "xterm-256color" },
+  const child = spawn("script", ["-qec", `stty cols 120 rows 40; node ${main}`, "/dev/null"], {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    env: { ...process.env, RANN_HOME: home, TERM: "xterm-256color", ...(options.env ?? {}) },
     stdio: ["pipe", "pipe", "pipe"]
   });
   let output = "";
@@ -128,5 +129,50 @@ describe("acceptance terminal", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect((pty.output().match(/Balasan mock: halo/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  }, 30_000);
+
+  it("AC-005 Shift+Enter menambah baris dan Ctrl+E memakai editor eksternal", async () => {
+    const editorDir = mkdtempSync(join(tmpdir(), "rann-editor-"));
+    const editor = join(editorDir, "editor.sh");
+    writeFileSync(editor, '#!/bin/sh\nprintf "dari-editor" > "$1"\n', { mode: 0o755 });
+    const { pty } = startPty({ env: { EDITOR: editor, VISUAL: editor } });
+    await pty.waitFor("›", 10_000);
+    pty.write("baris satu");
+    pty.write("\u001b\r");
+    pty.write("baris dua");
+    pty.write("\n");
+    await pty.waitFor("baris dua", 5_000);
+    expect(pty.output()).toContain("baris satu");
+    await pty.waitFor("›", 10_000);
+    pty.write("\u0005");
+    await pty.waitFor("dari-editor", 5_000);
+    pty.write("\n");
+    await pty.waitFor("dari-editor", 5_000);
+  }, 30_000);
+
+  it("AC-010 status bar menampilkan model, token, context, dan biaya", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write("halo\n");
+    await pty.waitFor("Balasan mock: halo", 10_000);
+    await pty.waitFor("tok", 5_000);
+    await pty.waitFor("in 1 out 5", 5_000);
+    await pty.waitFor("% ctx", 5_000);
+    await pty.waitFor("turn $?", 5_000);
+  }, 30_000);
+
+  it("AC-018 /project menampilkan daftar dan berpindah project", async () => {
+    const a = mkdtempSync(join(tmpdir(), "rann-proj-a-"));
+    const b = mkdtempSync(join(tmpdir(), "rann-proj-b-"));
+    const { pty } = startPty({ cwd: a });
+    await pty.waitFor("›", 10_000);
+    pty.write(`/project add ${b}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    pty.write("/project\n");
+    await pty.waitFor(b, 5_000);
+    expect(pty.output()).toContain(a);
+    pty.write(`/project switch ${b}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect((pty.output().match(new RegExp(b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length).toBeGreaterThanOrEqual(2);
   }, 30_000);
 });

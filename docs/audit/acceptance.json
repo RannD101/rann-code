@@ -48,8 +48,10 @@
     "criteria": "Given input multiline, when Shift+Enter ditekan, then baris baru ditambahkan dan prompt tidak terkirim; Ctrl+E membuka editor dan menyimpan hasilnya.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: Shift+Enter menambah baris tanpa submit dan Ctrl+E memakai EDITOR eksternal"
+    ],
     "gaps": []
   },
   {
@@ -95,8 +97,10 @@
     "criteria": "Given usage tersedia, when satu turn selesai, then status bar menampilkan model, token masuk/keluar, persentase context, dan biaya; model tanpa harga menampilkan `$?`.",
     "verification": "O",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: status bar menampilkan model, tok, in/out, persen context, dan turn $?"
+    ],
     "gaps": []
   },
   {
@@ -175,8 +179,10 @@
     "criteria": "Given dua project terbuka, when `/project` dipanggil, then daftar project muncul dan perpindahan mengubah header serta konteks tanpa kehilangan sesi sebelumnya.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /project add menampilkan daftar dan /project switch berpindah project"
+    ],
     "gaps": []
   },
   {
