@@ -159,3 +159,52 @@ describe("SchedulerEngine", () => {
     expect(listJobs(db, { queue: "scheduler" })).toHaveLength(1);
   });
 });
+
+describe("trigger event dan kondisi", () => {
+  it("mengurai jadwal event dan condition", () => {
+    expect(parseSchedule("event:build.done")).toMatchObject({ kind: "event", event: "build.done" });
+    expect(parseSchedule("when:flag=1")).toMatchObject({ kind: "condition", condition: "flag=1" });
+    expect(describeSchedule("event:deploy")).toContain("event deploy");
+    expect(nextRunFor("event:deploy", "UTC")).toBeNull();
+    expect(nextRunFor("when:flag=1", "UTC", 1_000)).toBe(61_000);
+  });
+
+  it("menjalankan job saat event dipancarkan", async () => {
+    const db = setup();
+    const scheduler = createScheduler(db, {
+      name: "reaksi",
+      schedule: "event:build.done",
+      command: "shell:echo selesai",
+      nextRunAt: Date.now() + 60_000
+    });
+    const engine = new SchedulerEngine({ db, pollMs: 60_000 });
+    expect(await engine.notify("lain")).toEqual([]);
+    const runs = await engine.notify("build.done", { commit: "abc" });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.job_id).toBeTruthy();
+    const jobs = listJobs(db).filter((job) => job.kind === "scheduler.run");
+    expect(jobs).toHaveLength(1);
+    expect(String(jobs[0]?.payload_json)).toContain(scheduler.id);
+    expect(String(jobs[0]?.payload_json)).toContain("build.done");
+    expect(String(jobs[0]?.payload_json)).toContain("abc");
+  });
+
+  it("menjadwalkan condition untuk dievaluasi tiap menit", () => {
+    const db = setup();
+    const scheduler = createScheduler(db, {
+      name: "kondisi",
+      schedule: "when:flag=1",
+      command: "shell:echo jalan",
+      nextRunAt: Date.now() - 1_000
+    });
+    expect(planSchedulerTick(scheduler, Date.now()).shouldRun).toBe(true);
+    const event = createScheduler(db, {
+      name: "event-saja",
+      schedule: "event:x",
+      command: "shell:echo x",
+      nextRunAt: Date.now() - 1_000
+    });
+    expect(planSchedulerTick(event, Date.now())).toMatchObject({ shouldRun: false, nextRunAt: null });
+  });
+});
+

@@ -45,7 +45,8 @@ export const configSchema = z.object({
         output_price: z.number().nonnegative().optional(),
         cache_read_price: z.number().nonnegative().optional(),
         cache_write_price: z.number().nonnegative().optional(),
-        aliases: z.array(z.string()).default([])
+        aliases: z.array(z.string()).default([]),
+        response_schema: z.unknown().optional()
       })
     )
     .default({}),

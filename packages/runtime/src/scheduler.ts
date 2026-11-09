@@ -7,17 +7,20 @@ import {
   enqueueJob,
   finishSchedulerRun,
   getScheduler,
+  listSchedulers,
   runningSchedulerRuns,
   startSchedulerRun,
   updateScheduler,
 } from "@rann/storage";
 
 export interface ScheduleSpec {
-  kind: "once" | "every" | "cron";
+  kind: "once" | "every" | "cron" | "event" | "condition";
   expression: string;
   intervalMs?: number;
   cron?: string;
   at?: number;
+  event?: string;
+  condition?: string;
 }
 
 export interface SchedulerEngineOptions {
@@ -25,6 +28,8 @@ export interface SchedulerEngineOptions {
   db: Db;
   pollMs?: number;
   onError?: (error: unknown, scheduler?: SchedulerRow) => void;
+  /** Dipakai jadwal `when:`; tanpa callback, kondisi dianggap belum terpenuhi. */
+  evaluateCondition?: (expression: string, scheduler: SchedulerRow) => boolean;
 }
 
 const DURATION = /^(\d+)(ms|s|m|h|d)$/;
@@ -40,6 +45,16 @@ export function parseDuration(value: string): number | undefined {
 
 export function parseSchedule(input: string): ScheduleSpec {
   const raw = input.trim();
+  if (raw.startsWith("event:")) {
+    const event = raw.slice(6).trim();
+    if (event.length === 0) throw new Error("jadwal event butuh nama event");
+    return { kind: "event", expression: raw, event };
+  }
+  if (raw.startsWith("when:") || raw.startsWith("condition:")) {
+    const condition = raw.slice(raw.indexOf(":") + 1).trim();
+    if (condition.length === 0) throw new Error("jadwal condition butuh ekspresi");
+    return { kind: "condition", expression: raw, condition };
+  }
   if (raw.startsWith("once:")) {
     const value = raw.slice(5).trim();
     const at = Date.parse(value);
@@ -69,6 +84,8 @@ export function nextRunFor(schedule: string, timezone: string, from = Date.now()
   assertTimezone(timezone);
   const spec = parseSchedule(schedule);
   if (spec.kind === "once") return spec.at ?? null;
+  if (spec.kind === "event") return null;
+  if (spec.kind === "condition") return from + 60_000;
   if (spec.kind === "every") return from + (spec.intervalMs ?? 0);
   const cron = new Cron(spec.cron as string, { timezone });
   const next = cron.nextRun(new Date(from + 1));
@@ -78,6 +95,8 @@ export function nextRunFor(schedule: string, timezone: string, from = Date.now()
 export function describeSchedule(schedule: string): string {
   const spec = parseSchedule(schedule);
   if (spec.kind === "once") return `sekali pada ${new Date(spec.at ?? 0).toISOString()}`;
+  if (spec.kind === "event") return `saat event ${spec.event}`;
+  if (spec.kind === "condition") return `saat kondisi ${spec.condition} terpenuhi`;
   if (spec.kind === "every") return `setiap ${spec.expression.slice(6)}`;
   return `cron ${spec.cron}`;
 }
@@ -97,6 +116,9 @@ export function planSchedulerTick(row: SchedulerRow, at = Date.now()): {
     return { nextRunAt: null, enabled: row.enabled === 1, shouldRun: false, scheduledFor: null };
   }
   const spec = parseSchedule(row.schedule);
+  if (spec.kind === "event") {
+    return { nextRunAt: null, enabled: row.enabled === 1, shouldRun: false, scheduledFor };
+  }
   const missed = scheduledFor < at - 1_000;
   if (missed && row.catch_up !== 1) {
     const next = spec.kind === "once" ? null : nextRunFor(row.schedule, row.timezone, at);
@@ -116,6 +138,7 @@ export class SchedulerEngine {
   private readonly pollMs: number;
   private readonly onError?: SchedulerEngineOptions["onError"];
   private readonly onCancelRun?: SchedulerEngineOptions["onCancelRun"];
+  private readonly evaluateCondition?: SchedulerEngineOptions["evaluateCondition"];
   private timer?: ReturnType<typeof setInterval>;
   private stopped = true;
   private ticking = false;
@@ -125,6 +148,7 @@ export class SchedulerEngine {
     this.pollMs = Math.max(100, options.pollMs ?? 1_000);
     this.onError = options.onError;
     this.onCancelRun = options.onCancelRun;
+    this.evaluateCondition = options.evaluateCondition;
   }
 
   start(): void {
@@ -139,6 +163,33 @@ export class SchedulerEngine {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+  }
+
+  /** Menjalankan scheduler bertipe `event:<nama>` tanpa menunggu waktu. */
+  async notify(event: string, payload: Record<string, unknown> = {}): Promise<SchedulerRunRow[]> {
+    const started: SchedulerRunRow[] = [];
+    for (const row of listSchedulers(this.db)) {
+      if (row.enabled !== 1) continue;
+      const spec = parseSchedule(row.schedule);
+      if (spec.kind !== "event" || spec.event !== event) continue;
+      const run = startSchedulerRun(this.db, row, Date.now());
+      enqueueJob(this.db, {
+        kind: "scheduler.run",
+        queue: "scheduler",
+        priority: 120,
+        maxAttempts: row.max_attempts,
+        payload: {
+          schedulerId: row.id,
+          schedulerName: row.name,
+          runId: run.id,
+          command: row.command,
+          data: { ...(JSON.parse(row.payload_json) as Record<string, unknown>), event, eventPayload: payload },
+          timezone: row.timezone
+        }
+      });
+      started.push(run);
+    }
+    return started;
   }
 
   async tick(at = Date.now()): Promise<SchedulerRunRow[]> {
@@ -162,7 +213,11 @@ export class SchedulerEngine {
             }
           }
           let run: SchedulerRunRow | undefined;
-          if (plan.shouldRun) {
+          const spec = parseSchedule(row.schedule);
+          const conditionOk =
+            spec.kind !== "condition" ||
+            (spec.condition !== undefined && this.evaluateCondition?.(spec.condition, row) === true);
+          if (plan.shouldRun && conditionOk) {
             run = startSchedulerRun(this.db, row, plan.scheduledFor);
             enqueueJob(this.db, {
               kind: "scheduler.run",

@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 import { RannError, type PermissionMode } from "@rann/shared";
 
@@ -65,6 +65,8 @@ export interface PolicyInput {
   allow?: string[];
   deny?: string[];
   approved?: boolean;
+  /** Konten sebelumnya berasal dari web atau tool lain yang tidak tepercaya. */
+  untrusted?: boolean;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -86,6 +88,12 @@ function matchesRule(rule: string, tool: string, command?: string): boolean {
 export function decide(input: PolicyInput): PolicyDecision {
   if (input.risk === "exec" && input.command && isDangerousShell(input.command)) return "deny";
   if (input.command && destructiveReason(input.command)) {
+    if (input.mode === "read-only") return "deny";
+    return input.approved ? "allow" : "ask";
+  }
+  // Aksi yang mengubah state setelah membaca konten web butuh persetujuan
+  // eksplisit, walau mode izinnya trusted (FR-145).
+  if (input.untrusted && input.risk !== "read") {
     if (input.mode === "read-only") return "deny";
     return input.approved ? "allow" : "ask";
   }
@@ -137,6 +145,23 @@ function realish(path: string): string {
   }
   const base = existsSync(current) ? realpathSync(current) : current;
   return missing.length > 0 ? resolve(base, ...missing) : base;
+}
+
+/**
+ * Berkas dengan lebih dari satu hardlink bisa menunjuk ke inode di luar
+ * workspace, sehingga realpath tidak cukup. Penulisan ditolak sampai user
+ * memutus tautannya.
+ */
+export function assertNoHardlink(path: string): void {
+  try {
+    if (existsSync(path) && lstatSync(path).isFile() && lstatSync(path).nlink > 1) {
+      throw new RannError("E_PERMISSION", `Berkas ${path} punya hardlink lain; tulis ulang lewat salinan baru`, {
+        data: { path, links: lstatSync(path).nlink }
+      });
+    }
+  } catch (error) {
+    if (error instanceof RannError) throw error;
+  }
 }
 
 export function resolveInsideWorkspace(path: string, options: PathGuardOptions): string {

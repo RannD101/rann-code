@@ -2,7 +2,7 @@ import { newId } from "@rann/shared";
 import type { Db } from "./db.js";
 import { ensureDefaultProfile } from "./repos.js";
 
-export type SubagentStatus = "idle" | "running" | "blocked" | "waiting" | "done" | "failed" | "cancelled";
+export type SubagentStatus = "starting" | "idle" | "running" | "blocked" | "waiting" | "done" | "failed" | "cancelled" | "orphaned";
 
 export interface SubagentRow {
   id: string;
@@ -56,7 +56,7 @@ export function createSubagent(
   db.prepare(
     `INSERT INTO agents (id, profile_id, name, role, parent_id, status, model, permission_mode, metadata_json,
        session_id, turn_id, parent_turn_id, profile, goal, depth, path, steps, cost_usd, heartbeat_at, created_at, updated_at)
-     VALUES (?, ?, ?, 'subagent', ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`
+     VALUES (?, ?, ?, 'subagent', ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`
   ).run(
     id,
     ensureDefaultProfile(db),
@@ -182,7 +182,7 @@ function safeParse(value: string): unknown {
 
 export function countSubagentChildren(db: Db, parentId: string): number {
   const row = db
-    .prepare("SELECT COUNT(*) AS n FROM agents WHERE parent_id = ? AND status IN ('idle','running','waiting')")
+    .prepare("SELECT COUNT(*) AS n FROM agents WHERE parent_id = ? AND status IN ('starting','idle','running','waiting')")
     .get(parentId) as { n: number };
   return row.n;
 }
@@ -190,7 +190,7 @@ export function countSubagentChildren(db: Db, parentId: string): number {
 export function countSubagentsForTurn(db: Db, turnId: string): number {
   const row = db
     .prepare(
-      "SELECT COUNT(*) AS n FROM agents WHERE parent_turn_id = ? AND status IN ('idle','running','waiting','done')"
+      "SELECT COUNT(*) AS n FROM agents WHERE parent_turn_id = ? AND status IN ('starting','idle','running','waiting','done')"
     )
     .get(turnId) as { n: number };
   return row.n;
@@ -211,7 +211,7 @@ export function cancelSubagentTree(db: Db, rootId: string): string[] {
   const placeholders = ids.map(() => "?").join(",");
   db.prepare(
     `UPDATE agents SET status = 'cancelled', updated_at = ?, finished_at = ?
-     WHERE id IN (${placeholders}) AND status IN ('idle','running','waiting')`
+     WHERE id IN (${placeholders}) AND status IN ('starting','idle','running','waiting')`
   ).run(at, at, ...ids);
   return ids;
 }
@@ -220,12 +220,12 @@ export function markOrphanedSubagents(db: Db, staleMs = 60_000): string[] {
   const cutoff = Date.now() - staleMs;
   const rows = db
     .prepare(
-      "SELECT id FROM agents WHERE session_id IS NOT NULL AND status IN ('idle','running','waiting') AND COALESCE(heartbeat_at, updated_at) < ?"
+      "SELECT id FROM agents WHERE session_id IS NOT NULL AND status IN ('starting','idle','running','waiting') AND COALESCE(heartbeat_at, updated_at) < ?"
     )
     .all(cutoff) as Array<{ id: string }>;
   const at = Date.now();
   for (const row of rows) {
-    db.prepare("UPDATE agents SET status = 'failed', result_json = ?, updated_at = ?, finished_at = ? WHERE id = ?").run(
+    db.prepare("UPDATE agents SET status = 'orphaned', result_json = ?, updated_at = ?, finished_at = ? WHERE id = ?").run(
       JSON.stringify({ error: "orphaned", message: "Heartbeat subagent berhenti" }),
       at,
       at,

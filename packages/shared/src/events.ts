@@ -10,6 +10,7 @@ export type EventType =
   | "phase"
   | "observation"
   | "evaluation"
+  | "tool.decision"
   | "plan.update"
   | "task.update"
   | "agent.update"

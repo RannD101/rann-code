@@ -103,7 +103,7 @@ describe("subagent storage", () => {
     updateSubagent(db, stale.id, { status: "running" });
     db.prepare("UPDATE agents SET heartbeat_at = ?, updated_at = ? WHERE id = ?").run(Date.now() - 120_000, Date.now() - 120_000, stale.id);
     expect(markOrphanedSubagents(db, 60_000)).toContain(stale.id);
-    expect(getSubagent(db, stale.id)?.status).toBe("failed");
+    expect(getSubagent(db, stale.id)?.status).toBe("orphaned");
   });
 
   it("mencatat pesan dan melepas lease saat agent selesai", () => {

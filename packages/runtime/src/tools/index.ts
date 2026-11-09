@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, globSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { RannError, toRannError } from "@rann/shared";
 import type { PermissionMode } from "@rann/shared";
@@ -17,7 +17,7 @@ import {
   releasePathLease,
   type TransactionRow
 } from "@rann/storage";
-import { assertAllowed, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
+import { assertAllowed, assertNoHardlink, resolveInsideWorkspace, type ToolRisk } from "../policy.js";
 import { commitMessage, runGit, safeGitPath } from "../git.js";
 import {
   createFileCheckpoint,
@@ -31,6 +31,7 @@ import type { ToolSpec } from "../providers/types.js";
 import type { MemoryService } from "../memory.js";
 import type { BrowserActionInput } from "../browser.js";
 import { canRetry, retryDelay, type RetryTarget } from "../retry-matrix.js";
+import { validateJsonSchema } from "../json-schema.js";
 import { httpFetch, webSearch } from "../web.js";
 import { detectPackageManager, documentExtract, imageInfo, imageTransform, packageCommand, sqliteQuery, systemInfo } from "../system-tools.js";
 import type { SkillStore } from "../skills.js";
@@ -55,6 +56,10 @@ export interface ToolContext {
   hooks?: { run(event: "MemoryWrite", payload: Record<string, unknown>, options?: { cwd?: string }): Promise<unknown> };
   skills?: SkillStore;
   delegate?: (input: { goal: string; context?: string; label?: string; profile?: string; background?: boolean; maxSteps?: number; acceptance?: string; files?: string[]; timeoutMs?: number; contextMode?: "shared" | "isolated" }) => Promise<unknown>;
+  /** Dicatat agent untuk menjelaskan pilihan search, fetch, atau browser. */
+  recordDecision?: (input: { tool: string; reason: string }) => void;
+  /** True bila konteks terakhir berasal dari konten web yang tidak tepercaya. */
+  untrusted?: boolean;
   agentMessage?: (input: { to: string; type: "note" | "question" | "answer" | "conflict"; subject: string; body: string; priority?: "low" | "normal" | "high"; refs?: string[] }) => Promise<unknown>;
   planRevise?: (input: {
     reason: string;
@@ -606,6 +611,63 @@ function parse<T extends z.ZodTypeAny>(schema: T, args: unknown, tool: string): 
 
 export const tools: ToolDefinition[] = [
   {
+    risk: "write",
+    spec: {
+      name: "test_generate",
+      description:
+        "Buat kerangka berkas tes baru sesuai framework proyek (vitest/jest atau pytest). Tidak menimpa berkas yang sudah ada dan tidak mengarang isi tes yang lolos.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Berkas sumber yang akan diuji, relatif terhadap workspace" },
+          name: { type: "string", description: "Nama berkas tes tanpa ekstensi, default dari nama sumber" },
+          framework: { type: "string", enum: ["vitest", "jest", "pytest"], description: "Override deteksi framework" }
+        },
+        required: ["path"]
+      }
+    },
+    async run(args, ctx) {
+      const input = parse(
+        z.object({
+          path: z.string().min(1),
+          name: z.string().min(1).optional(),
+          framework: z.enum(["vitest", "jest", "pytest"]).optional()
+        }),
+        args,
+        "test_generate"
+      );
+      assertAllowed({ mode: ctx.permissionMode, tool: "test_generate", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
+      const source = resolveInsideWorkspace(input.path, ctx);
+      if (!existsSync(source)) throw new RannError("E_NOT_FOUND", `Berkas sumber tidak ditemukan: ${input.path}`);
+      const framework =
+        input.framework ??
+        (existsSync(join(ctx.workspaceRoot, "package.json"))
+          ? /"vitest"|"@vitest\//.test(readFileSync(join(ctx.workspaceRoot, "package.json"), "utf8"))
+            ? "vitest"
+            : "jest"
+          : existsSync(join(ctx.workspaceRoot, "pyproject.toml")) || existsSync(join(ctx.workspaceRoot, "pytest.ini"))
+            ? "pytest"
+            : "vitest");
+      const base = input.name ?? basename(source).replace(/\.[^.]+$/, "");
+      const relativeSource = relPath(ctx, source);
+      if (framework === "pytest") {
+        const target = join(dirname(source), `test_${base}.py`);
+        if (existsSync(target)) throw new RannError("E_CONFLICT", `Berkas tes sudah ada: ${relPath(ctx, target)}`);
+        const content = `import pytest\n\n\n# Kerangka untuk ${relativeSource}; isi kasus nyata sebelum dijalankan.\ndef test_${base.replace(/[^a-zA-Z0-9_]/g, "_")}():\n    pytest.skip("kerangka tes, belum ada asersi")\n`;
+        writeFileSync(target, content, { flag: "wx" });
+        return textResult({ path: relPath(ctx, target), framework, created: true });
+      }
+      const target = join(dirname(source), `${base}.test.ts`);
+      if (existsSync(target)) throw new RannError("E_CONFLICT", `Berkas tes sudah ada: ${relPath(ctx, target)}`);
+      const content =
+        framework === "vitest"
+          ? `import { describe, expect, it } from "vitest";\nimport * as modul from "./${basename(source).replace(/\.[^.]+$/, "")}.js";\n\ndescribe("${base}", () => {\n  it.todo("isi kasus nyata untuk ${relativeSource}");\n  void modul;\n  void expect;\n});\n`
+          : `import * as modul from "./${basename(source).replace(/\.[^.]+$/, "")}";\n\ndescribe("${base}", () => {\n  it.todo("isi kasus nyata untuk ${relativeSource}");\n  void modul;\n});\n`;
+      writeFileSync(target, content, { flag: "wx" });
+      return textResult({ path: relPath(ctx, target), framework, created: true });
+    }
+  },
+  {
     risk: "read",
     spec: {
       name: "fs_read",
@@ -710,6 +772,7 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsWriteSchema, args, "fs_write");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_write", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
+      assertNoHardlink(target);
       const largeLimit = 1024 * 1024;
       if (input.confirm_large_overwrite !== true) {
         const existingSize = existsSync(target) && statSync(target).isFile() ? statSync(target).size : 0;
@@ -791,6 +854,7 @@ export const tools: ToolDefinition[] = [
       const input = parse(fsEditSchema, args, "fs_edit");
       assertAllowed({ mode: ctx.permissionMode, tool: "fs_edit", risk: "write", approved: ctx.approved, allow: ctx.allow, deny: ctx.deny });
       const target = resolveInsideWorkspace(input.path, ctx);
+      assertNoHardlink(target);
       const leases = acquireLeases(ctx, [target]);
       const transaction = beginTransaction(ctx, { tool: "fs_edit", path: input.path });
       try {
@@ -1844,6 +1908,10 @@ export const tools: ToolDefinition[] = [
     },
     async run(args, ctx) {
       const input = parse(browserSchema, args, "browser");
+      ctx.recordDecision?.({
+        tool: "browser",
+        reason: "butuh render JavaScript atau interaksi halaman (klik, isi form, login)"
+      });
       if (!ctx.browser) throw new RannError("E_TOOL_FAILED", "Browser tidak aktif di sesi ini");
       const mutating = ["click", "type", "select", "upload", "evaluate"].includes(input.action);
       if (mutating && !ctx.approved) {
@@ -1870,8 +1938,9 @@ export const tools: ToolDefinition[] = [
         required: ["query"]
       }
     },
-    async run(args) {
+    async run(args, ctx) {
       const input = parse(webSearchSchema, args, "web_search");
+      ctx.recordDecision?.({ tool: "web_search", reason: "butuh daftar hasil dan cuplikan, bukan isi satu halaman" });
       return textResult(await webSearch(input.query, input.limit ?? 5));
     }
   },
@@ -1896,6 +1965,10 @@ export const tools: ToolDefinition[] = [
     async run(args, ctx) {
       const input = parse(httpRequestSchema, args, "http_request");
       const method = input.method ?? "GET";
+      ctx.recordDecision?.({
+        tool: "http_request",
+        reason: method === "GET" ? "butuh isi mentah satu URL tanpa render" : `butuh method ${method} ke satu URL`
+      });
       assertAllowed({
         mode: ctx.permissionMode,
         tool: "http_request",
@@ -2292,6 +2365,24 @@ async function withRetry<T>(target: RetryTarget, method: string | undefined, run
   }
 }
 
+const TOOL_OUTPUT_SCHEMAS: Record<string, ToolSpec["outputSchema"]> = {
+  fs_read: {
+    type: "object",
+    required: ["path", "content"],
+    properties: { path: { type: "string" }, content: { type: "string" }, total_lines: { type: "number" } }
+  },
+  fs_list: {
+    type: "object",
+    required: ["path", "entries"],
+    properties: { path: { type: "string" }, entries: { type: "array" } }
+  },
+  http_request: {
+    type: "object",
+    required: ["url", "status"],
+    properties: { url: { type: "string" }, status: { type: "number" }, text: { type: "string" } }
+  }
+};
+
 export function toolSpecs(custom: CustomTool[] = []): ToolSpec[] {
   const entries = [...tools, ...aliasTools];
   return [
@@ -2299,7 +2390,7 @@ export function toolSpecs(custom: CustomTool[] = []): ToolSpec[] {
       ...tool.spec,
       permission: tool.risk === "read" ? "read" as const : tool.risk === "write" ? "write" as const : "exec" as const,
       timeoutMs: tool.risk === "read" ? 30_000 : tool.risk === "write" ? 60_000 : 120_000,
-      outputSchema: { type: "object", additionalProperties: true }
+      outputSchema: TOOL_OUTPUT_SCHEMAS[tool.spec.name] ?? { type: "object", additionalProperties: true }
     })),
     ...custom.map((tool) => ({
       name: tool.name,
@@ -2340,5 +2431,50 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
   }
   const tool = findTool(name);
   if (!tool) throw new RannError("E_TOOL_NOT_FOUND", `Tool tidak dikenal: ${name}`, { data: { tool: name } });
-  return tool.run(args, ctx);
+  if (ctx.untrusted && tool.risk !== "read" && !ctx.approved) {
+    throw new RannError("E_APPROVAL_REQUIRED", `Tool ${name} mengubah state setelah konten web tidak tepercaya; setujui dulu`, {
+      data: { tool: name, provenance: "untrusted_content" }
+    });
+  }
+  const started = Date.now();
+  const timeoutMs = tool.spec.timeoutMs ?? 120_000;
+  const result = await withToolTimeout(name, timeoutMs, ctx, (inner) => tool.run(args, inner));
+  const errors = validateJsonSchema(result.output, tool.spec.outputSchema);
+  if (errors.length > 0) {
+    throw new RannError("E_TOOL_OUTPUT_INVALID", `Output ${name} tidak sesuai skema: ${errors.slice(0, 5).join("; ")}`, {
+      data: { tool: name, errors }
+    });
+  }
+  return { ...result, durationMs: result.durationMs ?? Date.now() - started };
+}
+
+export async function withToolTimeout<T>(
+  name: string,
+  timeoutMs: number,
+  ctx: ToolContext,
+  run: (ctx: ToolContext) => Promise<T>
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return run(ctx);
+  const controller = new AbortController();
+  const onAbort = (): void => controller.abort(ctx.signal?.reason);
+  ctx.signal?.addEventListener("abort", onAbort, { once: true });
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      run({ ...ctx, signal: controller.signal }),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort(new Error("timeout"));
+          reject(
+            new RannError("E_TOOL_TIMEOUT", `Tool ${name} melewati ${timeoutMs} ms`, {
+              data: { tool: name, timeout_ms: timeoutMs }
+            })
+          );
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    ctx.signal?.removeEventListener("abort", onAbort);
+  }
 }

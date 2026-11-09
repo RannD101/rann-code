@@ -13,6 +13,7 @@ import { SCHEMA_V10 } from "./schema-v10.js";
 import { SCHEMA_V11 } from "./schema-v11.js";
 import { SCHEMA_V12 } from "./schema-v12.js";
 import { SCHEMA_V13 } from "./schema-v13.js";
+import { SCHEMA_V14 } from "./schema-v14.js";
 
 export type Db = Database.Database;
 
@@ -282,6 +283,11 @@ END;
     version: 13,
     name: "model-discovery",
     sql: SCHEMA_V13
+  },
+  {
+    version: 14,
+    name: "subagent-status",
+    sql: SCHEMA_V14
   }
 ];
 

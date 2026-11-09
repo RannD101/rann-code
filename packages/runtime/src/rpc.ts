@@ -1859,6 +1859,10 @@ export class RpcServer {
       modelCapabilities: descriptor.capabilities,
       capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
       modelId: descriptor.id,
+      ...(() => {
+        const schema = (config.models as Record<string, { response_schema?: unknown }> | undefined)?.[`${descriptor.provider}/${descriptor.model}`]?.response_schema;
+        return schema === undefined || schema === null ? {} : { responseSchema: schema as Record<string, unknown> };
+      })(),
       contextWindow: descriptor.contextWindow,
       maxOutputTokens: descriptor.maxOutputTokens,
       fallbacks,
@@ -2261,6 +2265,10 @@ export class RpcServer {
         modelCapabilities: descriptor.capabilities,
         capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
         modelId: descriptor.id,
+        ...(() => {
+          const schema = (config.models as Record<string, { response_schema?: unknown }> | undefined)?.[`${descriptor.provider}/${descriptor.model}`]?.response_schema;
+          return schema === undefined || schema === null ? {} : { responseSchema: schema as Record<string, unknown> };
+        })(),
         contextWindow: descriptor.contextWindow,
         maxOutputTokens: descriptor.maxOutputTokens,
         costUsd: (inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) =>

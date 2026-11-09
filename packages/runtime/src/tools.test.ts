@@ -178,6 +178,7 @@ describe("tools", () => {
   it("mengekspos spesifikasi tool untuk provider", () => {
     const names = toolSpecs().map((spec) => spec.name);
     expect(names).toEqual([
+      "test_generate",
       "fs_read",
       "fs_list",
       "fs_write",

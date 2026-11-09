@@ -89,6 +89,35 @@ export function documentExtract(path: string): { text: string; kind: string; byt
   return { text: clipped, kind, bytes, truncated: text.trim().length > clipped.length };
 }
 
+
+/** Fallback tanpa ImageMagick: baca header PNG, GIF, dan JPEG. */
+function readImageHeader(path: string): { format: string; width: number; height: number } | undefined {
+  try {
+    const buffer = readFileSync(path);
+    if (buffer.length > 24 && buffer.toString("ascii", 1, 4) === "PNG") {
+      return { format: "png", width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if (buffer.length > 10 && buffer.toString("ascii", 0, 3) === "GIF") {
+      return { format: "gif", width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+    }
+    if (buffer.length > 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+      let offset = 2;
+      while (offset + 9 < buffer.length) {
+        if (buffer[offset] !== 0xff) break;
+        const marker = buffer[offset + 1] ?? 0;
+        const size = buffer.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { format: "jpeg", height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+        }
+        offset += 2 + size;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export function imageInfo(path: string, ocrRequested = false): Record<string, unknown> {
   if (!existsSync(path)) throw new RannError("E_TOOL_INVALID_ARGS", `Gambar tidak ada: ${path}`);
   const bytes = statSync(path).size;
@@ -98,7 +127,9 @@ export function imageInfo(path: string, ocrRequested = false): Record<string, un
     const [format, dimensions, colorspace] = identify.split(" ");
     Object.assign(output, { format, width: dimensions?.split("x")[0], height: dimensions?.split("x")[1], dimensions, colorspace });
   } catch {
-    output.note = "ImageMagick identify tidak tersedia; metadata dimensi tidak dibaca";
+    const header = readImageHeader(path);
+    if (header) Object.assign(output, header);
+    else output.note = "ImageMagick identify tidak tersedia; metadata dimensi tidak dibaca";
   }
   const ocr = ocrRequested || process.env.RANN_OCR === "1";
   if (ocr) {

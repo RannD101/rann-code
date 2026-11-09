@@ -45,6 +45,27 @@ export interface InstallOptions {
 
 type ChildResult = { ok: boolean; output?: unknown; error?: string };
 
+const METHOD_PERMISSIONS: Array<[RegExp, string]> = [
+  [/^tool\./, "tool:invoke"],
+  [/^fs\.(write|edit|delete|move|copy)/, "fs:write"],
+  [/^fs\./, "fs:read"],
+  [/^(net|http)\./, "net:fetch"],
+  [/^exec\./, "exec:run"],
+  [/^provider\./, "provider:call"],
+  [/^hook\./, "hook:register"],
+  [/^command\./, "command:register"]
+];
+
+function requiredPermission(method: string): string | undefined {
+  return METHOD_PERMISSIONS.find(([pattern]) => pattern.test(method))?.[1];
+}
+
+function granted(permissions: string[], needed: string): boolean {
+  if (permissions.includes("*") || permissions.includes(needed)) return true;
+  const [resource] = needed.split(":");
+  return permissions.includes(`${resource}:*`);
+}
+
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_PLUGIN_BYTES = 20_000_000;
 const MAX_FILES = 2_000;
@@ -339,6 +360,92 @@ export class PluginManager {
     return this.get(name)!;
   }
 
+  /** Urutan aktif sesuai dependensi; siklus ditolak. */
+  enabledInOrder(): string[] {
+    const enabled = this.list().filter((plugin) => plugin.status === "enabled");
+    const byName = new Map(enabled.map((plugin) => [plugin.name, plugin]));
+    const output: string[] = [];
+    const visiting = new Set<string>();
+    const done = new Set<string>();
+    const visit = (name: string): void => {
+      if (done.has(name)) return;
+      if (visiting.has(name)) throw new RannError("E_CONFIG_INVALID", `Siklus dependensi plugin: ${name}`);
+      const plugin = byName.get(name);
+      if (!plugin) return;
+      visiting.add(name);
+      const manifest = this.readManifest(plugin.path);
+      for (const dependency of manifest.dependencies ?? []) {
+        if (byName.has(dependency)) visit(dependency);
+      }
+      visiting.delete(name);
+      done.add(name);
+      output.push(name);
+    };
+    for (const name of byName.keys()) visit(name);
+    return output;
+  }
+
+  /** Tool, command, dan hook yang didaftarkan plugin aktif, sesuai urutan dependensi. */
+  registrations(): {
+    tools: Array<{ plugin: string; name: string; description?: string }>;
+    commands: Array<{ plugin: string; name: string; description?: string }>;
+    hooks: Array<{ plugin: string; event: string; method: string }>;
+    providers: string[];
+  } {
+    const tools: Array<{ plugin: string; name: string; description?: string }> = [];
+    const commands: Array<{ plugin: string; name: string; description?: string }> = [];
+    const hooks: Array<{ plugin: string; event: string; method: string }> = [];
+    const providers: string[] = [];
+    for (const name of this.enabledInOrder()) {
+      const plugin = this.get(name);
+      if (!plugin) continue;
+      const manifest = this.readManifest(plugin.path);
+      if (!granted(manifest.permissions, "tool:register")) continue;
+      for (const tool of manifest.tools ?? []) {
+        tools.push({ plugin: name, name: tool.name, ...(tool.description ? { description: tool.description } : {}) });
+      }
+      if (granted(manifest.permissions, "command:register")) {
+        for (const command of manifest.commands ?? []) {
+          commands.push({
+            plugin: name,
+            name: command.name,
+            ...(command.description ? { description: command.description } : {})
+          });
+        }
+      }
+      if (granted(manifest.permissions, "hook:register")) {
+        for (const [event, method] of Object.entries(manifest.hooks ?? {})) {
+          hooks.push({ plugin: name, event, method });
+        }
+      }
+      if (granted(manifest.permissions, "provider:register")) providers.push(name);
+    }
+    return { tools, commands, hooks, providers };
+  }
+
+  previewUpdate(name: string, source?: string): {
+    plugin: string;
+    version?: string;
+    changelog?: string;
+    addedPermissions: string[];
+    removedPermissions: string[];
+    requiresConfirmation: boolean;
+  } {
+    const plugin = this.get(name);
+    if (!plugin) throw new RannError("E_TOOL_FAILED", `Plugin tidak ditemukan: ${name}`);
+    const next = this.readManifest(source ? resolve(source) : plugin.path);
+    const added = next.permissions.filter((permission) => !plugin.permissions.includes(permission));
+    const removed = plugin.permissions.filter((permission) => !next.permissions.includes(permission));
+    return {
+      plugin: name,
+      version: next.version,
+      ...(next.changelog ? { changelog: next.changelog } : {}),
+      addedPermissions: added,
+      removedPermissions: removed,
+      requiresConfirmation: added.length > 0
+    };
+  }
+
   enable(name: string): PluginInfo {
     const plugin = this.get(name);
     if (!plugin) throw new RannError("E_TOOL_FAILED", `Plugin tidak ditemukan: ${name}`);
@@ -373,9 +480,15 @@ export class PluginManager {
     return { removed: true };
   }
 
-  update(name: string, source?: string): PluginInfo {
+  update(name: string, source?: string, options: { approve?: boolean } = {}): PluginInfo {
     const plugin = this.get(name);
     if (!plugin) throw new RannError("E_TOOL_FAILED", `Plugin tidak ditemukan: ${name}`);
+    const preview = this.previewUpdate(name, source);
+    if (preview.requiresConfirmation && options.approve !== true) {
+      throw new RannError("E_APPROVAL_REQUIRED", `Update ${name} menambah izin: ${preview.addedPermissions.join(", ")}`, {
+        data: { plugin: name, added_permissions: preview.addedPermissions, changelog: preview.changelog ?? null }
+      });
+    }
     const manifest = this.readManifest(source ? resolve(source) : plugin.path);
     if (!satisfiesApiRange(manifest.apiVersion)) throw new RannError("E_CONFIG_INVALID", `Versi API plugin tidak kompatibel: ${manifest.apiVersion}`);
     const scope = this.findScope(name);
@@ -409,6 +522,10 @@ export class PluginManager {
     if (!plugin) return { ok: false, error: `Plugin tidak ditemukan: ${name}` };
     if (plugin.status !== "enabled") return { ok: false, error: `Plugin ${name} belum aktif (status ${plugin.status}); jalankan plugin enable` };
     const manifest = this.readManifest(plugin.path);
+    const needed = requiredPermission(method);
+    if (needed && !granted(manifest.permissions, needed)) {
+      return { ok: false, error: `Plugin ${name} tidak punya izin ${needed} untuk ${method}` };
+    }
     const entry = resolve(plugin.path, manifest.entry);
     if (!existsSync(entry)) return { ok: false, error: `Entry plugin tidak ditemukan: ${entry}` };
     const { spawn } = await import("node:child_process");

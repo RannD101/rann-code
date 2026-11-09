@@ -26,6 +26,7 @@ import { join } from "node:path";
 import type { ChatAttachment, ChatMessage, Provider, ToolCallPart, ToolSpec } from "./providers/types.js";
 import type { ModelCapabilities } from "./models.js";
 import { providerHealth, retryStream } from "./providers/retry.js";
+import { validateJsonSchema } from "./json-schema.js";
 import { analyzeFailure } from "./failure-analysis.js";
 import { createFileCheckpoint } from "./checkpoint-files.js";
 import { estimateTokens } from "./providers/types.js";
@@ -150,6 +151,8 @@ export interface RunTurnOptions {
   modelCapabilities?: ModelCapabilities;
   /** True bila capability model memakai asumsi aman karena belum diketahui. */
   capabilitiesUnknown?: boolean;
+  /** JSON Schema yang harus dipenuhi balasan akhir (structured output). */
+  responseSchema?: Record<string, unknown>;
   modelId?: string;
   agentId?: string;
   contextWindow?: number;
@@ -453,6 +456,8 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   const budget: BudgetOptions = options.budget ?? { maxTokensPerTurn: 0, maxTokensPerDay: 0, maxUsdPerDay: 0 };
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   let providerRequestId: string | undefined;
+  let untrustedContent = false;
+  let schemaAttempts = 0;
   let finalText = "";
   let steps = 0;
   let finished = false;
@@ -865,6 +870,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
                 model: candidate.model,
                 messages,
                 tools: availableSpecs,
+                ...(options.responseSchema !== undefined
+                  ? { responseFormat: { type: "json_schema" as const, name: "output", schema: options.responseSchema as Record<string, unknown> } }
+                  : {}),
                 signal
               });
             },
@@ -1093,6 +1101,35 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
           continue;
         }
         finalText = text;
+        if (options.responseSchema !== undefined) {
+          let mismatch: string[] = [];
+          try {
+            const parsed = JSON.parse(text) as unknown;
+            mismatch = validateJsonSchema(parsed, options.responseSchema);
+          } catch {
+            mismatch = ["balasan bukan JSON valid"];
+          }
+          if (mismatch.length > 0) {
+            schemaAttempts += 1;
+            publish("error", {
+              error_code: "E_OUTPUT_INVALID",
+              message: `Balasan tidak sesuai schema: ${mismatch.slice(0, 5).join("; ")}`,
+              attempt: schemaAttempts
+            });
+            if (schemaAttempts < 2) {
+              addMessage(db, {
+                sessionId: session.id,
+                turnId,
+                role: "system",
+                content: `Balasan sebelumnya tidak memenuhi JSON Schema. Perbaiki dan balas hanya dengan JSON valid. Masalah: ${mismatch
+                  .slice(0, 8)
+                  .join("; ")}`
+              });
+              continue;
+            }
+            finalText = `${text}\n\n[skema tidak terpenuhi: ${mismatch.slice(0, 5).join("; ")}]`;
+          }
+        }
         if (verification && !verification.passed) {
           finalText += `\n\nBelum diverifikasi:\n${verification.gaps.map((gap) => `- ${gap}`).join("\n")}`;
           const message = `Verifikasi rencana gagal setelah ${prematureCount} percobaan: ${verification.gaps.join("; ")}`;
@@ -1212,6 +1249,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         const finishOk = (result: Awaited<ReturnType<typeof executeTool>>): void => {
           const observation = normalizeObservation(call.name, result);
           const evaluation = evaluateObservation(call.name, observation);
+          if (["browser", "web_search", "http_request"].includes(call.name)) untrustedContent = true;
           publish("phase", { phase: "observe", tool: call.name, status: observation.status });
           publish("observation", { tool: call.name, call_id: call.id, ...observation });
           publish("phase", { phase: "evaluate", tool: call.name, ok: evaluation.ok });
@@ -1434,6 +1472,9 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
             allow: config.allow,
             deny: config.deny,
             signal,
+            untrusted: untrustedContent,
+            recordDecision: (input: { tool: string; reason: string }) =>
+              publish("tool.decision", { ...input, step: steps }),
             shellTimeoutMs: config.shellTimeoutMs,
             memory: options.memory,
             hooks: config.hooks ?? undefined,

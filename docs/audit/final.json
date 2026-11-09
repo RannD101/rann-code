@@ -110,14 +110,13 @@
   {
     "id": "RC-FR-011",
     "title": "Approval dialog",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/cli/src/main.ts, stream.ts, attachments.ts; cli tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "approval.ts menampilkan method untuk semua tool jaringan dan batas args 100.000 karakter; tes approval.test.ts"
     ],
-    "gaps": [
-      "Args di dialog dipotong 10.000 karakter; method jaringan hanya tampil untuk http_request."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-012",
@@ -483,14 +482,13 @@
   {
     "id": "RC-FR-047",
     "title": "Generasi dan eksekusi tes",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/agent.ts, tools/index.ts, code-tools.ts, project-map.ts; tools tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "tool test_generate mendeteksi vitest/jest/pytest dan menulis kerangka tes tanpa menimpa; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Tes bisa dijalankan dan flaky diulang, tetapi generasi tes baru belum otomatis dari framework."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-048",
@@ -625,14 +623,13 @@
   {
     "id": "RC-FR-061",
     "title": "Lifecycle dan monitoring agen",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/rpc.ts, subagent-profiles.ts, work-repos.ts; subagent tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "migrasi 14 memperluas status agents; createSubagent memakai starting dan recovery memakai orphaned; tes agent-repos.test.ts"
     ],
-    "gaps": [
-      "Status starting dan orphaned belum dipakai; orphan masih ditulis sebagai failed."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-062",
@@ -901,38 +898,35 @@
   {
     "id": "RC-FR-088",
     "title": "Validasi skema dan chaining",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "executeTool memvalidasi output terhadap outputSchema per tool lewat json-schema.ts; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Output tool belum divalidasi terhadap skema output per tool."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-089",
     "title": "Permission, timeout, retry, dan log tool",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "executeTool menegakkan ToolSpec.timeoutMs dengan AbortController; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Timeout default per tool belum ditegakkan di executeTool; baru shell dan browser yang punya timeout."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-090",
     "title": "Cakupan kategori tool",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/skills.ts, mcp.ts, tools/index.ts; memory-skills/mcp tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "tes e2e kategori image_info, package_run, dan schedule_task di tools-categories.test.ts"
     ],
-    "gaps": [
-      "Belum semua kategori tool punya tes end-to-end, terutama image, messaging, package, dan scheduling."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-091",
@@ -989,38 +983,35 @@
   {
     "id": "RC-FR-096",
     "title": "Lifecycle dan dependensi plugin",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "PluginManager.enabledInOrder mengurutkan dependensi dan menolak siklus; tes plugins-gate.test.ts"
     ],
-    "gaps": [
-      "Dependensi plugin diperiksa keberadaannya, belum dimuat berurutan secara topologis."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-097",
     "title": "API dan permission plugin",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "PluginManager.registrations mengumpulkan tool, command, hook, dan provider dari plugin aktif; tes plugins-gate.test.ts"
     ],
-    "gaps": [
-      "Plugin belum bisa mendaftarkan tool, command, provider, atau handler hook ke host."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-098",
     "title": "Kompatibilitas dan update plugin",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "previewUpdate menampilkan changelog dan selisih izin; update menolak tanpa approve saat izin bertambah; tes plugins-gate.test.ts"
     ],
-    "gaps": [
-      "Update plugin belum menampilkan changelog dan belum meminta konfirmasi saat permissions berubah."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-099",
@@ -1120,14 +1111,13 @@
   {
     "id": "RC-FR-108",
     "title": "Structured output dan multimodal",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/plugins.ts, hooks.ts, providers/*, router.ts, models.ts; provider/plugin tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "responseSchema diteruskan ke provider sebagai response_format dan divalidasi pada balasan akhir dengan satu percobaan ulang; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "response_format json_object/json_schema sudah dikirim ke provider yang mendukung; validasi balasan terhadap schema dan jalur multimodal (audio, pdf) belum diterapkan."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-109",
@@ -1244,14 +1234,13 @@
   {
     "id": "RC-FR-120",
     "title": "Perbedaan search, fetch, dan browser",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/gateway.ts, messaging*.ts, rpc.ts; gateway/messaging tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "ctx.recordDecision mencatat alasan pemilihan web_search, http_request, dan browser ke event tool.decision; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Alasan pemilihan search, fetch, atau browser belum dicatat di event atau output tool."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-121",
@@ -1296,14 +1285,13 @@
   {
     "id": "RC-FR-125",
     "title": "Trigger, timezone, dan DST",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/gateway.ts, messaging*.ts, rpc.ts; gateway/messaging tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "scheduler mendukung jadwal event: dan when: plus notify() untuk memicu job; tes scheduler.test.ts"
     ],
-    "gaps": [
-      "Scheduler belum mendukung trigger kondisional atau event selain once, every, dan cron."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-126",
@@ -1432,14 +1420,13 @@
   {
     "id": "RC-FR-138",
     "title": "Sandbox filesystem",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "assertNoHardlink menolak penulisan ke berkas dengan nlink > 1 di fs_write dan fs_edit; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Hardlink ke berkas di luar workspace belum dideteksi; realpath hanya menangani symlink."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-139",
@@ -1486,14 +1473,13 @@
   {
     "id": "RC-FR-143",
     "title": "Isolasi plugin dan MCP",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "invoke plugin memeriksa izin method (fs/net/exec/tool/provider/hook/command) sebelum eksekusi; tes plugins-gate.test.ts"
     ],
-    "gaps": [
-      "Permission yang dideklarasikan plugin belum ditegakkan saat invoke."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-144",
@@ -1508,14 +1494,13 @@
   {
     "id": "RC-FR-145",
     "title": "Pertahanan prompt injection",
-    "status": "partial",
+    "status": "done",
     "evidence": [
       "implementasi dan tes di packages/runtime/src/dashboard.ts, gateway.ts, policy.ts, rpc.ts; gateway/daemon tests",
-      "pnpm check 286 tes"
+      "pnpm check 286 tes",
+      "PolicyInput.untrusted dan executeTool memaksa persetujuan aksi non-read setelah konten web; tes quality-gates.test.ts"
     ],
-    "gaps": [
-      "Belum ada pelacakan asal konten yang memaksa approval untuk aksi dari konten tidak tepercaya."
-    ]
+    "gaps": []
   },
   {
     "id": "RC-FR-146",

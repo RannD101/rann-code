@@ -175,6 +175,22 @@ M4 selesai. Goal tracking tersedia (`schema-v6`, repo, 5 RPC, tool goal, `/goal`
 - RPC baru: `model.discover` dan `model.capabilities`; `model.list` menyertakan `unavailable` serta `capabilitySource`. CLI: `rann models --discover [--force]`.
 - `pnpm build`, `pnpm -r run typecheck`, `pnpm test` (306 tes di 60 berkas), `pnpm lint`, dan `pnpm depcruise` lulus.
 
+## Progres terkini (2026-11-09, putaran kedua)
+
+- Audit naik dari 119 menjadi 134 `done`; sisa 17 `partial`.
+- FR yang ditutup: 011, 047, 061, 088, 089, 090, 096, 097, 098, 108, 120, 125, 138, 143, 145.
+- `json-schema.ts`: validator JSON Schema kecil dipakai untuk output tool dan structured output provider.
+- `executeTool` menegakkan `timeoutMs` per tool, memvalidasi `outputSchema`, dan memaksa persetujuan aksi non-read setelah konten web tidak tepercaya.
+- `tools/index.ts`: tool `test_generate` mendeteksi vitest, jest, atau pytest dan menulis kerangka tes tanpa menimpa berkas yang ada.
+- `policy.ts`: `assertNoHardlink` menolak penulisan ke berkas dengan `nlink > 1`; `PolicyInput.untrusted` menaikkan aksi tulis ke persetujuan.
+- `plugins.ts`: urutan muat topologis, registrasi tool/command/hook/provider, pratinjau update dengan changelog dan selisih izin, serta pemeriksaan izin per method saat `invoke`.
+- `scheduler.ts`: jadwal `event:<nama>` dan `when:<kondisi>`, plus `notify()` untuk memicu job dari event.
+- `schema-v14.ts`: tabel `agents` dibangun ulang untuk status `starting` dan `orphaned`.
+- `system-tools.ts`: metadata gambar dibaca dari header PNG/GIF/JPEG saat ImageMagick tidak tersedia.
+- `pnpm check` lulus: 330 tes di 64 berkas, lint dan depcruise bersih.
+
+Sisa 17 partial: 001, 002, 005, 007, 012, 018, 034, 037, 039, 079, 080, 093, 099, 127, 135, 141, 149.
+
 ## Aturan
 
 - Setiap FR hanya boleh ditandai done bila ada kode dan tes yang membuktikan.

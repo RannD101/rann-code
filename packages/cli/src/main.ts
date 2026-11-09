@@ -16,6 +16,7 @@ import { HistoryStore } from "./history.js";
 import { expandCustomCommand, loadCustomCommands, type CustomCommand } from "./custom-commands.js";
 import { LineEditor, ReplExit } from "./line-editor.js";
 import { previewEdit } from "./edit-preview.js";
+import { formatApprovalArgs } from "./approval.js";
 import { setLocale, tr } from "./i18n.js";
 
 
@@ -912,11 +913,7 @@ function makeApprovalHandler(
   if (process.stdin.isTTY !== true) return undefined;
   return async (request) => {
     const args = request.args !== null && typeof request.args === "object" ? (request.args as Record<string, unknown>) : {};
-    const detail = typeof args.method === "string" && typeof args.url === "string"
-      ? `${args.method} ${args.url}`
-      : "command" in args
-        ? String(args.command)
-        : JSON.stringify(request.args ?? {});
+    const detail = formatApprovalArgs(args);
     const dangerous = request.risk === "high" ? "task rencana berisiko tinggi" : request.reason ?? (request.tool === "shell_run" && typeof args.command === "string" ? destructiveReason(args.command) : undefined);
     const impact = dangerous
       ? `DESTRUKTIF: ${dangerous}. Operasi ini bisa menghilangkan data dan tidak selalu bisa dibatalkan.`
@@ -935,7 +932,7 @@ function makeApprovalHandler(
     const diff = preview
       ? `\n  diff ${preview.path} (+${preview.added} -${preview.removed}):\n${preview.lines.map((line) => `    ${line}`).join("\n")}`
       : "";
-    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail.length > 10_000 ? `${detail.slice(0, 10_000)}\n  ... (${detail.length - 10_000} karakter lagi, lihat log tool)` : detail}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
+    const prompt = `\nPerlu izin: ${request.tool}${target}\n  args: ${detail}\n  dampak: ${impact}${diff}\n  Enter memilih Tolak, n atau Esc juga menolak.`;
     if (request.tool === "plan" && ask) {
       const planText = typeof args.text === "string" ? args.text : detail;
       print(planText);
