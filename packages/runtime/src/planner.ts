@@ -200,6 +200,17 @@ export function normalizePlan(raw: unknown, goal: string): PlanDraft | undefined
     });
   }
 
+  const fileOwner = new Map<string, string>();
+  for (const task of tasks) {
+    for (const file of task.files) {
+      const owner = fileOwner.get(file);
+      if (owner && owner !== task.id && !task.dependsOn.includes(owner)) task.dependsOn.push(owner);
+    }
+    for (const file of task.files) {
+      if (!fileOwner.has(file)) fileOwner.set(file, task.id);
+    }
+  }
+
   const estimateRaw = typeof obj.estimate === "object" && obj.estimate !== null ? (obj.estimate as Record<string, unknown>) : {};
   const minutesPair = asNumberPair(estimateRaw.minutes);
   const costPair = asNumberPair(estimateRaw.costUsd);
