@@ -199,6 +199,25 @@ export class RpcServer {
       dir: options.layout.secretsDir,
       ...(process.env.RANN_SECRET_PASSPHRASE ? { passphrase: process.env.RANN_SECRET_PASSPHRASE } : {})
     });
+    for (const [providerName, providerConfig] of Object.entries(options.config.config.providers)) {
+      if (providerConfig.api_key_ref || !providerConfig.api_key_env) continue;
+      const value = process.env[providerConfig.api_key_env];
+      if (!value) continue;
+      try {
+        const ref = `provider.${providerName}.key`;
+        this.secrets.set(ref, value, providerName);
+        providerConfig.api_key_ref = ref;
+        appendAudit(this.db, {
+          actor: "system",
+          action: "provider.key.migrate",
+          resource: providerName,
+          decision: "ok",
+          metadata: { source: "env", ref }
+        });
+      } catch {
+        // migrasi kunci env bersifat best effort
+      }
+    }
     this.mcp = new McpManager(options.config.config.mcp.servers, options.version);
     this.browser = new BrowserManager(process.cwd(), {
       ...options.config.config.browser,
