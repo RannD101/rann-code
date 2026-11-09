@@ -182,6 +182,15 @@ export function searchCode(
     }
   };
   visit(resolve(workspaceRoot));
+  if (matches.length === 0 && !options.regex && /\s/.test(query.trim())) {
+    const words = [...new Set(query.toLowerCase().split(/\s+/).filter((word) => word.length >= 3))];
+    if (words.length > 1) {
+      const fallback = searchCode(workspaceRoot, words.join("|"), { ...options, regex: true });
+      if (fallback.matches.length > 0) {
+        return { ...fallback, note: "kecocokan kata kunci dari query natural" };
+      }
+    }
+  }
   return {
     matches,
     scanned,

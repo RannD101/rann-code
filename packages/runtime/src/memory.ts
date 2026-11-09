@@ -98,6 +98,17 @@ export class MemoryService {
   }): MemoryEntry {
     const text = input.text.trim();
     if (text.length < 3) throw new Error("Memory terlalu pendek");
+    const duplicate = this.list("all", 2_000).find((entry) => entry.text.trim() === text && entry.status !== "deleted");
+    if (duplicate) {
+      const tags = [...new Set([...duplicate.tags, ...(input.tags ?? [])])];
+      this.db
+        .prepare("UPDATE memory_entries SET tags = ?, version = version + 1, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(tags), Date.now(), duplicate.id);
+      this.db
+        .prepare("INSERT INTO memory_events (id, memory_id, action, actor, after_json, created_at) VALUES (?, ?, 'merged', 'agent', ?, ?)")
+        .run(newId("mev"), duplicate.id, JSON.stringify({ tags, version: duplicate.version + 1 }), Date.now());
+      return this.db.prepare("SELECT * FROM memory_entries WHERE id = ?").get(duplicate.id) as MemoryEntry;
+    }
     if (text.length > 4_000) throw new Error("Memory maksimal 4.000 karakter");
     const tags = (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean).slice(0, 12);
     if (this.options.agentProfile && !tags.some((tag) => tag.startsWith("agent:"))) {

@@ -143,4 +143,15 @@ describe("acceptance memori dan tool", () => {
     expect(result.conflicts.length).toBeGreaterThan(0);
     expect(result.imported).toBe(0);
   });
+
+  it("AC-072 memory duplikat digabung dengan versi baru", () => {
+    const { service, db } = setup();
+    const first = service.add({ text: "Selalu pakai pnpm di proyek ini", kind: "preference", scope: "project", tags: ["a"] });
+    const second = service.add({ text: "Selalu pakai pnpm di proyek ini", kind: "preference", scope: "project", tags: ["b"] });
+    expect(second.id).toBe(first.id);
+    expect(second.version).toBe(2);
+    expect(second.tags).toContain("b");
+    const merged = db.prepare("SELECT COUNT(*) AS n FROM memory_events WHERE memory_id = ? AND action = 'merged'").get(first.id) as { n: number };
+    expect(merged.n).toBe(1);
+  });
 });

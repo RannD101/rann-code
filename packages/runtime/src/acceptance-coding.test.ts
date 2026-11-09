@@ -114,4 +114,12 @@ describe("acceptance coding", () => {
     expect(Number(baseline?.dirty_files)).toBeGreaterThanOrEqual(1);
     expect(git(["rev-list", "--count", "HEAD"]).trim()).toBe("1");
   }, 60_000);
+
+  it("AC-041 pencarian natural menemukan fungsi pajak di lima teratas", async () => {
+    const root = repo();
+    writeFileSync(join(root, "src", "pajak.ts"), "export function hitungPajak(harga: number) { return harga * 0.11; }\n");
+    const { searchCode } = await import("./code-tools.js");
+    const result = searchCode(root, "fungsi yang menghitung pajak", { maxResults: 5 });
+    expect(result.matches[0]?.path).toBe("src/pajak.ts");
+  });
 });

@@ -225,8 +225,10 @@
     "criteria": "Given goal kompleks tanpa plan, when mode otomatis aktif, then planner menghasilkan plan dengan minimal 3 task dan dependensi yang valid.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-planner.test.ts: generatePlan menghasilkan 3 task dengan dependensi valid dan order t1,t2,t3"
+    ],
     "gaps": []
   },
   {
@@ -420,8 +422,10 @@
     "criteria": "Given query \"fungsi yang menghitung pajak\", when pencarian semantik, then minimal satu hasil relevan muncul di 5 teratas.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-coding.test.ts: query natural 'fungsi yang menghitung pajak' menemukan src/pajak.ts di hasil teratas"
+    ],
     "gaps": []
   },
   {
@@ -741,8 +745,10 @@
     "criteria": "Given dua memory hampir sama, when disimpan, then duplikat digabung dan versi lama disimpan.",
     "verification": "O",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-memory.test.ts: duplikat digabung, versi naik, tag menyatu, event merged tercatat"
+    ],
     "gaps": []
   },
   {
