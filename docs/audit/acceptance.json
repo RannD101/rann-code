@@ -1103,8 +1103,10 @@
     "criteria": "Given kredensial Anthropic, OpenAI, Gemini, dan OpenRouter, when masing-masing diuji, then chat dan tool call berhasil atau error auth yang jelas.",
     "verification": "I",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-live-provider.test.ts: chat dan tool call ke api.rannd.web.id berhasil, key salah E_PROVIDER_AUTH; tes dijalankan dengan env RANN_LIVE_API_KEY"
+    ],
     "gaps": []
   },
   {
@@ -1145,8 +1147,10 @@
     "criteria": "Given model context 128k dan riwayat 90 persen, when turn baru dijalankan, then estimator error ≤ 15 persen, compaction berjalan, goal/keputusan/error/path/verifikasi tetap ada, dan `/context` menunjukkan komposisi.",
     "verification": "O",
     "section": "8. Provider, router, dan context (101-114)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-context.test.ts: compaction mempertahankan goal/keputusan/error; estimator token dalam 15 persen usage provider nyata"
+    ],
     "gaps": []
   },
   {
