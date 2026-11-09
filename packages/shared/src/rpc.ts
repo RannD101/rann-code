@@ -73,6 +73,7 @@ export const sessionSendParams = z.object({
   idempotencyKey: z.string().min(8).max(200).optional(),
   planOnly: z.boolean().optional(),
   forcePlan: z.boolean().optional(),
+  taskClass: z.enum(["answer", "inspect", "modify", "operate", "research", "incident"]).optional(),
   attachments: z.array(z.object({
     path: z.string().min(1).max(4096),
     name: z.string().min(1).max(255).optional()

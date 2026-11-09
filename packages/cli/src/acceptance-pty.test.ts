@@ -223,4 +223,12 @@ describe("acceptance terminal", () => {
     pty.write("/test\n");
     await pty.waitFor("tes lulus", 20_000);
   }, 40_000);
+
+  it("AC-046 /debug mengirim alur reproduksi ke agent", async () => {
+    const { pty } = startPty();
+    await pty.waitFor("›", 10_000);
+    pty.write('/debug "login gagal setelah restart"\n');
+    await pty.waitFor("Balasan mock", 15_000);
+    expect(pty.output().toLowerCase()).toContain("debug masalah");
+  }, 30_000);
 });

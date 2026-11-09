@@ -493,8 +493,10 @@
     "criteria": "Given tes gagal, when `/debug`, then agent mereproduksi kegagalan, menemukan penyebab, dan menambahkan tes regresi.",
     "verification": "I",
     "section": "3. Coding engine (040-052)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-pty.test.ts: /debug dengan taskClass answer mengirim prompt reproduksi dan menerima balasan agent tanpa planner gagal"
+    ],
     "gaps": []
   },
   {
@@ -590,8 +592,10 @@
     "criteria": "Given 8 tugas independen, when dijalankan paralel, then total waktu < 60 persen dari eksekusi serial dan tidak ada tabrakan state.",
     "verification": "I",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-parallel.test.ts: 8 subagent mock slow selesai 5,4 detik, di bawah 60 persen dari 8 x 5 detik serial"
+    ],
     "gaps": []
   },
   {

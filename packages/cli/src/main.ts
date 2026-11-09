@@ -3002,6 +3002,7 @@ async function chatCommand(args: ParsedArgs): Promise<number> {
             const result = await runStreaming(client, sessionId, outgoing(prompt), {
               ...(model ? { model } : {}),
               ...(permissionMode ? { permissionMode } : {}),
+              taskClass: "answer",
               ...(onApproval ? { onApproval } : {})
             });
             await recordResult(result);

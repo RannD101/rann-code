@@ -1913,6 +1913,7 @@ export class RpcServer {
       delegate,
       planOnly: input.planOnly === true,
       forcePlan: input.forcePlan === true,
+      ...(typeof input.taskClass === "string" ? { taskClass: input.taskClass as RunTurnOptions["taskClass"] } : {}),
       modelCapabilities: descriptor.capabilities,
       capabilitiesUnknown: descriptor.capabilitiesUnknown === true,
       modelId: descriptor.id,
