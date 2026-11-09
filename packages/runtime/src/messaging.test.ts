@@ -165,4 +165,21 @@ describe("messaging telegram", () => {
     const respond = calls.find((call) => call.method === "permission.respond");
     expect(respond?.params).toMatchObject({ requestId: "req-9", approved: true });
   });
+
+describe("topik Telegram", () => {
+  it("AC-132 pesan di topik berbeda membuat sesi terpisah", async () => {
+    const { adapter, calls } = setup();
+    const base = {
+      message_id: 1,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: 123, type: "supergroup", title: "Grup" },
+      from: { id: 9, is_bot: false, first_name: "Randi" }
+    };
+    await adapter.handleUpdate({ update_id: 1, message: { ...base, message_thread_id: 11, text: "topik A" } } as never);
+    await adapter.handleUpdate({ update_id: 2, message: { ...base, message_id: 2, message_thread_id: 12, text: "topik B" } } as never);
+    const created = calls.filter((call) => call.method === "session.create");
+    expect(created).toHaveLength(2);
+    expect(created[0]?.params.projectPath).toBe(created[1]?.params.projectPath);
+  });
+});
 });

@@ -1,5 +1,14 @@
+import { RannError } from "@rann/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+export function checkAgentDepth(depth: number, maxDepth: number): void {
+  if (depth >= maxDepth) {
+    throw new RannError("E_AGENT_DEPTH", `Kedalaman subagent maksimum ${maxDepth} tercapai`, {
+      data: { depth, max_depth: maxDepth }
+    });
+  }
+}
 
 export interface SubagentProfile {
   name: string;

@@ -129,6 +129,15 @@ export class MemoryService {
   }
 
   private canRead(entry: MemoryEntry): boolean {
+    // Memori scope session hanya untuk sesi pemiliknya (AC-142).
+    if (
+      entry.scope === "session" &&
+      entry.session_id !== null &&
+      this.options.sessionId !== undefined &&
+      entry.session_id !== this.options.sessionId
+    ) {
+      return false;
+    }
     if (belongsToAgent(entry, this.options.agentProfile)) return true;
     if (!this.options.agentProfile) return true;
     const owner = agentOf(entry);
@@ -475,14 +484,12 @@ export class MemoryService {
 
   /** Ringkasan sesi panjang, dipakai saat konteks dipadatkan. */
   summarizeSession(sessionId: string, messages: Array<{ role: string; content: string }>): MemoryEntry | undefined {
-    const parts = messages
-      .filter((message) => message.role === "user" || message.role === "assistant")
-      .map((message) => `${message.role}: ${message.content.replace(/\s+/g, " ").trim().slice(0, 300)}`)
-      .filter((line) => line.length > 8);
-    if (parts.length === 0) return undefined;
-    const digest = parts.slice(-40).join("\n").slice(0, 3_500);
+    const dialog = messages.filter((message) => message.role === "user" || message.role === "assistant");
+    if (dialog.length === 0) return undefined;
+    const firstUser = dialog.find((message) => message.role === "user")?.content.replace(/\s+/g, " ").trim().slice(0, 300) ?? "-";
+    const firstReply = dialog.find((message) => message.role === "assistant")?.content.replace(/\s+/g, " ").trim().slice(0, 300) ?? "-";
     return this.add({
-      text: `Ringkasan sesi ${sessionId}:\n${digest}`,
+      text: `Ringkasan sesi ${sessionId}: ${dialog.length} pesan.\nPermintaan awal: ${firstUser}\nBalasan awal: ${firstReply}`,
       scope: "session",
       kind: "session_summary",
       tags: ["summary", `session:${sessionId}`],

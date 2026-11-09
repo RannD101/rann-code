@@ -41,4 +41,17 @@ describe("BrowserManager", () => {
     await expect(manager.perform("blok", { action: "navigate", url: "http://localhost:1" })).rejects.toMatchObject({ code: "E_PERMISSION" });
     await manager.closeAll();
   });
+
+  it("AC-119 dua task memakai context terpisah dan cookie tidak bocor", async () => {
+    const manager = new BrowserManager("/tmp", { headless: true, artifacts_dir: "/tmp/rann-browser-ctx" });
+    try {
+      await manager.perform("task-a", { action: "navigate", url: base });
+      await manager.perform("task-a", { action: "evaluate", script: "document.cookie = 'sesi=a'; document.cookie" });
+      await manager.perform("task-b", { action: "navigate", url: base });
+      const cookie = await manager.perform("task-b", { action: "evaluate", script: "document.cookie" });
+      expect(String(cookie.result)).not.toContain("sesi=a");
+    } finally {
+      await manager.closeAll();
+    }
+  }, 60_000);
 });

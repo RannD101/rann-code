@@ -28,6 +28,10 @@ rl.on("line", (line) => {
     result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "fixture", version: "1" } };
   } else if (message.method === "tools/list") {
     result = { tools };
+  } else if (message.method === "resources/list") {
+    result = { resources: [{ uri: "file:///catatan.md", name: "catatan", mimeType: "text/markdown" }] };
+  } else if (message.method === "prompts/list") {
+    result = { prompts: [{ name: "ringkas", description: "Ringkas dokumen" }] };
   } else if (message.method === "tools/call") {
     result = { content: [{ type: "text", text: "echo:" + String(message.params.arguments.text) }] };
   } else {
@@ -64,6 +68,18 @@ describe("McpManager", () => {
 
       const result = await manager.callTool("mcp__echo__echo", { text: "halo" });
       expect(result).toMatchObject({ server: "echo", tool: "echo", content: "echo:halo" });
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it("mendaftar resource dan prompt dari server", async () => {
+    const manager = new McpManager({ echo: server(fixture()) }, "test");
+    try {
+      const resources = (await manager.listResources()) as { echo?: { resources?: Array<{ uri: string }> } };
+      const prompts = (await manager.listPrompts()) as { echo?: { prompts?: Array<{ name: string }> } };
+      expect(resources.echo?.resources?.[0]?.uri).toBe("file:///catatan.md");
+      expect(prompts.echo?.prompts?.[0]?.name).toBe("ringkas");
     } finally {
       await manager.close();
     }

@@ -78,6 +78,7 @@ export interface ToolContext {
   mcp?: {
     callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
     permissionFor?(name: string): "read" | "write" | "exec";
+    untrusted?: boolean;
   };
   plugins?: {
     list(): Array<{ name: string; version: string; status: string; permissions: string[] }>;
@@ -2420,6 +2421,12 @@ export async function executeTool(name: string, args: unknown, ctx: ToolContext)
   }
   if (name.startsWith("mcp__")) {
     if (!ctx.mcp) throw new RannError("E_TOOL_NOT_FOUND", `MCP tidak aktif untuk tool ${name}`);
+    const mcpRisk = ctx.mcp.permissionFor?.(name) ?? "exec";
+    if (ctx.mcp.untrusted === true && mcpRisk !== "read" && !ctx.approved) {
+      throw new RannError("E_APPROVAL_REQUIRED", `Tool MCP ${name} butuh persetujuan eksplisit`, {
+        data: { tool: name, provenance: "mcp" }
+      });
+    }
     assertAllowed({
       mode: ctx.permissionMode,
       tool: name,

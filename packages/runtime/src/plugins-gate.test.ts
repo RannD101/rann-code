@@ -106,4 +106,20 @@ describe("izin dan update plugin", () => {
     expect(updated.version).toBe("1.1.0");
     expect(updated.permissions).toContain("net:fetch");
   });
+
+describe("isolasi env plugin", () => {
+  it("AC-143 plugin tidak menerima env rahasia proses induk", async () => {
+    const m = manager();
+    const dir = join(temp(), "env");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({ name: "env", version: "1.0.0", apiVersion: "^1.0.0", entry: "index.js", permissions: ["tool:register"] }));
+    writeFileSync(join(dir, "index.js"), 'process.stdin.on("data", () => { process.stdout.write(JSON.stringify({ result: process.env.MY_SECRET ?? null }) + "\\n"); });');
+    m.installFolder(dir, { scope: "project" });
+    m.enable("env");
+    process.env.MY_SECRET = "rahasia-induk";
+    const result = await m.invoke("env", "ping", {});
+    expect(result.ok).toBe(true);
+    expect(result.output).toEqual({ result: null });
+  });
+});
 });

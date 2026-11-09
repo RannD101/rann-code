@@ -47,4 +47,26 @@ describe("acceptance CLI non-interaktif", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain("\u001b[");
   }, 30_000);
+
+  it("AC-150 startup < 1 detik dan RSS < 150 MB, doctor melaporkan komponen", () => {
+    const home = mkdtempSync(join(tmpdir(), "rann-ac-doctor-"));
+    const time = spawnSync("/usr/bin/time", ["-f", "RSS=%M TIME=%e", process.execPath, main, "--version"], {
+      env: { ...process.env, RANN_HOME: home },
+      encoding: "utf8",
+      timeout: 20_000
+    });
+    expect(time.status).toBe(0);
+    const rss = Number(/RSS=(\d+)/.exec(time.stderr)?.[1] ?? "0");
+    const elapsed = Number(/TIME=([\d.]+)/.exec(time.stderr)?.[1] ?? "0");
+    expect(elapsed).toBeLessThan(1);
+    expect(rss).toBeLessThan(150 * 1024);
+    const doctor = spawnSync(process.execPath, [main, "doctor"], {
+      env: { ...process.env, RANN_HOME: home },
+      encoding: "utf8",
+      timeout: 30_000
+    });
+    expect(doctor.status).toBe(0);
+    expect(doctor.stdout).toContain("versi");
+    expect(doctor.stdout).toContain("gateway");
+  }, 40_000);
 });

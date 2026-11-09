@@ -110,7 +110,7 @@ import { BackgroundQueue, type JobContext } from "./background.js";
 import { SchedulerEngine, nextRunFor } from "./scheduler.js";
 import { GatewayServer } from "./gateway.js";
 import { MessagingService } from "./messaging.js";
-import { loadProfiles, pickProfile, type SubagentProfile } from "./subagent-profiles.js";
+import { checkAgentDepth, loadProfiles, pickProfile, type SubagentProfile } from "./subagent-profiles.js";
 import { dashboardData } from "./dashboard-data.js";
 
 function safeJson(value: string): unknown {
@@ -2113,9 +2113,7 @@ export class RpcServer {
 
     const parentAgent = getSubagentByTurn(this.db, options.parentTurnId);
     const depth = parentAgent ? parentAgent.depth + 1 : 0;
-    if (depth >= config.subagents.max_depth) {
-      throw new RannError("E_PERMISSION", `Kedalaman subagent maksimum ${config.subagents.max_depth} tercapai`);
-    }
+    checkAgentDepth(depth, config.subagents.max_depth);
     if (parentAgent && countSubagentChildren(this.db, parentAgent.id) >= config.subagents.max_children) {
       throw new RannError("E_BUDGET_EXHAUSTED", `Anak subagent maksimum ${config.subagents.max_children} tercapai`);
     }

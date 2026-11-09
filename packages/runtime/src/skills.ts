@@ -724,6 +724,16 @@ export class SkillStore {
     return this.view(parsed.name)!;
   }
 
+  /** Pulihkan versi lama dari folder versions tanpa menghapus riwayat. */
+  restore(name: string, version: string): SkillInfo {
+    const skill = this.view(name);
+    if (!skill?.path) throw new RannError("E_NOT_FOUND", `Skill tidak ditemukan: ${name}`);
+    const entry = this.history(name).find((item) => item.version === version);
+    if (!entry) throw new RannError("E_NOT_FOUND", `Versi ${version} tidak ada untuk skill ${name}`);
+    copyFileSync(entry.file, skill.path);
+    return this.view(name)!;
+  }
+
   update(name: string, source?: string): SkillInfo {
     const skill = this.view(name);
     if (!skill?.path) throw new RannError("E_NOT_FOUND", `Skill tidak ditemukan: ${name}`);

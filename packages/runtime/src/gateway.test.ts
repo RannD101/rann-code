@@ -182,5 +182,53 @@ describe("aksi dashboard tambahan", () => {
     expect(page).toContain('id="setModel"');
     expect(page).toContain('id="endSession"');
   });
+
+describe("upload lampiran dashboard", () => {
+  it("AC-134 menerima berkas 5 MB dan menyimpannya sebagai artefak", async () => {
+    const { base, db, dir } = await boot();
+    const { code } = issuePairCode(db, { createdBy: "uji" });
+    const pair = await fetch(`${base}/v1/auth/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, name: "web" })
+    });
+    const body = (await pair.json()) as { token: string; device: { id: string } };
+    updateDeviceRole(db, body.device.id, "owner");
+    const bytes = new Uint8Array(5 * 1024 * 1024);
+    const upload = await fetch(`${base}/v1/sessions/ses-baru/attachments`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${body.token}`,
+        "content-type": "application/octet-stream",
+        "x-filename": "besar.txt"
+      },
+      body: bytes
+    });
+    expect(upload.status).toBe(201);
+    const saved = (await upload.json()) as { id?: string; path?: string };
+    expect(saved.id ?? saved.path).toBeTruthy();
+    expect(dir.length).toBeGreaterThan(0);
+  }, 30_000);
 });
 
+describe("scope gateway", () => {
+  it("AC-129 token read tidak bisa approve", async () => {
+    const { base, db } = await boot();
+    const { code } = issuePairCode(db, { createdBy: "uji" });
+    const pair = await fetch(`${base}/v1/auth/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, name: "viewer" })
+    });
+    const body = (await pair.json()) as { token: string; device: { id: string } };
+    updateDeviceRole(db, body.device.id, "viewer");
+    const response = await fetch(`${base}/v1/approvals/req_1`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${body.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ approved: true })
+    });
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain("E_SCOPE");
+  });
+});
+});
