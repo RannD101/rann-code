@@ -70,6 +70,22 @@ function readUsage(value: unknown): StreamUsage {
   };
 }
 
+
+/** Format indikator task: 2/5, status, judul, dan waktu berjalan (AC-009). */
+export function renderTaskProgress(input: {
+  done: number;
+  total: number;
+  status: string;
+  title: string;
+  elapsedMs?: number;
+}): string {
+  const current = input.status === "running" ? Math.min(input.done + 1, input.total || input.done + 1) : input.done;
+  const pendingVerify = input.total > 0 && current >= input.total && input.status !== "running" ? " menunggu verifikasi" : "";
+  const counter = input.total > 0 ? ` ${current}/${input.total}${pendingVerify}` : "";
+  const elapsed = input.status === "running" && input.elapsedMs !== undefined ? ` ${(input.elapsedMs / 1000).toFixed(1)}s` : "";
+  return `[task]${counter} ${input.status} ${input.title}${elapsed}`;
+}
+
 export async function runStreaming(client: RpcClient, sessionId: string, text: string, options: SendOptions = {}): Promise<StreamResult> {
   const format = options.output === "ndjson" ? "stream-json" : options.output ?? "text";
   const phaseSpinner = new Spinner();
@@ -350,11 +366,17 @@ export async function runStreaming(client: RpcClient, sessionId: string, text: s
         if (status === "running") taskStartedAt = Date.now();
         if (format === "text" && status) {
           const done = [...taskStatuses.values()].filter((value) => value === "done").length;
-          const current = status === "running" ? Math.min(done + 1, planTotal || done + 1) : done;
-          const pendingVerify = planTotal > 0 && current >= planTotal && status !== "running" ? " menunggu verifikasi" : "";
-          const counter = planTotal > 0 ? ` ${current}/${planTotal}${pendingVerify}` : "";
-          const elapsed = status === "running" && taskStartedAt > 0 ? ` ${((Date.now() - taskStartedAt) / 1000).toFixed(1)}s` : "";
-          printErr(ui.dim(`[task]${counter} ${status} ${String(event.data.title ?? "")}${elapsed}`));
+          printErr(
+            ui.dim(
+              renderTaskProgress({
+                done,
+                total: planTotal,
+                status,
+                title: String(event.data.title ?? ""),
+                ...(status === "running" && taskStartedAt > 0 ? { elapsedMs: Date.now() - taskStartedAt } : {})
+              })
+            )
+          );
         }
         emit({ type: "task.update", turn_id: turnId, ...event.data });
         return;

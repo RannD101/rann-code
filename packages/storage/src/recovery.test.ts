@@ -28,4 +28,19 @@ describe("pemulihan turn terputus", () => {
     const message = listMessages(db, session.id, 10).find((item) => item.turn_id === turn.id && item.role === "assistant");
     expect(message?.content).toContain("Belum ada checkpoint");
   });
+
+  it("AC-038 turn running pulih dari checkpoint dalam <= 5 detik", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rann-recovery-fast-"));
+    const { db } = openDatabase({ path: join(dir, "rann.db") });
+    const session = createSession(db, { projectPath: dir, model: "mock-1", permissionMode: "trusted" });
+    const turn = createTurn(db, { sessionId: session.id });
+    db.prepare("UPDATE turns SET status = 'running' WHERE id = ?").run(turn.id);
+    const checkpoint = createCheckpoint(db, { sessionId: session.id, turnId: turn.id, label: "sebelum crash", state: { step: 4 } });
+    const started = Date.now();
+    const recovered = recoverInterruptedTurns(db);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(recovered.map((item) => item.id)).toContain(turn.id);
+    const message = listMessages(db, session.id, 10).find((item) => item.turn_id === turn.id && item.role === "assistant");
+    expect(message?.content).toContain(checkpoint.id);
+  });
 });

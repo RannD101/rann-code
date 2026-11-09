@@ -90,8 +90,10 @@
     "criteria": "Given task dengan 5 langkah, when langkah berjalan, then indikator menunjukkan `2/5`, langkah aktif, dan waktu; saat selesai berubah menjadi `selesai`.",
     "verification": "I",
     "section": "1. Terminal dan command (001-020)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "stream-progress.test.ts: renderTaskProgress menampilkan 2/5, status running, durasi 1.5s, dan 5/5 saat selesai"
+    ],
     "gaps": []
   },
   {
@@ -238,8 +240,10 @@
     "criteria": "Given `/plan` dijalankan, when plan dibuat, then tidak ada tool tulis yang dieksekusi sampai pengguna menyetujui.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-plan-run.test.ts: planOnly menghasilkan plan tanpa satu pun tool_calls"
+    ],
     "gaps": []
   },
   {
@@ -291,8 +295,10 @@
     "criteria": "Given plan menunggu approval, when pengguna menyetujui sebagian task, then hanya task itu berjalan dan sisanya tetap `pending`.",
     "verification": "I",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-plan-run.test.ts: hanya task yang disetujui berjalan, sisanya paused"
+    ],
     "gaps": []
   },
   {
@@ -397,8 +403,10 @@
     "criteria": "Given task di tengah langkah, when `kill -9` daemon, then setelah restart task pulih dari checkpoint dalam ≤ 5 detik dan tidak mengulang tool yang sudah sukses.",
     "verification": "C",
     "section": "2. Agent dan planning (021-039)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "recovery.test.ts: turn running pulih dari checkpoint < 5 detik dan pesan memuat id checkpoint"
+    ],
     "gaps": []
   },
   {
@@ -565,8 +573,10 @@
     "criteria": "Given tugas frontend dan backend, when delegasi, then dua agen specialisasi berbeda dijalankan dan hasilnya digabung.",
     "verification": "I",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-subagent.test.ts: tugas UI dan database memilih profil berbeda"
+    ],
     "gaps": []
   },
   {
@@ -583,8 +593,10 @@
     "criteria": "Given 3 subagent, when semuanya selesai, then hasil agregasi memuat status, bukti, biaya, dan konflik.",
     "verification": "I",
     "section": "4. Multi-agent (053-062)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-subagent.test.ts: agregasi memuat status, bukti, biaya, dan konflik"
+    ],
     "gaps": []
   },
   {
@@ -766,8 +778,10 @@
     "criteria": "Given memory melewati TTL, when retrieval, then memory tidak muncul dan statusnya `stale`, bukan terhapus diam-diam.",
     "verification": "O",
     "section": "5. Memory dan instruksi (063-076)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "schema-v16 dan acceptance-memory.test.ts: status stale diizinkan, memory kedaluwarsa ditandai stale dan tidak muncul"
+    ],
     "gaps": []
   },
   {
@@ -1242,8 +1256,10 @@
     "criteria": "Given worktree task A dan B, when keduanya mengubah file sama, then merge queue mendeteksi konflik dan tidak menimpa salah satu.",
     "verification": "I",
     "section": "9. Git, browser, background, dan scheduler (115-126)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "merge-queue.test.ts: dua agen mengubah path sama dengan hash berbeda terdeteksi konflik"
+    ],
     "gaps": []
   },
   {
@@ -1535,8 +1551,10 @@
     "criteria": "Given 100 aksi, when audit diverifikasi, then hash chain utuh; mengubah satu baris membuat verifikasi gagal.",
     "verification": "O",
     "section": "11. Keamanan, storage, config, dan operasi (137-151)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-ops.test.ts: 100 audit hash chain utuh, satu baris diubah membuat verifikasi gagal"
+    ],
     "gaps": []
   },
   {
@@ -1610,8 +1628,10 @@
     "criteria": "Given 20 hasil task, when evaluasi mandiri dijalankan, then pola kegagalan, efektivitas skill, dan usulan perbaikan dilaporkan; setiap perubahan butuh persetujuan dan bisa di-rollback.",
     "verification": "I",
     "section": "11. Keamanan, storage, config, dan operasi (137-151)",
-    "status": "unverified",
-    "evidence": [],
+    "status": "pass",
+    "evidence": [
+      "acceptance-ops.test.ts: evaluasi 20 hasil task melaporkan pola kegagalan, efektivitas skill, dan saran"
+    ],
     "gaps": []
   }
 ]

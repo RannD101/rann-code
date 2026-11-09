@@ -134,9 +134,15 @@ export class MemoryService {
   }
 
   private visible(): MemoryEntry[] {
-    return this.list("all", 500).filter(
-      (entry) => !isExpired(entry) && entry.status === "active" && this.canRead(entry)
-    );
+    const rows = this.list("all", 500);
+    const now = Date.now();
+    for (const entry of rows) {
+      if (entry.status === "active" && isExpired(entry, now)) {
+        this.db.prepare("UPDATE memory_entries SET status = 'stale', updated_at = ? WHERE id = ?").run(now, entry.id);
+        entry.status = "stale";
+      }
+    }
+    return rows.filter((entry) => entry.status === "active" && this.canRead(entry));
   }
 
   private canRead(entry: MemoryEntry): boolean {

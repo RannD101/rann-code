@@ -154,4 +154,12 @@ describe("acceptance memori dan tool", () => {
     const merged = db.prepare("SELECT COUNT(*) AS n FROM memory_events WHERE memory_id = ? AND action = 'merged'").get(first.id) as { n: number };
     expect(merged.n).toBe(1);
   });
+
+  it("AC-073 memory kedaluwarsa berstatus stale dan tidak muncul", () => {
+    const { service, db } = setup();
+    const entry = service.add({ text: "catatan sementara yang sudah lewat", kind: "note", scope: "project", expiresAt: Date.now() - 1_000 });
+    expect(service.search("catatan sementara")).toHaveLength(0);
+    const row = db.prepare("SELECT status FROM memory_entries WHERE id = ?").get(entry.id) as { status: string };
+    expect(row.status).toBe("stale");
+  });
 });

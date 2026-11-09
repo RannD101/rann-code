@@ -15,6 +15,7 @@ import { SCHEMA_V12 } from "./schema-v12.js";
 import { SCHEMA_V13 } from "./schema-v13.js";
 import { SCHEMA_V14 } from "./schema-v14.js";
 import { SCHEMA_V15 } from "./schema-v15.js";
+import { SCHEMA_V16 } from "./schema-v16.js";
 
 export type Db = Database.Database;
 
@@ -294,6 +295,11 @@ END;
     version: 15,
     name: "gateway-identity",
     sql: SCHEMA_V15
+  },
+  {
+    version: 16,
+    name: "memory-stale",
+    sql: SCHEMA_V16
   }
 ];
 
