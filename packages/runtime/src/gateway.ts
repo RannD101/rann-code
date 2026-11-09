@@ -619,6 +619,10 @@ export class GatewayServer {
       if (sessionMatch) {
         const sessionId = decodeURIComponent(sessionMatch[1]!);
         const action = sessionMatch[2];
+        if (!hasScope(device.scopes, "admin")) {
+          const owned = this.db.prepare("SELECT 1 AS ok FROM gateway_sessions WHERE device_id = ? AND session_id = ? LIMIT 1").get(device.id, sessionId) as { ok?: number } | undefined;
+          if (!owned?.ok) throw new RannError("E_SCOPE", "Perangkat tidak berhak mengakses sesi ini", { data: { session_id: sessionId } });
+        }
         if (!action && request.method === "GET") {
           const session = await this.invokeRpc("session.get", { sessionId });
           sendJson(response, 200, session);
